@@ -27,6 +27,50 @@
       <button id="creer" type="button">Créer le dossier du livre</button>
       <div id="creation"></div>
     </section>
+
+    <section id="prix" aria-labelledby="t-prix" hidden>
+      <h2 id="t-prix">Simulateur de prix</h2>
+      <p id="prix-avertissement" class="note"></p>
+      <div id="prix-message"></div>
+      <form id="prix-form" autocomplete="off">
+        <div class="grille">
+          <div class="champ large"><label for="p-nom">Nom du scénario</label><input id="p-nom" maxlength="60"></div>
+          <div class="champ"><label for="p-reliure">Reliure</label>
+            <select id="p-reliure"><option value="paperback">Broché</option><option value="hardcover">Relié</option></select></div>
+          <div class="champ"><label for="p-format">Format</label><select id="p-format"></select></div>
+          <div class="champ"><label for="p-encre">Encre et papier</label>
+            <select id="p-encre">
+              <option value="premium-color">Couleur premium, papier blanc</option>
+              <option value="standard-color">Couleur standard, papier blanc</option>
+              <option value="black-white">Noir, papier blanc</option>
+              <option value="black-cream">Noir, papier crème</option>
+              <option value="black-groundwood">Noir, papier journal</option>
+            </select></div>
+          <div class="champ"><label for="p-mode">Nombre de pages</label>
+            <select id="p-mode"><option value="estime">Estimé</option><option value="saisi">Saisi</option></select></div>
+          <div class="champ" id="c-pages"><label for="p-pages">Pages</label><input id="p-pages" type="number" min="1" step="1" value="46"></div>
+          <div class="champ" id="c-sujets"><label for="p-sujets">Sujets</label><input id="p-sujets" type="number" min="1" step="1" value="15"></div>
+          <div class="champ" id="c-par-sujet"><label for="p-par-sujet">Pages par sujet</label>
+            <select id="p-par-sujet"><option value="2">2</option><option value="4">4</option><option value="6">6</option></select></div>
+          <div class="champ" id="c-extra"><label for="p-extra">Pages liminaires et finales</label><input id="p-extra" type="number" min="0" step="1" value="14"></div>
+          <div class="champ"><label for="p-marketplace">Marketplace</label><select id="p-marketplace"></select></div>
+          <div class="champ"><label for="p-tva">TVA pour convertir un prix TTC</label>
+            <select id="p-tva"><option value="reduced">Taux réduit</option><option value="standard">Taux normal</option></select></div>
+          <div class="champ"><label for="p-type-prix">Prix saisi</label>
+            <select id="p-type-prix"><option value="ht">HT (prix saisi dans KDP)</option><option value="ttc">TTC (prix vu par le client)</option></select></div>
+          <div class="champ"><label for="p-prix">Prix</label><input id="p-prix" type="number" min="0" step="0.01" value="12"></div>
+          <div class="champ"><label for="p-visee">Redevance visée (facultatif)</label><input id="p-visee" type="number" min="0" step="0.01"></div>
+        </div>
+        <div id="prix-resultat"></div>
+        <div class="boutons">
+          <button id="p-enregistrer" type="submit">Enregistrer le scénario</button>
+          <button id="p-nouveau" type="button" class="secondaire">Nouveau scénario</button>
+        </div>
+      </form>
+      <h3>Scénarios enregistrés</h3>
+      <div id="prix-ecart"></div>
+      <div id="prix-scenarios" class="defile"></div>
+    </section>
   </main>
   <script src="/app.js"></script>
 </body>

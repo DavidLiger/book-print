@@ -7,8 +7,10 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import '../schema/common';
 import { CreateRefused, createBookFolder } from '../data/create-book';
+import { PricingRefused } from '../data/pricing-file';
 import { listBooks, readBook } from '../glbi/read';
 import { loadConfig, type ConfigState } from './config';
+import { BadPricingRequest, PRICING_ACTIONS } from './pricing-actions';
 import { ACTION_HEADER, actionAllowed, hostAllowed } from './rules';
 
 const UI_DIR = fileURLToPath(new URL('../ui/', import.meta.url));
@@ -87,6 +89,9 @@ const ACTIONS: Record<string, (body: unknown, configPath: string) => Json> = {
     if (reading.errors.length > 0 || !reading.bookId) throw new HttpError(409, `Lecture de GLBInterpreter en erreur : ${reading.errors.join(' ; ')}`);
     return { result: createBookFolder(config.dataRoot, reading.bookId) };
   },
+  ...Object.fromEntries(
+    Object.entries(PRICING_ACTIONS).map(([route, run]) => [route, (body: unknown, configPath: string) => run(body, configured(loadConfig(configPath)).dataRoot)]),
+  ),
 };
 
 async function handle(req: http.IncomingMessage, res: http.ServerResponse, port: number, configPath: string): Promise<void> {
@@ -117,7 +122,8 @@ export function createPrintServer(configPath: string): http.Server {
     handle(req, res, port, configPath).catch((e: unknown) => {
       if (res.headersSent) return res.destroy();
       if (e instanceof HttpError) return sendJson(res, e.status, { error: e.message });
-      if (e instanceof CreateRefused) return sendJson(res, 409, { error: e.message });
+      if (e instanceof BadPricingRequest) return sendJson(res, 400, { error: e.message });
+      if (e instanceof CreateRefused || e instanceof PricingRefused) return sendJson(res, 409, { error: e.message });
       console.error('book-print :', e);
       sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) });
     });

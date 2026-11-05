@@ -7,7 +7,8 @@
     "test:schema": "tsx scripts/test-schema.ts",
     "test:glbi": "tsx scripts/test-glbi.ts",
     "test:server": "tsx scripts/test-server.ts",
-    "test:create": "tsx scripts/test-create.ts"
+    "test:create": "tsx scripts/test-create.ts",
+    "test:pricing": "tsx scripts/test-pricing.ts"
   },
   "keywords": [],
   "author": "",
@@ -17,6 +18,6 @@
     "@types/node": "20.19.11",
     "tsx": "4.23.15",
     "typescript": "5.9.2",
-    "zod": "4.6.5"
+    "zod": "4.6.7"
   }
 }

@@ -30,8 +30,8 @@ h1 { font-size: 26px; margin: 0 0 16px; }
 h2 { font-size: 18px; margin: 0 0 12px; }
 section { background: var(--carte); border: 1px solid var(--bord); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
 label { display: block; color: var(--doux); font-size: 14px; margin-bottom: 4px; }
-select, button { font: inherit; padding: 6px 12px; border-radius: 6px; }
-select { max-width: 100%; background: var(--carte); color: var(--texte); border: 1px solid var(--bord); }
+select, button, input { font: inherit; padding: 6px 12px; border-radius: 6px; }
+select, input { max-width: 100%; background: var(--carte); color: var(--texte); border: 1px solid var(--bord); }
 button { background: var(--action); color: var(--carte); border: 0; cursor: pointer; }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 16px; margin: 12px 0; }
@@ -45,3 +45,18 @@ th { color: var(--doux); font-weight: 500; }
 .alerte { color: var(--alerte); }
 .bien { color: var(--bien); }
 .titre-liste { font-weight: 600; margin: 12px 0 0; }
+h3 { font-size: 16px; margin: 20px 0 8px; }
+a { color: var(--action); }
+.note { color: var(--doux); font-size: 14px; margin: 0 0 12px; }
+.grille { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; align-items: end; }
+.champ select, .champ input { width: 100%; }
+.champ.large { grid-column: 1 / -1; }
+.boutons { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+button.secondaire { background: transparent; color: var(--action); border: 1px solid var(--bord); }
+button.petit { padding: 2px 8px; font-size: 13px; margin: 0 4px 4px 0; }
+.defile { overflow-x: auto; }
+.defile table { min-width: 100%; width: auto; }
+.defile th:first-child { position: sticky; left: 0; background: var(--carte); white-space: nowrap; }
+.defile td { min-width: 150px; vertical-align: top; }
+.retenu { color: var(--bien); font-weight: 600; }
+p.cellule { margin: 0 0 4px; }

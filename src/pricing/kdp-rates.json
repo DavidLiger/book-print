@@ -1,0 +1,161 @@
+{
+  "schemaVersion": 1,
+  "surveyedAt": "2026-11-05",
+  "calculatorUrl": "https://kdp.amazon.com/royalty-calculator",
+  "sources": {
+    "S1": { "title": "Set Trim Size, Bleed, and Margins", "url": "https://kdp.amazon.com/en_US/help/topic/GVBQ3CMEQW3W2VL6", "surveyedAt": "2026-11-05" },
+    "S4": { "title": "Paperback Printing Cost", "url": "https://kdp.amazon.com/en_US/help/topic/G201834340", "surveyedAt": "2026-11-05" },
+    "S9": { "title": "Paperback Royalty", "url": "https://kdp.amazon.com/en_US/help/topic/G201834330", "surveyedAt": "2026-11-05" },
+    "S10": { "title": "How EU and the UK Taxes Affect Print Books List Price", "url": "https://kdp.amazon.com/en_US/help/topic/GPQL5W3J6WNRCZTV", "surveyedAt": "2026-11-05" },
+    "S12": { "title": "Print Book Pricing Page", "url": "https://kdp.amazon.com/en_US/help/topic/G8BKPU9AGVZSF9QF", "surveyedAt": "2026-11-05" },
+    "S13": { "title": "Hardcover Printing Cost", "url": "https://kdp.amazon.com/en_US/help/topic/GHT976ZKSKUXBB6H", "surveyedAt": "2026-11-05" },
+    "S14": { "title": "Hardcover Royalty", "url": "https://kdp.amazon.com/en_US/help/topic/G77F3WPD3KQLJTFS", "surveyedAt": "2026-11-05" }
+  },
+  "rules": {
+    "rounding": {
+      "source": "S12",
+      "decimals": 2,
+      "half": "up",
+      "rule": "S12 : « we will round the cost to 2 decimal places for all currencies except JPY ». Le coût d'impression est arrondi au centime, puis la redevance est calculée et arrondie au centime. S12 ne dit rien du 5 final : l'arrondi vers le haut est un choix, à confirmer au calculateur officiel."
+    },
+    "largeTrim": { "source": "S4", "widthOverIn": 6.12, "heightOverIn": 9 },
+    "minimumPrice": { "source": "S12", "rule": "Coût d'impression / 50 % ou 60 % selon le prix : le taux est celui qui s'applique au prix obtenu." },
+    "expandedDistribution": { "source": "S12", "paperbackRatePct": 40, "rule": "40 % du prix moins le coût d'impression. Non disponible pour les reliés." },
+    "overlap": "S4 place 110 pages en encre noire dans deux tranches, 24-110 et 110-828 : la tranche par page, la plus chère, est retenue."
+  },
+  "marketplaces": {
+    "amazon.fr": { "zone": "EUR", "vatCountry": "fr" },
+    "amazon.de": { "zone": "EUR", "vatCountry": "de" },
+    "amazon.es": { "zone": "EUR", "vatCountry": "es" },
+    "amazon.it": { "zone": "EUR", "vatCountry": "it" },
+    "amazon.co.uk": { "zone": "GBP", "vatCountry": "uk" },
+    "amazon.com": { "zone": "USD", "vatCountry": null }
+  },
+  "vat": {
+    "source": "S10",
+    "rates": {
+      "fr": { "reducedPct": 5.5, "standardPct": 20 },
+      "de": { "reducedPct": 7, "standardPct": 19 },
+      "es": { "reducedPct": 4, "standardPct": 21 },
+      "it": { "reducedPct": 4, "standardPct": 22 },
+      "uk": { "reducedPct": 0, "standardPct": 20 }
+    }
+  },
+  "zones": {
+    "EUR": {
+      "currency": "EUR",
+      "royalty": {
+        "paperback": { "source": "S9", "rate50MaxPrice": 9.98, "rate60MinPrice": 9.99 },
+        "hardcover": { "source": "S14", "rate50MaxPrice": 9.98, "rate60MinPrice": 9.99 }
+      },
+      "print": {
+        "paperback": {
+          "black": { "source": "S4", "tiers": [
+            { "from": 24, "to": 110, "regular": [2.05, 0], "large": [2.48, 0] },
+            { "from": 110, "to": 828, "regular": [0.75, 0.012], "large": [0.75, 0.016] } ] },
+          "groundwood": { "source": "S4", "tiers": [
+            { "from": 24, "to": 112, "regular": [1.98, 0], "large": [2.39, 0] },
+            { "from": 114, "to": 828, "regular": [0.75, 0.0114], "large": [0.75, 0.0152] } ] },
+          "standard-color": { "source": "S4", "tiers": [
+            { "from": 72, "to": 600, "regular": [0.75, 0.024], "large": [0.75, 0.035] } ] },
+          "premium-color": { "source": "S4", "tiers": [
+            { "from": 24, "to": 40, "regular": [2.85, 0], "large": [3.61, 0] },
+            { "from": 42, "to": 828, "regular": [0.75, 0.0525], "large": [0.75, 0.0715] } ] }
+        },
+        "hardcover": {
+          "black": { "source": "S13", "tiers": [
+            { "from": 75, "to": 108, "regular": [5.95, 0], "large": [6.35, 0] },
+            { "from": 110, "to": 550, "regular": [4.65, 0.012], "large": [4.65, 0.016] } ] },
+          "premium-color": { "source": "S13", "tiers": [
+            { "from": 75, "to": 550, "regular": [4.65, 0.057], "large": [4.65, 0.072] } ] }
+        }
+      }
+    },
+    "GBP": {
+      "currency": "GBP",
+      "royalty": {
+        "paperback": { "source": "S9", "rate50MaxPrice": 7.98, "rate60MinPrice": 7.99 },
+        "hardcover": { "source": "S14", "rate50MaxPrice": 7.98, "rate60MinPrice": 7.99 }
+      },
+      "print": {
+        "paperback": {
+          "black": { "source": "S4", "tiers": [
+            { "from": 24, "to": 110, "regular": [1.93, 0], "large": [2.15, 0] },
+            { "from": 110, "to": 828, "regular": [0.85, 0.01], "large": [0.85, 0.012] } ] },
+          "groundwood": { "source": "S4", "tiers": [
+            { "from": 24, "to": 112, "regular": [1.88, 0], "large": [2.08, 0] },
+            { "from": 114, "to": 828, "regular": [0.85, 0.0095], "large": [0.85, 0.0114] } ] },
+          "standard-color": { "source": "S4", "tiers": [
+            { "from": 72, "to": 600, "regular": [0.85, 0.02], "large": [0.85, 0.027] } ] },
+          "premium-color": { "source": "S4", "tiers": [
+            { "from": 24, "to": 40, "regular": [2.59, 0], "large": [3.24, 0] },
+            { "from": 42, "to": 828, "regular": [0.85, 0.0435], "large": [0.85, 0.0598] } ] }
+        },
+        "hardcover": {
+          "black": { "source": "S13", "tiers": [
+            { "from": 75, "to": 108, "regular": [5.23, 0], "large": [5.45, 0] },
+            { "from": 110, "to": 550, "regular": [4.15, 0.01], "large": [4.15, 0.012] } ] },
+          "premium-color": { "source": "S13", "tiers": [
+            { "from": 75, "to": 550, "regular": [4.15, 0.045], "large": [4.15, 0.06] } ] }
+        }
+      }
+    },
+    "USD": {
+      "currency": "USD",
+      "royalty": {
+        "paperback": { "source": "S9", "rate50MaxPrice": 9.98, "rate60MinPrice": 9.99 },
+        "hardcover": { "source": "S14", "rate50MaxPrice": 9.98, "rate60MinPrice": 9.99 }
+      },
+      "print": {
+        "paperback": {
+          "black": { "source": "S4", "tiers": [
+            { "from": 24, "to": 110, "regular": [2.3, 0], "large": [2.84, 0] },
+            { "from": 110, "to": 828, "regular": [1, 0.012], "large": [1, 0.017] } ] },
+          "groundwood": { "source": "S4", "tiers": [
+            { "from": 24, "to": 112, "regular": [2.23, 0], "large": [2.75, 0] },
+            { "from": 114, "to": 828, "regular": [1, 0.0114], "large": [1, 0.0162] } ] },
+          "standard-color": { "source": "S4", "tiers": [
+            { "from": 72, "to": 600, "regular": [1, 0.0255], "large": [1, 0.0402] } ] },
+          "premium-color": { "source": "S4", "tiers": [
+            { "from": 24, "to": 40, "regular": [3.6, 0], "large": [4.2, 0] },
+            { "from": 42, "to": 828, "regular": [1, 0.065], "large": [1, 0.08] } ] }
+        },
+        "hardcover": {
+          "black": { "source": "S13", "tiers": [
+            { "from": 75, "to": 108, "regular": [6.8, 0], "large": [7.49, 0] },
+            { "from": 110, "to": 550, "regular": [5.65, 0.012], "large": [5.65, 0.017] } ] },
+          "premium-color": { "source": "S13", "tiers": [
+            { "from": 75, "to": 550, "regular": [5.65, 0.065], "large": [5.65, 0.08] } ] }
+        }
+      }
+    }
+  },
+  "trims": {
+    "source": "S1",
+    "paperback": [
+      { "widthIn": 5, "heightIn": 8, "pages": { "black-white": [24, 828], "black-cream": [24, 776], "black-groundwood": [24, 812], "standard-color": [72, 600], "premium-color": [24, 828] } },
+      { "widthIn": 5.06, "heightIn": 7.81, "pages": { "black-white": [24, 828], "black-cream": [24, 776], "black-groundwood": [24, 812], "standard-color": [72, 600], "premium-color": [24, 828] } },
+      { "widthIn": 5.25, "heightIn": 8, "pages": { "black-white": [24, 828], "black-cream": [24, 776], "black-groundwood": [24, 812], "standard-color": [72, 600], "premium-color": [24, 828] } },
+      { "widthIn": 5.5, "heightIn": 8.5, "pages": { "black-white": [24, 828], "black-cream": [24, 776], "black-groundwood": [24, 812], "standard-color": [72, 600], "premium-color": [24, 828] } },
+      { "widthIn": 6, "heightIn": 9, "pages": { "black-white": [24, 828], "black-cream": [24, 776], "black-groundwood": [24, 812], "standard-color": [72, 600], "premium-color": [24, 828] } },
+      { "widthIn": 6.14, "heightIn": 9.21, "pages": { "black-white": [24, 828], "black-cream": [24, 776], "black-groundwood": [24, 812], "standard-color": [72, 600], "premium-color": [24, 828] } },
+      { "widthIn": 6.69, "heightIn": 9.61, "pages": { "black-white": [24, 828], "black-cream": [24, 776], "black-groundwood": [24, 812], "standard-color": [72, 600], "premium-color": [24, 828] } },
+      { "widthIn": 7, "heightIn": 10, "pages": { "black-white": [24, 828], "black-cream": [24, 776], "black-groundwood": [24, 812], "standard-color": [72, 600], "premium-color": [24, 828] } },
+      { "widthIn": 7.44, "heightIn": 9.69, "pages": { "black-white": [24, 828], "black-cream": [24, 776], "black-groundwood": [24, 812], "standard-color": [72, 600], "premium-color": [24, 828] } },
+      { "widthIn": 7.5, "heightIn": 9.25, "pages": { "black-white": [24, 828], "black-cream": [24, 776], "black-groundwood": [24, 812], "standard-color": [72, 600], "premium-color": [24, 828] } },
+      { "widthIn": 8, "heightIn": 10, "pages": { "black-white": [24, 828], "black-cream": [24, 776], "black-groundwood": [24, 812], "standard-color": [72, 600], "premium-color": [24, 828] } },
+      { "widthIn": 8.25, "heightIn": 6, "pages": { "black-white": [24, 800], "black-cream": [24, 750], "black-groundwood": [24, 784], "standard-color": [72, 600], "premium-color": [24, 800] } },
+      { "widthIn": 8.25, "heightIn": 8.25, "pages": { "black-white": [24, 800], "black-cream": [24, 750], "black-groundwood": [24, 784], "standard-color": [72, 600], "premium-color": [24, 800] } },
+      { "widthIn": 8.5, "heightIn": 8.5, "pages": { "black-white": [24, 590], "black-cream": [24, 550], "black-groundwood": [24, 578], "standard-color": [72, 600], "premium-color": [24, 590] } },
+      { "widthIn": 8.5, "heightIn": 11, "pages": { "black-white": [24, 590], "black-cream": [24, 550], "black-groundwood": [24, 578], "standard-color": [72, 600], "premium-color": [24, 590] } },
+      { "widthIn": 8.27, "heightIn": 11.69, "pages": { "black-white": [24, 780], "black-cream": [24, 730], "black-groundwood": [24, 764], "premium-color": [24, 590] } }
+    ],
+    "hardcover": [
+      { "widthIn": 5.5, "heightIn": 8.5, "pages": { "black-white": [75, 550], "black-cream": [75, 550], "premium-color": [75, 550] } },
+      { "widthIn": 6, "heightIn": 9, "pages": { "black-white": [75, 550], "black-cream": [75, 550], "premium-color": [75, 550] } },
+      { "widthIn": 6.14, "heightIn": 9.21, "pages": { "black-white": [75, 550], "black-cream": [75, 550], "premium-color": [75, 550] } },
+      { "widthIn": 7, "heightIn": 10, "pages": { "black-white": [75, 550], "black-cream": [75, 550], "premium-color": [75, 550] } },
+      { "widthIn": 8.25, "heightIn": 11, "pages": { "black-white": [75, 550], "black-cream": [75, 550], "premium-color": [75, 550] } }
+    ]
+  }
+}
