@@ -16,10 +16,10 @@
       "source": "S12",
       "decimals": 2,
       "half": "up",
-      "rule": "S12 : « we will round the cost to 2 decimal places for all currencies except JPY ». Le coût d'impression est arrondi au centime, puis la redevance est calculée et arrondie au centime. S12 ne dit rien du 5 final : l'arrondi vers le haut est un choix, à confirmer au calculateur officiel."
+      "rule": "S12 : « we will round the cost to 2 decimal places for all currencies except JPY ». Le calculateur officiel, relevé le 2026-11-05 (6 × 9, couleur premium, 46 pages, 12 EUR, Amazon.fr : coût 3,17, redevance 4,04, minimum 6,33), montre que la redevance et le prix minimum partent du coût exact, 3,165 : seul le résultat est arrondi au centime, le 5 final vers le haut."
     },
     "largeTrim": { "source": "S4", "widthOverIn": 6.12, "heightOverIn": 9 },
-    "minimumPrice": { "source": "S12", "rule": "Coût d'impression / 50 % ou 60 % selon le prix : le taux est celui qui s'applique au prix obtenu." },
+    "minimumPrice": { "source": "S12", "rule": "Coût d'impression exact / 50 % ou 60 % selon le prix : le taux est celui qui s'applique au prix obtenu. Arrondi au centime supérieur, pour couvrir le coût : un quotient non exact n'a pas été comparé au calculateur officiel." },
     "expandedDistribution": { "source": "S12", "paperbackRatePct": 40, "rule": "40 % du prix moins le coût d'impression. Non disponible pour les reliés." },
     "overlap": "S4 place 110 pages en encre noire dans deux tranches, 24-110 et 110-828 : la tranche par page, la plus chère, est retenue."
   },

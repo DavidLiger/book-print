@@ -1,5 +1,6 @@
 // src/pricing/calc.ts — calcul du simulateur (spec §9.3 à §9.5), fonctions pures. Tout se compte en entiers : les montants
-// en centimes, les coûts bruts en dix-millièmes, la TVA en pour-mille. Un montant comme 3,165 ne dépend donc d'aucun flottant.
+// en centimes, le coût exact en dix-millièmes, la TVA en pour-mille. Un montant comme 3,165 ne dépend donc d'aucun flottant.
+// Comme au calculateur officiel, redevance et prix minimum partent du coût exact : seul le résultat est arrondi.
 import type { Binding, Ink, Marketplace, Rates, Zone } from './rates';
 
 export type TrimCategory = 'regular' | 'large';
@@ -41,8 +42,16 @@ function costKey(ink: Ink): 'black' | 'groundwood' | 'standard-color' | 'premium
 
 const zoneOf = (rates: Rates, market: Marketplace): Zone => rates.marketplaces[market]!.zone;
 
-/** Coût d'impression en centimes, `null` sans barème pour ce nombre de pages. La dernière tranche gagne : voir `rules.overlap`. */
-export function printCost(rates: Rates, q: { binding: Binding; ink: Ink; category: TrimCategory; market: Marketplace; pages: number }): number | null {
+interface CostQuery {
+  binding: Binding;
+  ink: Ink;
+  category: TrimCategory;
+  market: Marketplace;
+  pages: number;
+}
+
+/** Coût d'impression exact en dix-millièmes, `null` sans barème pour ce nombre de pages. La dernière tranche gagne : voir `rules.overlap`. */
+export function exactCost(rates: Rates, q: CostQuery): number | null {
   const print = rates.zones[zoneOf(rates, q.market)]!.print;
   const key = costKey(q.ink);
   const table = q.binding === 'paperback' ? print.paperback[key] : key === 'black' || key === 'premium-color' ? print.hardcover[key] : undefined;
@@ -50,7 +59,13 @@ export function printCost(rates: Rates, q: { binding: Binding; ink: Ink; categor
   const tier = table.tiers.findLast((t) => q.pages >= t.from && q.pages <= t.to);
   if (!tier) return null;
   const [fixed, perPage] = tier[q.category];
-  return divRound(toUnits(fixed) + q.pages * toUnits(perPage), 100);
+  return toUnits(fixed) + q.pages * toUnits(perPage);
+}
+
+/** Coût d'impression affiché, en centimes. */
+export function printCost(rates: Rates, q: CostQuery): number | null {
+  const exact = exactCost(rates, q);
+  return exact === null ? null : divRound(exact, 100);
 }
 
 interface Thresholds {
@@ -64,15 +79,15 @@ function thresholds(rates: Rates, market: Marketplace, binding: Binding): Thresh
 
 export const royaltyRate = (t: Thresholds, price: number): 50 | 60 => (price <= t.max50 ? 50 : 60);
 
-/** (taux × prix) − coût, arrondi au centime, le coût étant déjà arrondi (règle [S12]). */
-export const royalty = (price: number, ratePct: number, cost: number): number => divRound(price * ratePct - cost * 100, 100);
+/** (taux × prix) − coût exact, arrondi au centime à la fin : 7,20 − 3,165 = 4,035, soit 4,04 au calculateur officiel. */
+export const royalty = (price: number, ratePct: number, exact: number): number => divRound(price * ratePct - exact, 100);
 
 /**
- * Plus petit prix qui couvre `cost + target`. Le taux dépend du prix : 3,17 / 0,6 = 5,29 tomberait à 50 %, où ce prix ne
- * couvre plus le coût. Entre les deux, le premier prix à 60 % est le seuil lui-même.
+ * Plus petit prix qui couvre le coût exact plus `target`. Le taux dépend du prix : 3,165 / 0,6 = 5,28 tomberait à 50 %, où
+ * ce prix ne couvre plus le coût. Entre les deux, le premier prix à 60 % est le seuil lui-même.
  */
-export function priceFor(t: Thresholds, cost: number, target: number): { price: number; ratePct: 50 | 60 } {
-  const need = (cost + target) * 100;
+export function priceFor(t: Thresholds, exact: number, target: number): { price: number; ratePct: 50 | 60 } {
+  const need = exact + target * 100;
   const at50 = divCeil(need, 50);
   if (at50 <= t.max50) return { price: at50, ratePct: 50 };
   return { price: Math.max(t.min60, divCeil(need, 60)), ratePct: 60 };
@@ -172,21 +187,21 @@ export function evaluate(rates: Rates, input: PricingInput, today: Date): Pricin
   if (ht >= t.max50 && ht <= t.min60) alerts.push(`Prix à la limite du changement de taux : 50 % jusqu'à ${money(t.max50)} HT, 60 % à partir de ${money(t.min60)} HT.`);
   if (ratesAreOld(rates.surveyedAt, today)) alerts.push(`Barèmes relevés le ${dateFr(rates.surveyedAt)}, il y a plus de 6 mois : à relever de nouveau.`);
 
-  const cost = printCost(rates, { binding: input.binding, ink: input.ink, category, market, pages });
-  if (cost === null) return { currency, trim: label, category, pages, pagesCalculation: calculation, vatPct, printCost: null, ratePct: null, price: taxed(ht), royalty: null, expandedRoyalty: null, minimumPrice: null, target: null, errors, alerts };
+  const exact = exactCost(rates, { binding: input.binding, ink: input.ink, category, market, pages });
+  if (exact === null) return { currency, trim: label, category, pages, pagesCalculation: calculation, vatPct, printCost: null, ratePct: null, price: taxed(ht), royalty: null, expandedRoyalty: null, minimumPrice: null, target: null, errors, alerts };
 
   const ratePct = royaltyRate(t, ht);
-  const minimumPrice = priceFor(t, cost, 0).price;
+  const minimumPrice = priceFor(t, exact, 0).price;
   if (ht < minimumPrice) errors.push(`Prix de ${money(ht)} HT sous le prix minimum de ${money(minimumPrice)} HT.`);
 
-  const expandedRoyalty = input.binding === 'paperback' ? royalty(ht, rates.rules.expandedDistribution.paperbackRatePct, cost) : null;
+  const expandedRoyalty = input.binding === 'paperback' ? royalty(ht, rates.rules.expandedDistribution.paperbackRatePct, exact) : null;
   if (expandedRoyalty !== null && expandedRoyalty < 0) alerts.push(`Redevance négative en distribution étendue : ${money(expandedRoyalty)}.`);
 
   let target: PricingResult['target'] = null;
   if (input.targetRoyalty !== undefined) {
-    const found = priceFor(t, cost, toCents(input.targetRoyalty));
+    const found = priceFor(t, exact, toCents(input.targetRoyalty));
     target = { ...taxed(found.price), ratePct: found.ratePct };
   }
 
-  return { currency, trim: label, category, pages, pagesCalculation: calculation, vatPct, printCost: cost, ratePct, price: taxed(ht), royalty: royalty(ht, ratePct, cost), expandedRoyalty, minimumPrice, target, errors, alerts };
+  return { currency, trim: label, category, pages, pagesCalculation: calculation, vatPct, printCost: divRound(exact, 100), ratePct, price: taxed(ht), royalty: royalty(ht, ratePct, exact), expandedRoyalty, minimumPrice, target, errors, alerts };
 }

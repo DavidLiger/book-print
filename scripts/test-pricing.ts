@@ -7,7 +7,7 @@ import path from 'node:path';
 import { bookFolder, deleteScenario, PricingRefused, readPricing, readPrintBook, retainScenario, saveScenario } from '../src/data/pricing-file';
 import { createBookFolder } from '../src/data/create-book';
 import { createPrintServer } from '../src/server/app';
-import { divRound, estimatePages, evaluate, formatMoney, htToTtc, priceFor, printCost, ratesAreOld, resolvePages, royalty, royaltyRate, toCents, trimCategory, trimLabel, ttcToHt } from '../src/pricing/calc';
+import { divRound, estimatePages, evaluate, exactCost, formatMoney, htToTtc, priceFor, printCost, ratesAreOld, resolvePages, royalty, royaltyRate, toCents, trimCategory, trimLabel, ttcToHt } from '../src/pricing/calc';
 import { BINDINGS, loadRates, MARKETPLACES, parseRates, type Binding, type Ink, type Marketplace } from '../src/pricing/rates';
 import { deviation, emptyPricing, pricingFileSchema, scenarioInputSchema, scenarioSchema, type ScenarioInput } from '../src/pricing/scenarios';
 import { dirLink, fileLink, makeGlbi, put, tempDir } from './fixtures/make-glbi';
@@ -20,6 +20,7 @@ const threshold = (market: Marketplace, binding: Binding = 'paperback') => {
   return { max50: toCents(zone.royalty[binding].rate50MaxPrice), min60: toCents(zone.royalty[binding].rate60MinPrice) };
 };
 const cost = (market: Marketplace, ink: Ink, category: 'regular' | 'large', pages: number, binding: Binding = 'paperback') => printCost(rates, { binding, ink, category, market, pages });
+const exact = (market: Marketplace, ink: Ink, category: 'regular' | 'large', pages: number) => exactCost(rates, { binding: 'paperback', ink, category, market, pages })!;
 const base: ScenarioInput = {
   name: 'Essai',
   binding: 'paperback',
@@ -92,11 +93,11 @@ check('[S4] 300 p., noir, normal, .com : 4,60 $', cost('amazon.com', 'black-whit
 check('[S4] 55 p., noir, normal, .co.uk : 1,93 £ (forfait)', cost('amazon.co.uk', 'black-white', 'regular', 55) === 193);
 check('[S9] 333 p., noir, normal, .com : coût arrondi à 5,00 $', cost('amazon.com', 'black-white', 'regular', 333) === 500);
 {
-  const c = cost('amazon.com', 'black-white', 'regular', 333)!;
+  const c = exact('amazon.com', 'black-white', 'regular', 333);
   check('[S9] 15 $ : redevance Amazon 4,00 $', royalty(1500, 60, c) === 400);
   check('[S9] 15 $ : distribution étendue 1,00 $', royalty(1500, 40, c) === 100);
-  check('[S12] 300 p. à 9,99 $ : 1,39 $ à 60 %', royalty(999, royaltyRate(threshold('amazon.com'), 999), 460) === 139);
-  check('[S12] 300 p. à 9,98 $ : 0,39 $ à 50 %', royalty(998, royaltyRate(threshold('amazon.com'), 998), 460) === 39);
+  check('[S12] 300 p. à 9,99 $ : 1,39 $ à 60 %', royalty(999, royaltyRate(threshold('amazon.com'), 999), 46000) === 139);
+  check('[S12] 300 p. à 9,98 $ : 0,39 $ à 50 %', royalty(998, royaltyRate(threshold('amazon.com'), 998), 46000) === 39);
 }
 check('[S13] relié, 300 p., noir, normal, .com : 9,25 $', cost('amazon.com', 'black-white', 'regular', 300, 'hardcover') === 925);
 check('[S13] relié, 300 p., noir, grand, .com : 10,75 $', cost('amazon.com', 'black-white', 'large', 300, 'hardcover') === 1075);
@@ -126,15 +127,15 @@ check('affichage : euros', formatMoney(317, 'EUR') === '3,17 €');
 check('affichage : centimes sur deux chiffres', formatMoney(405, 'USD') === '4,05 $');
 check('affichage : négatif', formatMoney(-5, 'GBP') === '−0,05 £');
 
-// Cas de David
+// Cas de David, relevé au calculateur officiel le 05/11/2026 : coût 3,17 €, redevance 4,04 €, minimum 6,33 €
 {
   const r = run();
-  check('cas de David : coût 3,17 €', r.printCost === 317, r);
-  check('cas de David : redevance 4,03 €', r.royalty === 403, r);
+  check('cas de David : coût affiché 3,17 €', r.printCost === 317, r);
+  check('cas de David : redevance 4,04 €, sur le coût exact', r.royalty === 404, r);
   check('cas de David : taux 60 %', r.ratePct === 60);
   check('cas de David : format normal', r.category === 'regular');
-  check('cas de David : distribution étendue 1,63 €', r.expandedRoyalty === 163, r);
-  check('cas de David : prix minimum 6,34 €', r.minimumPrice === 634, r);
+  check('cas de David : distribution étendue 1,64 €', r.expandedRoyalty === 164, r);
+  check('cas de David : prix minimum 6,33 €', r.minimumPrice === 633, r);
   check('cas de David : aucune erreur ni alerte', r.errors.length === 0 && r.alerts.length === 0, r);
   check('cas de David : TTC aux deux taux', r.price.ttcReduced === 1266 && r.price.ttcStandard === 1440, r.price);
 }
@@ -146,9 +147,11 @@ check('taux : 9,99 € à 60 %', royaltyRate(euro, 999) === 60);
 check('taux : 7,98 £ à 50 %', royaltyRate(threshold('amazon.co.uk'), 798) === 50);
 check('taux : 7,99 £ à 60 %', royaltyRate(threshold('amazon.co.uk'), 799) === 60);
 check('taux : relié, 9,98 € à 50 %', royaltyRate(threshold('amazon.fr', 'hardcover'), 998) === 50);
-check('minimum : à 50 % quand le prix y tombe', priceFor(euro, 317, 0).price === 634 && priceFor(euro, 317, 0).ratePct === 50);
-check('minimum : seuil de 9,99 € entre les deux taux', priceFor(euro, 550, 0).price === 999 && priceFor(euro, 550, 0).ratePct === 60);
-check('minimum : à 60 % au-delà', priceFor(euro, 647, 0).price === 1079 && priceFor(euro, 647, 0).ratePct === 60);
+check('minimum : à 50 % quand le prix y tombe', priceFor(euro, 31650, 0).price === 633 && priceFor(euro, 31650, 0).ratePct === 50);
+check('minimum : seuil de 9,99 € entre les deux taux', priceFor(euro, 55000, 0).price === 999 && priceFor(euro, 55000, 0).ratePct === 60);
+check('minimum : à 60 % au-delà', priceFor(euro, 64700, 0).price === 1079 && priceFor(euro, 64700, 0).ratePct === 60);
+check('6 × 9, 44 p. : 4,14 € et 6,12 €', run({ pages: { mode: 'saisi', pages: 44 } }).royalty === 414 && run({ pages: { mode: 'saisi', pages: 44 } }).minimumPrice === 612);
+check('8,5 × 11, 46 p. : 3,16 € et 8,08 €', run({ trim: { widthIn: 8.5, heightIn: 11 } }).royalty === 316 && run({ trim: { widthIn: 8.5, heightIn: 11 } }).minimumPrice === 808);
 
 // Conversion HT et TTC
 check('HT → TTC à 5,5 %', htToTtc(1200, 5.5) === 1266);
@@ -167,8 +170,8 @@ check('.de : taux normal à 19 %', run({ marketplace: 'amazon.de' }).price.ttcSt
   const r = run({ targetRoyalty: 4 });
   check('redevance visée : 4 € à 11,95 € HT', r.target?.ht === 1195 && r.target.ratePct === 60, r.target);
   check('redevance visée : TTC aux deux taux', r.target?.ttcReduced === 1261 && r.target.ttcStandard === 1434, r.target);
-  check('redevance visée : atteinte au prix donné', royalty(r.target!.ht, 60, 317) === 400);
-  check('redevance visée : tombe à 50 %', run({ targetRoyalty: 1 }).target?.ratePct === 50 && run({ targetRoyalty: 1 }).target?.ht === 834);
+  check('redevance visée : atteinte au prix donné', royalty(r.target!.ht, 60, 31650) >= 400);
+  check('redevance visée : tombe à 50 %', run({ targetRoyalty: 1 }).target?.ratePct === 50 && run({ targetRoyalty: 1 }).target?.ht === 833);
   check('redevance visée : seuil de 9,99 €', run({ targetRoyalty: 2 }).target?.ht === 999);
   check('redevance visée : absente', run().target === null);
 }
@@ -197,9 +200,9 @@ check('scénario estimé : calcul complet dans le résultat', run({ pages: estim
   check('erreur : format hors liste', hasText(run({ trim: { widthIn: 6, heightIn: 8 } }).errors, 'absent'));
   check('erreur : encre indisponible sur le format', hasText(run({ ink: 'standard-color', trim: { widthIn: 8.27, heightIn: 11.69 }, pages: { mode: 'saisi', pages: 100 } }).errors, 'indisponibles'));
   check('erreur : nombre de pages impair', hasText(run({ pages: { mode: 'saisi', pages: 47 } }).errors, 'pair'));
-  check('erreur : prix sous le minimum', hasText(run({ price: { kind: 'ht', amount: 6.33 } }).errors, 'sous le prix minimum'));
-  check('prix égal au minimum admis', run({ price: { kind: 'ht', amount: 6.34 } }).errors.length === 0);
-  check('erreur : entre le prix à 60 % et le minimum réel', hasText(run({ price: { kind: 'ht', amount: 5.29 } }).errors, '6,34'));
+  check('erreur : prix sous le minimum', hasText(run({ price: { kind: 'ht', amount: 6.32 } }).errors, 'sous le prix minimum'));
+  check('prix égal au minimum admis', run({ price: { kind: 'ht', amount: 6.33 } }).errors.length === 0);
+  check('erreur : entre le prix à 60 % et le minimum réel', hasText(run({ price: { kind: 'ht', amount: 5.29 } }).errors, '6,33'));
 }
 
 // Contrôles : alertes (§9.5)
@@ -413,7 +416,7 @@ function request(port: number, opts: { method?: string; path: string; headers?: 
   check('état : avertissement du §9.7', state.catalog.warning === 'Estimation selon les barèmes KDP relevés le 05/11/2026. Vérifiez avec le calculateur officiel.' && state.catalog.calculatorUrl === 'https://kdp.amazon.com/royalty-calculator', state.catalog);
   check('état : formats de la liste', state.catalog.trims.paperback.some((t: { label: string; category: string }) => t.label === '6 × 9"' && t.category === 'regular'));
   const computed = JSON.parse((await post('/api/pricing/compute', { scenario: base })).body);
-  check('calcul : sans dossier ni enregistrement', computed.result.royalty === 403 && fs.readdirSync(dataRoot).length === 0, computed);
+  check('calcul : sans dossier ni enregistrement', computed.result.royalty === 404 && fs.readdirSync(dataRoot).length === 0, computed);
   check('enregistrement sans dossier : 409', (await post('/api/pricing/save', { bookId, scenario: base })).status === 409);
   check('bookId refusé : 409', (await post('/api/pricing/state', { bookId: '../x' })).status === 409);
   check('scénario invalide : 400 avec le champ', (await post('/api/pricing/compute', { scenario: { ...base, ink: 'or' } })).body.includes('ink'));
