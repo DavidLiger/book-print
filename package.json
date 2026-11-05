@@ -1,0 +1,22 @@
+{
+  "name": "book-print",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "print": "tsx src/server/main.ts",
+    "test:schema": "tsx scripts/test-schema.ts",
+    "test:glbi": "tsx scripts/test-glbi.ts",
+    "test:server": "tsx scripts/test-server.ts",
+    "test:create": "tsx scripts/test-create.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "description": "",
+  "type": "module",
+  "devDependencies": {
+    "@types/node": "20.19.11",
+    "tsx": "4.23.15",
+    "typescript": "5.9.2",
+    "zod": "4.6.5"
+  }
+}

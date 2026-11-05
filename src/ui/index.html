@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>book-print</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main>
+    <h1>book-print</h1>
+
+    <section aria-labelledby="t-config">
+      <h2 id="t-config">Configuration</h2>
+      <div id="config"></div>
+    </section>
+
+    <section id="livre" aria-labelledby="t-livre" hidden>
+      <h2 id="t-livre">Livre lu dans GLBInterpreter</h2>
+      <label for="choix">Livre</label>
+      <select id="choix"></select>
+      <div id="lecture"></div>
+    </section>
+
+    <section id="donnees" aria-labelledby="t-donnees" hidden>
+      <h2 id="t-donnees">Dossier de données</h2>
+      <button id="creer" type="button">Créer le dossier du livre</button>
+      <div id="creation"></div>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>
