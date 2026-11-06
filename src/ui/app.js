@@ -462,11 +462,16 @@ function checksTable(checks) {
   const head = el('tr');
   for (const t of ['Contrôle', 'Objet', 'Résultat']) head.append(el('th', t));
   table.append(head);
-  const WORDS = { ok: 'vert', alerte: 'alerte', erreur: 'erreur' };
+  const SIGNS = { ok: ['✓', 'contrôle réussi'], alerte: ['⚠', 'alerte'], erreur: ['✗', 'erreur'] };
   const CLASSES = { ok: 'bien', alerte: 'alerte', erreur: 'erreur' };
   for (const c of checks) {
     const row = el('tr');
-    const verdict = el('td', WORDS[c.level], CLASSES[c.level]);
+    const verdict = el('td');
+    const [sign, meaning] = SIGNS[c.level];
+    const mark = el('span', sign, `signe ${CLASSES[c.level]}`);
+    mark.title = meaning;
+    mark.setAttribute('aria-label', meaning);
+    verdict.append(mark);
     for (const d of c.details) verdict.append(el('p', d, `${CLASSES[c.level]} cellule`));
     row.append(el('td', c.id), el('td', c.label), verdict);
     table.append(row);

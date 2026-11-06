@@ -74,3 +74,4 @@ fieldset label { display: flex; gap: 6px; align-items: center; margin: 0; color:
 .r-fold { stroke: #1f5fa8; stroke-width: 0.5; stroke-dasharray: 3 2; }
 .r-zone { fill: none; stroke: #c76a00; stroke-width: 0.3; stroke-dasharray: 2 1.5; }
 .r-label { fill: #c76a00; font: 3px system-ui, sans-serif; }
+.signe { font-size: 18px; font-weight: 700; line-height: 1; }
