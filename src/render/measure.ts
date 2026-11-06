@@ -34,6 +34,13 @@ export interface MeasuredFault {
   kind: string;
   value: string;
 }
+/** Texte plus grand que sa zone ou que sa case de fiche (C12). `item` : l'information de la fiche, `null` pour une zone entière. */
+export interface MeasuredOverflow {
+  page: number;
+  zone: string;
+  item: string | null;
+  overMm: number;
+}
 export interface Measures {
   fontsLoaded: boolean;
   pages: { number: number; side: string; widthMm: number; heightMm: number }[];
@@ -41,12 +48,13 @@ export interface Measures {
   texts: MeasuredText[];
   lines: MeasuredLine[];
   faults: MeasuredFault[];
+  overflows: MeasuredOverflow[];
 }
 
 export const MEASURE_SCRIPT = `(() => {
   const MM = 25.4 / 96;
   const PT = 0.75;
-  const out = { fontsLoaded: true, pages: [], boxes: [], texts: [], lines: [], faults: [] };
+  const out = { fontsLoaded: true, pages: [], boxes: [], texts: [], lines: [], faults: [], overflows: [] };
   for (const f of document.fonts) if (f.status !== 'loaded') out.fontsLoaded = false;
   const alpha = (c) => {
     const m = /^rgba?\\((.*)\\)$/.exec(c);
@@ -54,6 +62,9 @@ export const MEASURE_SCRIPT = `(() => {
     const parts = m[1].split(/[\\s,\\/]+/).filter(Boolean);
     return parts.length > 3 ? Number(parts[3]) : 1;
   };
+  // Boîtes du texte mis en page : la boîte d'un glyphe dépasse sa ligne dans une police à grands jambages (Baloo 2), elle ne dit rien d'un débordement.
+  const over = (inner, outer) => Math.max(outer.top - inner.top, inner.bottom - outer.bottom, outer.left - inner.left, inner.right - outer.right);
+  const OVER_PX = 0.5;
   for (const section of document.querySelectorAll('section.page')) {
     const number = Number(section.dataset.page);
     const base = section.getBoundingClientRect();
@@ -64,6 +75,13 @@ export const MEASURE_SCRIPT = `(() => {
       const type = zone.dataset.type;
       out.boxes.push({ page: number, zone: id, type, kind: 'zone', rect: rel(zone.getBoundingClientRect()) });
       for (const svg of zone.querySelectorAll('svg')) out.boxes.push({ page: number, zone: id, type, kind: 'svg', rect: rel(svg.getBoundingClientRect()) });
+      const zoneRect = zone.getBoundingClientRect();
+      const overflow = (item, px) => { if (px > OVER_PX) out.overflows.push({ page: number, zone: id, item, overMm: px * MM }); };
+      for (const fill of zone.querySelectorAll('[data-fill]')) {
+        const info = fill.closest('[data-item]');
+        const r = fill.getBoundingClientRect();
+        overflow(info ? info.dataset.item : null, Math.max(over(r, zoneRect), info ? over(r, info.getBoundingClientRect()) : 0, fill.scrollWidth - fill.clientWidth));
+      }
       const walker = document.createTreeWalker(zone, NodeFilter.SHOW_TEXT);
       for (let n = walker.nextNode(); n; n = walker.nextNode()) {
         if (!n.nodeValue.trim()) continue;

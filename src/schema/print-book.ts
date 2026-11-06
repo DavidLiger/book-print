@@ -2,6 +2,7 @@
 // `trim` et `pageBudget` portent les valeurs provisoires du §3.2, décision ferme en PX1 : aucune géométrie n'en dépend ici.
 import { z } from 'zod';
 import { bookIdSchema, langSchema, schemaVersionSchema, slugSchema, uniqueList } from './common';
+import { ficheSchema } from './style';
 
 /** ISBN-13 : 978 ou 979, tirets admis ; la clé de contrôle sera vue au lot couverture (P-3). */
 const isbnSchema = z.string().refine((s) => /^97[89]\d{10}$/.test(s.replace(/-/g, '')), 'ISBN : 13 chiffres commençant par 978 ou 979');
@@ -26,6 +27,8 @@ export const printBookSchema = z.strictObject({
   frontMatter: uniqueList(slugSchema, 'page liminaire'),
   backMatter: uniqueList(slugSchema, 'page finale'),
   subjects: uniqueList(slugSchema, 'sujet'),
+  /** Remplace la fiche de `collection/style.json` pour ce livre (P-30). Les pictogrammes sont contrôlés avec la collection, au rendu. */
+  fiche: ficheSchema.optional(),
 });
 export type PrintBook = z.infer<typeof printBookSchema>;
 

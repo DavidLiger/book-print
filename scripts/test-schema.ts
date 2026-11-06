@@ -1,6 +1,9 @@
 // scripts/test-schema.ts — schémas print-book et subject : le cas valide, puis chaque refus.
 import fs from 'node:fs';
 import { printBookSchema, newPrintBook } from '../src/schema/print-book';
+import { blockId, blockSchema } from '../src/schema/block';
+import { claimIsValidated, claimSchema, claimText, sourceSchema, storedClaimSchema } from '../src/schema/claim';
+import { researchImportSchema, storedResearchSchema } from '../src/schema/research';
 import { rightsFileSchema } from '../src/schema/rights';
 import { contrast, styleSchema } from '../src/schema/style';
 import { subjectSchema } from '../src/schema/subject';
@@ -195,5 +198,101 @@ check('droits par défaut valides', rightsFileSchema.safeParse(defaultRights).su
 check('droits par défaut : polices OFL et pictogrammes maison', defaultRights.entries.map((e: Dict) => e.id).join() === 'andika,baloo-2,pictos-maison');
 check('droits : genre inconnu refusé', !rightsFileSchema.safeParse({ ...defaultRights, entries: [{ ...defaultRights.entries[0], kind: 'autre' }] }).success);
 check('droits : licence manquante refusée', !rightsFileSchema.safeParse({ ...defaultRights, entries: [{ ...defaultRights.entries[0], license: '' }] }).success);
+
+// Fiche par livre (P-30)
+{
+  const item = { id: 'portee', picto: 'taille', label: { fr: 'Portée', en: 'Range', es: 'Alcance' } };
+  check('print-book : fiche propre au livre admise', printBookSchema.safeParse({ ...book(), fiche: [item] }).success);
+  check('print-book : sans fiche, celle de la collection', book().fiche === undefined);
+  noBook('fiche vide', (b) => { b.fiche = []; });
+  noBook('fiche, information en double', (b) => { b.fiche = [item, item]; });
+  noBook('fiche, libellé manquant', (b) => { b.fiche = [{ ...item, label: { fr: 'Portée' } }]; });
+}
+
+// Source
+const source = (): Dict => ({ url: 'https://exemple.example/page', title: 'Titre', publisher: 'Éditeur', accessed: '2026-11-06', support: 'Paraphrase.' });
+const noSource = (name: string, change: (v: Dict) => void) => refused(sourceSchema, `source, ${name}`, change, source);
+check('source valide', sourceSchema.safeParse(source()).success);
+check('source : date de publication libre', sourceSchema.safeParse({ ...source(), published: 'mars 2019' }).success);
+check('source : accessed avec heure', sourceSchema.safeParse({ ...source(), accessed: '2026-11-06T10:00:00+01:00' }).success);
+for (const key of ['url', 'title', 'publisher', 'accessed', 'support']) noSource(`${key} absent`, (v) => delete v[key]);
+noSource('clé inconnue', (v) => { v.plus = 1; });
+noSource('URL ftp', (v) => { v.url = 'ftp://exemple.example/'; });
+noSource('URL javascript', (v) => { v.url = 'javascript:alert(1)'; });
+noSource('URL sans hôte', (v) => { v.url = 'https://'; });
+noSource('titre vide', (v) => { v.title = '  '; });
+noSource('date invalide', (v) => { v.accessed = 'hier'; });
+noSource('date impossible', (v) => { v.accessed = '2026-13-45'; });
+noSource('paraphrase trop longue', (v) => { v.support = 'x'.repeat(401); });
+noSource('paraphrase vide', (v) => { v.support = ''; });
+
+// Affirmation
+const claim = (): Dict => ({ id: 'c1', text: 'Une affirmation.', sources: [source()], confidence: 'forte' });
+const noClaim = (name: string, change: (v: Dict) => void) => refused(claimSchema, `affirmation, ${name}`, change, claim);
+check('affirmation valide', claimSchema.safeParse(claim()).success);
+noClaim('sans source', (v) => { v.sources = []; });
+noClaim('identifiant invalide', (v) => { v.id = 'C 1'; });
+noClaim('texte vide', (v) => { v.text = ''; });
+noClaim('texte trop long', (v) => { v.text = 'x'.repeat(301); });
+noClaim('confiance inconnue', (v) => { v.confidence = 'moyenne'; });
+noClaim('statut dans le fichier importé', (v) => { v.status = 'valide'; });
+
+const stored = (): Dict => ({ ...claim(), status: 'propose', validatedAt: null, note: '' });
+const noStored = (name: string, change: (v: Dict) => void) => refused(storedClaimSchema, `affirmation stockée, ${name}`, change, stored);
+check('affirmation stockée valide', storedClaimSchema.safeParse(stored()).success);
+check('affirmation stockée : contrôle d’URL par source', storedClaimSchema.safeParse({ ...stored(), sources: [{ ...source(), urlCheck: { date: '2026-11-06T12:00:00.000Z', code: 200, error: null } }] }).success);
+noStored('statut inconnu', (v) => { v.status = 'accepte'; });
+noStored('sans note', (v) => delete v.note);
+noStored('date de validation invalide', (v) => { v.validatedAt = 'hier'; });
+noStored('correction vide', (v) => { v.correctedText = ' '; });
+noStored('contrôle d’URL incomplet', (v) => { v.sources = [{ ...source(), urlCheck: { code: 200 } }]; });
+check('corrigée et validée comptent, proposée et rejetée non', claimIsValidated('valide') && claimIsValidated('corrige') && !claimIsValidated('propose') && !claimIsValidated('rejete'));
+check('texte en vigueur : la correction de David', claimText({ ...stored(), correctedText: 'Corrigé.' } as never) === 'Corrigé.' && claimText(stored() as never) === 'Une affirmation.');
+
+// Bloc
+const block = (): Dict => ({ id: 'texte', zone: 'texte', type: 'texte', text: { fr: 'Texte.' }, claims: ['c1'], state: 'a-relire' });
+const noBlock = (name: string, change: (v: Dict) => void) => refused(blockSchema, `bloc, ${name}`, change, block);
+check('bloc valide', blockSchema.safeParse(block()).success);
+check('bloc de fiche : item', blockSchema.safeParse({ ...block(), id: 'fiche-taille', zone: 'fiche', type: 'fiche', item: 'taille' }).success);
+check('bloc : chapeau est un type', blockSchema.safeParse({ ...block(), type: 'chapeau' }).success);
+check('bloc : texte vide admis le temps de le récrire, C12 le refuse', blockSchema.safeParse({ ...block(), text: { fr: '' } }).success);
+check('identifiant de bloc', blockId('texte') === 'texte' && blockId('fiche', 'taille') === 'fiche-taille');
+noBlock('sans affirmation', (v) => { v.claims = []; });
+noBlock('affirmation citée deux fois', (v) => { v.claims = ['c1', 'c1']; });
+noBlock('type titre', (v) => { v.type = 'titre'; });
+noBlock('état inconnu', (v) => { v.state = 'relu'; });
+noBlock('langue inconnue', (v) => { v.text = { de: 'Text.' }; });
+noBlock('fiche sans item', (v) => { v.type = 'fiche'; });
+noBlock('item hors fiche', (v) => { v.item = 'taille'; });
+noBlock('clé inconnue', (v) => { v.plus = 1; });
+
+// Sujet avec blocs
+check('sujet écrit avant MP3 : toujours lisible', subjectSchema.safeParse(subject()).success);
+check('sujet avec blocs et légende', subjectSchema.safeParse({ ...subject(), blocks: [block()], qrLegend: { fr: 'Scanne-moi' } }).success);
+noSubject('bloc invalide', (s) => { s.blocks = [{ ...block(), state: 'x' }]; });
+noSubject('bloc en double', (s) => { s.blocks = [block(), block()]; });
+noSubject('légende vide', (s) => { s.qrLegend = { fr: ' ' }; });
+noSubject('illustrations encore refusées', (s) => { s.illustrations = [{}]; });
+
+// Recherche
+const research = (): Dict => ({ schemaVersion: 1, subjectId: 'alpha', lang: 'fr', generatedAt: '2026-11-06', claims: [claim()], blocks: [{ zone: 'texte', type: 'texte', text: 'Texte.', claims: ['c1'] }] });
+const noResearch = (name: string, change: (v: Dict) => void) => refused(researchImportSchema, `recherche, ${name}`, change, research);
+check('recherche valide', researchImportSchema.safeParse(research()).success);
+for (const key of ['schemaVersion', 'subjectId', 'lang', 'generatedAt', 'claims', 'blocks']) noResearch(`${key} absent`, (v) => delete v[key]);
+noResearch('aucune affirmation', (v) => { v.claims = []; });
+noResearch('aucun bloc', (v) => { v.blocks = []; });
+noResearch('langue inconnue', (v) => { v.lang = 'de'; });
+noResearch('version inconnue', (v) => { v.schemaVersion = 2; });
+noResearch('affirmation en double', (v) => { v.claims = [claim(), claim()]; });
+noResearch('bloc citant une inconnue', (v) => { v.blocks[0].claims = ['c9']; });
+noResearch('bloc sans affirmation', (v) => { v.blocks[0].claims = []; });
+noResearch('bloc citant deux fois', (v) => { v.blocks[0].claims = ['c1', 'c1']; });
+noResearch('bloc sans texte', (v) => { v.blocks[0].text = ''; });
+noResearch('clé inconnue', (v) => { v.plus = 1; });
+check('recherche stockée valide', storedResearchSchema.safeParse({ ...research(), claims: [stored()] }).success);
+check('recherche stockée : sans statut, refusée', !storedResearchSchema.safeParse(research()).success);
+
+// Gabarit : limite d'une information de fiche
+check('2A : limite par information de fiche', TEMPLATES['2A']!.sheets[0]!.zones.find((z) => z.id === 'fiche')!.constraints?.itemMaxChars === 28);
 
 finish('schémas');

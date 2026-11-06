@@ -9,15 +9,18 @@ import '../schema/common';
 import { CollectionRefused } from '../data/collection';
 import { CreateRefused, createBookFolder } from '../data/create-book';
 import { PricingRefused } from '../data/pricing-file';
+import { SubjectRefused } from '../data/subject-file';
 import { listBooks, readBook } from '../glbi/read';
 import { readFacts } from '../parcours/facts';
 import { computeParcours } from '../parcours/steps';
 import { RenderRefused } from '../render/html';
+import { ResearchRefused } from '../research/errors';
 import { GeometryRefused } from '../templates/geometry';
 import { loadConfig, type ConfigState } from './config';
 import { BadEssaiRequest, ESSAI_ACTIONS, previewHtml, PREVIEW_CSP } from './essai-actions';
 import { BadPricingRequest, PRICING_ACTIONS } from './pricing-actions';
 import { ACTION_HEADER, actionAllowed, hostAllowed } from './rules';
+import { BadSubjectRequest, IMPORT_MAX_BYTES, SUBJECT_ACTIONS, subjectPreviewHtml } from './subject-actions';
 
 const UI_DIR = fileURLToPath(new URL('../ui/', import.meta.url));
 const STATIC: Record<string, { file: string; type: string }> = {
@@ -26,6 +29,8 @@ const STATIC: Record<string, { file: string; type: string }> = {
   '/style.css': { file: 'style.css', type: 'text/css; charset=utf-8' },
 };
 const MAX_BODY = 64 * 1024;
+/** Limites propres à une route : toutes les autres restent à `MAX_BODY`. */
+const BODY_LIMITS: Record<string, number> = { '/api/sujet/import': IMPORT_MAX_BYTES };
 const dirBody = z.strictObject({ dir: z.string() });
 const parcoursBody = z.strictObject({ dir: z.string().nullable() });
 
@@ -50,13 +55,13 @@ function send(res: http.ServerResponse, status: number, body: string, type: stri
 const sendJson = (res: http.ServerResponse, status: number, value: Json, extra?: Record<string, string>) =>
   send(res, status, JSON.stringify(value), 'application/json; charset=utf-8', extra);
 
-function readBody(req: http.IncomingMessage): Promise<unknown> {
+function readBody(req: http.IncomingMessage, limit: number): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let size = 0;
     req.on('data', (c: Buffer) => {
       size += c.length;
-      if (size > MAX_BODY) {
+      if (size > limit) {
         reject(new HttpError(413, 'corps trop long'));
         req.destroy();
       } else chunks.push(c);
@@ -105,6 +110,7 @@ const ACTIONS: Record<string, (body: unknown, configPath: string) => Json | Prom
   ...Object.fromEntries(
     Object.entries({ ...PRICING_ACTIONS, ...ESSAI_ACTIONS }).map(([route, run]) => [route, (body: unknown, configPath: string) => run(body, configured(loadConfig(configPath)).dataRoot)]),
   ),
+  ...Object.fromEntries(Object.entries(SUBJECT_ACTIONS).map(([route, run]) => [route, (body: unknown, configPath: string) => run(body, configured(loadConfig(configPath)))])),
 };
 
 async function handle(req: http.IncomingMessage, res: http.ServerResponse, port: number, configPath: string): Promise<void> {
@@ -119,7 +125,8 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, port:
       port,
     );
     if (!allowed) return sendJson(res, 403, { error: `action refusée : POST JSON avec ${ACTION_HEADER}: 1 attendu` });
-    return sendJson(res, 200, await action(await readBody(req), configPath));
+    const limit = Object.hasOwn(BODY_LIMITS, url) ? BODY_LIMITS[url]! : MAX_BODY;
+    return sendJson(res, 200, await action(await readBody(req, limit), configPath));
   }
 
   // Aperçu : le HTML du PDF, dans un cadre de la page. Lecture seule, sur contenu d'essai : polices et images en `data:`, aucun script.
@@ -127,6 +134,14 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, port:
     if (req.method !== 'GET') return sendJson(res, 405, { error: 'GET attendu' }, { Allow: 'GET' });
     const query = new URL(req.url ?? '/', 'http://local').searchParams;
     const html = previewHtml(query.get('bookId'), query.get('theme'), configured(loadConfig(configPath)).dataRoot);
+    return send(res, 200, html, 'text/html; charset=utf-8', { 'Content-Security-Policy': PREVIEW_CSP });
+  }
+
+  // Aperçu d'un sujet : le même HTML que le PDF, avec le texte réel, relu à chaque demande.
+  if (url === '/apercu-sujet') {
+    if (req.method !== 'GET') return sendJson(res, 405, { error: 'GET attendu' }, { Allow: 'GET' });
+    const query = new URL(req.url ?? '/', 'http://local').searchParams;
+    const html = subjectPreviewHtml(query.get('dir'), query.get('subject'), configured(loadConfig(configPath)));
     return send(res, 200, html, 'text/html; charset=utf-8', { 'Content-Security-Policy': PREVIEW_CSP });
   }
 
@@ -143,8 +158,8 @@ export function createPrintServer(configPath: string): http.Server {
     handle(req, res, port, configPath).catch((e: unknown) => {
       if (res.headersSent) return res.destroy();
       if (e instanceof HttpError) return sendJson(res, e.status, { error: e.message });
-      if (e instanceof BadPricingRequest || e instanceof BadEssaiRequest) return sendJson(res, 400, { error: e.message });
-      if (e instanceof CreateRefused || e instanceof PricingRefused || e instanceof CollectionRefused || e instanceof RenderRefused || e instanceof GeometryRefused) {
+      if (e instanceof BadPricingRequest || e instanceof BadEssaiRequest || e instanceof BadSubjectRequest) return sendJson(res, 400, { error: e.message });
+      if (e instanceof CreateRefused || e instanceof PricingRefused || e instanceof CollectionRefused || e instanceof RenderRefused || e instanceof GeometryRefused || e instanceof SubjectRefused || e instanceof ResearchRefused) {
         return sendJson(res, 409, { error: e.message });
       }
       console.error('book-print :', e);

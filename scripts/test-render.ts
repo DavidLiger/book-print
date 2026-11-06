@@ -10,8 +10,13 @@ import { runChecks, type CheckResult } from '../src/checks/rules';
 import { createCollection, readCollection, type Collection } from '../src/data/collection';
 import { createBookFolder } from '../src/data/create-book';
 import { buildEssai, ESSAI_CONTROL_FILE, ESSAI_FILE, packFonts, renderEssai, type Essai } from '../src/render/essai';
-import { renderHtml, RenderRefused } from '../src/render/html';
-import { renderPdf } from '../src/render/pdf';
+import { applyBookFiche, renderHtml, RenderRefused } from '../src/render/html';
+import { measureHtml, renderPdf } from '../src/render/pdf';
+import { controlSubject, subjectContent, subjectContext, subjectHtml } from '../src/render/subject';
+import { createSubject, updateSubject } from '../src/data/subject-file';
+import { expectedBlocks } from '../src/research/blocks';
+import { mergeImport } from '../src/research/import';
+import { makeResearch } from './fixtures/recherche';
 import { createPrintServer } from '../src/server/app';
 import { BOOK_ID, makeGlbi, put, tempDir } from './fixtures/make-glbi';
 import { makePng, pngDataUri } from './fixtures/make-png';
@@ -227,6 +232,86 @@ for (const [name, trim, wantW, wantH] of [['6 × 9"', SIX_NINE, 441, 666], ['8,5
   check('export : le format vient de print-book.json', letter.status === 200 && letter.json.pageSizeIn.widthIn === 8.625 && Math.abs(letter.json.pages[0].widthPt - 621) <= 0.15, letter.json.pages);
   check('export : rien dans GLBInterpreter', fs.readdirSync(glbRoot, { recursive: true, encoding: 'utf8' }).sort().join() === glbBefore);
   await new Promise((resolve) => server.close(resolve));
+}
+
+// Sujet réel : le texte du sujet, le même HTML, et C12 mesuré dans Chromium
+{
+  const parent = tempDir();
+  const dataRoot = path.join(parent, 'donnees');
+  fs.mkdirSync(dataRoot);
+  createBookFolder(dataRoot, BOOK_ID);
+  createCollection(dataRoot);
+  const read = readCollection(dataRoot)!;
+  const scenes = [{ rank: 1, id: 'alpha', title: { fr: 'Alpha fr', en: 'Alpha en', es: 'Alpha es' }, modelCredits: [], qr: null }];
+  const subject = createSubject(dataRoot, BOOK_ID, { sceneId: 'alpha', pages: 2, template: '2A', theme: 'foret' }, ['alpha'], ['foret']);
+  const expected = expectedBlocks(TEMPLATE_2A, read.style.fiche, 'fr');
+  const merged = mergeImport(makeResearch(), null, subject, expected);
+  updateSubject(dataRoot, BOOK_ID, 'alpha', () => ({ subject: merged.subject, research: merged.research }));
+  const context = () => subjectContext(dataRoot, BOOK_ID, 'alpha', scenes);
+  const setText = (id: string, text: string) => updateSubject(dataRoot, BOOK_ID, 'alpha', (d) => {
+    d.subject.blocks.find((b) => b.id === id)!.text.fr = text;
+    return d;
+  });
+  const before = subjectHtml(context());
+  check('sujet : texte réel dans le HTML', before.includes('Voici le Fictivore') && before.includes('Pages de tests') && before.includes('Alpha fr'));
+  check('sujet : aucun texte d’essai', !/Essaisaurus|valeur d'essai/.test(before));
+  check('sujet : illustration à venir et faux QR tamponné', before.includes('venir') && before.includes('FACTICE'));
+  check('sujet : pages réelles', context().firstPage === 6 && before.includes('data-page="6"') && before.includes('data-page="7"'));
+  check('sujet : Title neutre', before.includes('<title>Aperçu</title>'));
+  check('sujet : aucune ressource externe', !/\bsrc="http|url\(http/.test(before));
+  const checks = async () => Object.fromEntries((await controlSubject(context(), merged.research)).map((c) => [c.id, c]));
+  const measured = await measureHtml(before);
+  check('mesure sans PDF : aucun débordement', measured.overflows.length === 0 && measured.fontsLoaded, measured.overflows);
+  check('sujet : C12 et C13 verts', (await checks()).C12!.level === 'ok' && (await checks()).C13!.level === 'ok', await checks());
+
+  const long = 'Une phrase un peu longue pour remplir toute la zone de texte de la page. ';
+  setText('texte', long.repeat(12));
+  let r = await checks();
+  check('C12 : texte trop long, limite et débordement', r.C12!.level === 'erreur' && r.C12!.details.some((d) => d.includes('déborde')) && r.C12!.details.some((d) => d.includes('caractères')), r.C12);
+  setText('texte', 'MMMMMMMM '.repeat(65).trim());
+  r = await checks();
+  check('C12 : sous la limite de caractères, mais trop haut, débordement réel', r.C12!.details.some((d) => d.includes('page 6, texte : déborde')) && !r.C12!.details.some((d) => d.includes('caractères')), r.C12);
+  setText('texte', 'Texte court.');
+  setText('chapeau', 'Un chapeau beaucoup trop long pour sa zone, qui répète la même idée. '.repeat(3));
+  r = await checks();
+  check('C12 : chapeau trop haut', r.C12!.details.some((d) => d.includes('page 6, chapeau : déborde')), r.C12);
+  setText('chapeau', 'Un chapeau.');
+  setText('fiche-lieu', 'Unmotbeaucouptroplongpoursacase'.repeat(3));
+  r = await checks();
+  check('C12 : mot trop long dans une case de fiche', r.C12!.details.some((d) => d.includes('fiche, lieu : déborde')), r.C12);
+  setText('fiche-lieu', 'Lieu');
+  setText('fiche-taille', '');
+  r = await checks();
+  check('C13 : information vide, sans valeur factice', r.C13!.details.some((d) => d.includes('fiche, taille vide')) && !subjectHtml(context()).includes('valeur d\'essai'), r.C13);
+  setText('fiche-taille', '2 m');
+  updateSubject(dataRoot, BOOK_ID, 'alpha', (d) => ({ ...d, subject: { ...d.subject, title: { fr: 'Un titre vraiment très long '.repeat(6) } } }));
+  r = await checks();
+  check('C12 : titre trop long, le débordement vers le haut est vu', r.C12!.details.some((d) => d.includes('page 6, titre : déborde')), r.C12);
+  updateSubject(dataRoot, BOOK_ID, 'alpha', (d) => ({ ...d, subject: { ...d.subject, title: {}, qrLegend: { fr: 'Une légende beaucoup trop longue pour tenir sous le QR, même sur plusieurs lignes, même en tout petit, vraiment beaucoup trop longue' } } }));
+  r = await checks();
+  check('C12 : légende du QR', r.C12!.details.some((d) => d.includes('qr : déborde')), r.C12);
+  updateSubject(dataRoot, BOOK_ID, 'alpha', (d) => ({ ...d, subject: { ...d.subject, qrLegend: { fr: 'Scanne-moi' } } }));
+  check('sujet : retour au vert', (await checks()).C12!.level === 'ok', await checks());
+  // Les limites du gabarit tiennent, au pire cas de la fiche : six informations et des valeurs de 28 caractères.
+  {
+    const six = [...read.style.fiche, { id: 'vitesse', picto: 'taille', label: { fr: 'Vitesse', en: 'Speed', es: 'Velocidad' } }];
+    const full = subjectContext(dataRoot, BOOK_ID, 'alpha', scenes);
+    full.collection = { ...full.collection, style: { ...full.collection.style, fiche: six } };
+    const content = subjectContent(full);
+    for (const item of six) content.fiche[item.id] = 'Mmmm mmmm mmmm mmmm mmmm mmm';
+    const html = renderHtml(full.layout, full.trim, full.collection.style, content, full.collection.pictos);
+    const fit = await measureHtml(html);
+    check('fiche pleine : 6 informations de 28 caractères sans débordement', fit.overflows.length === 0, fit.overflows);
+  }
+
+  // Fiche par livre
+  const fiche = [{ id: 'portee', picto: 'taille', label: { fr: 'Portée', en: 'Range', es: 'Alcance' } }];
+  check('fiche du livre : remplace celle de la collection', applyBookFiche(read.style, { fiche }).fiche[0]!.id === 'portee' && applyBookFiche(read.style, {}).fiche === read.style.fiche);
+  expectThrows('fiche du livre : pictogramme inconnu', () => applyBookFiche(read.style, { fiche: [{ ...fiche[0]!, picto: 'inconnu' }] }), RenderRefused, 'pictogramme inconnu');
+  put(dataRoot, `${BOOK_ID}/print-book.json`, { ...JSON.parse(fs.readFileSync(path.join(dataRoot, BOOK_ID, 'print-book.json'), 'utf8')), fiche });
+  check('fiche du livre : attendue par les blocs', context().expected.map((b) => b.id).join() === 'chapeau,texte,fiche-portee');
+  const miss = await checks();
+  check('fiche du livre : bloc absent, C13 rouge', miss.C13!.details.some((d) => d.includes('fiche, portee vide')), miss.C13);
 }
 
 finish('rendu');

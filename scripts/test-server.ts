@@ -6,7 +6,10 @@ import path from 'node:path';
 import { createPrintServer } from '../src/server/app';
 import { loadConfig } from '../src/server/config';
 import { actionAllowed, hostAllowed } from '../src/server/rules';
+import { createCollection } from '../src/data/collection';
+import { IMPORT_MAX_BYTES, checkSubjectUrls } from '../src/server/subject-actions';
 import { BOOK_DIR, BOOK_ID, makeGlbi, put, tempDir } from './fixtures/make-glbi';
+import { makeResearch } from './fixtures/recherche';
 import { check, finish } from './test-lib';
 
 interface Reply {
@@ -194,6 +197,105 @@ await new Promise((resolve) => server.close(resolve));
   expectMessage('repo book-print sous dataRoot', 'repo book-print');
   put(dir, 'config.local.json', { glbRoot: glb, dataRoot: data });
   check('configuration valide', loadConfig(file).ok);
+}
+
+// Sujets : routes, refus, limite de l'import (la page complète est dans test-ui, le détail des règles dans test-research)
+{
+  const glb = makeGlbi();
+  const dir = tempDir();
+  const data = path.join(dir, 'donnees');
+  fs.mkdirSync(data);
+  put(dir, 'config.local.json', { glbRoot: glb, dataRoot: data });
+  const second = createPrintServer(path.join(dir, 'config.local.json'));
+  await new Promise<void>((resolve) => second.listen(0, '127.0.0.1', resolve));
+  const secondPort = (second.address() as AddressInfo).port;
+  const secondHost = `127.0.0.1:${secondPort}`;
+  const headers = { Host: secondHost, Origin: `http://${secondHost}`, 'Content-Type': 'application/json', 'x-book-print': '1' };
+  const send = (p: string, body: unknown, h: Record<string, string> = headers) => request(secondPort, { method: 'POST', path: p, headers: h, body: JSON.stringify(body) });
+  const json = async (p: string, body: unknown) => JSON.parse((await send(p, body)).body);
+  const body = { dir: BOOK_DIR, subjectId: 'alpha' };
+
+  check('sujets : livre absent, 409', (await send('/api/sujets/state', { dir: BOOK_DIR })).status === 409);
+  await send('/api/create', { dir: BOOK_DIR });
+  check('sujets : collection absente, 409', (await send('/api/sujets/state', { dir: BOOK_DIR })).status === 409);
+  createCollection(data);
+  const sceneList = await json('/api/sujets/state', { dir: BOOK_DIR });
+  check('sujets : scènes, gabarits, thème proposé', sceneList.scenes.length === 2 && sceneList.templates[0].id === '2A' && sceneList.templates[0].fits && sceneList.proposedTheme === 'foret' && sceneList.firstPage === 6 && sceneList.subjectPages === 0, sceneList);
+  const make = (over = {}) => send('/api/sujets/create', { dir: BOOK_DIR, sceneId: 'alpha', pages: 2, template: '2A', theme: 'foret', ...over });
+  check('création : pages en texte, 400', (await make({ pages: '2' })).status === 400);
+  check('création : pages sous 2, 400', (await make({ pages: 1 })).status === 400);
+  check('création : clé inconnue, 400', (await make({ plus: 1 })).status === 400);
+  check('création : chemin refusé, 409', (await send('/api/sujets/create', { dir: '../..', sceneId: 'alpha', pages: 2, template: '2A', theme: 'foret' })).status === 409);
+  const made = JSON.parse((await make()).body);
+  check('création : le total suit', made.subject.id === 'alpha' && made.subjectPages === 2 && made.firstPage === 8 && made.scenes[0].used && made.proposedTheme === 'ocean', made);
+  check('création : second essai, 409 et message', (await make()).status === 409 && (await make()).body.includes('existe déjà'));
+  const noHeaders = { Host: secondHost, Origin: `http://${secondHost}`, 'Content-Type': 'application/json' };
+  for (const route of ['/api/sujets/state', '/api/sujets/create', '/api/sujet/state', '/api/sujet/prompt', '/api/sujet/import', '/api/sujet/claim', '/api/sujet/block', '/api/sujet/fields', '/api/sujet/urls', '/api/sujet/check']) {
+    check(`${route} : sans en-tête, 403`, (await send(route, body, noHeaders)).status === 403);
+    check(`${route} : GET, 405`, (await request(secondPort, { path: route, headers })).status === 405);
+    check(`${route} : Origin d'un autre site, 403`, (await send(route, body, { ...headers, Origin: 'https://attaque.example' })).status === 403);
+    check(`${route} : corps invalide, 400`, (await send(route, { dir: 1 })).status === 400);
+  }
+  const prompt = await json('/api/sujet/prompt', body);
+  check('prompt : titre de la scène et blocs du gabarit', prompt.prompt.includes('alpha fr') && prompt.prompt.includes('"zone": "chapeau"'));
+  check('sujet : sujet inconnu, 409', (await send('/api/sujet/state', { dir: BOOK_DIR, subjectId: 'inconnu' })).status === 409);
+  check('sujet : identifiant refusé, 400', (await send('/api/sujet/state', { dir: BOOK_DIR, subjectId: '../alpha' })).status === 400);
+
+  // Limites de taille
+  const filler = (bytes: number) => JSON.stringify({ ...body, content: 'x'.repeat(bytes) });
+  const raw = (p: string, payload: string) => request(secondPort, { method: 'POST', path: p, headers, body: payload }).catch(() => ({ status: 413, body: '', headers: {} }));
+  check('import : plus de 64 Kio, admis par cette route', (await raw('/api/sujet/import', filler(100 * 1024))).status === 409);
+  check('import : limite de 2 Mio', IMPORT_MAX_BYTES === 2097152);
+  check('import : au-delà de 2 Mio, refusé', (await raw('/api/sujet/import', filler(IMPORT_MAX_BYTES + 1024))).status === 413);
+  check('autres routes : toujours 64 Kio', (await raw('/api/sujet/fields', filler(100 * 1024))).status === 413);
+  check('autres routes : 64 Kio aussi pour le parcours', (await raw('/api/parcours', JSON.stringify({ dir: 'x'.repeat(70 * 1024) }))).status === 413);
+
+  // Import
+  const refused = await send('/api/sujet/import', { ...body, content: JSON.stringify({ ...makeResearch(), lang: 'es' }) });
+  check('import : mauvaise langue, 409, champ nommé', refused.status === 409 && refused.body.includes('champ lang'));
+  check('import : rien écrit après un refus', !fs.existsSync(path.join(data, BOOK_ID, 'subjects', 'alpha', 'research.json')));
+  check('claim : avant import, 409', (await send('/api/sujet/claim', { ...body, claimId: 'c1', action: { kind: 'valider' } })).status === 409);
+  const done = await json('/api/sujet/import', { ...body, content: JSON.stringify(makeResearch()) });
+  check('import : écrit', done.imported === true && done.summary.claimsChanged === 3 && done.kept.length === 0, done);
+  const again = await json('/api/sujet/import', { ...body, content: JSON.stringify(makeResearch()) });
+  check('second import : confirmation, rien d’écrit', again.needsConfirm === true && again.same === true && fs.readdirSync(path.join(data, BOOK_ID, 'subjects', 'alpha')).length === 2, again);
+  const replaced = await json('/api/sujet/import', { ...body, content: JSON.stringify(makeResearch()), confirm: true });
+  check('second import confirmé : anciens fichiers datés', replaced.kept.length === 2 && fs.readdirSync(path.join(data, BOOK_ID, 'subjects', 'alpha')).length === 4, replaced);
+
+  // Relecture
+  const view = await json('/api/sujet/state', body);
+  check('état du sujet : blocs, limites, géométrie', view.claims.length === 3 && view.subject.blocks.length === 7 && view.expected.length === 7 && view.titleMax === 40 && view.legendMax === 44 && view.layout.length === 2 && view.title === 'alpha fr', view);
+  check('claim : action inconnue, 400', (await send('/api/sujet/claim', { ...body, claimId: 'c1', action: { kind: 'effacer' } })).status === 400);
+  check('claim : affirmation inconnue, 409', (await send('/api/sujet/claim', { ...body, claimId: 'c9', action: { kind: 'valider' } })).status === 409);
+  check('block : affirmations non validées, 409', (await send('/api/sujet/block', { ...body, blockId: 'chapeau', action: { kind: 'valider' } })).status === 409);
+  const validated = await json('/api/sujet/claim', { ...body, claimId: 'c1', action: { kind: 'valider' } });
+  check('claim : validée, état rendu', validated.claims[0].status === 'valide');
+  check('fields : thème inconnu, 409', (await send('/api/sujet/fields', { ...body, theme: 'rose' })).status === 409);
+  check('fields : légende vide, 409', (await send('/api/sujet/fields', { ...body, legend: ' ' })).status === 409);
+  const titled = await json('/api/sujet/fields', { ...body, title: 'Autre titre', legend: 'Autre légende', theme: 'ocean' });
+  check('fields : titre, légende, thème', titled.title === 'Autre titre' && titled.titleOverride === 'Autre titre' && titled.legend === 'Autre légende' && titled.subject.variant.theme === 'ocean');
+  check('fields : surcharge retirée', (await json('/api/sujet/fields', { ...body, title: null })).title === 'alpha fr');
+
+  // URL : `fetch` et DNS injectés, seuls les `urlCheck` sont posés
+  const config = { glbRoot: glb, dataRoot: data };
+  const urlView = await checkSubjectUrls(config, BOOK_DIR, 'alpha', {
+    fetch: async (url) => new Response(null, { status: url.includes('source-2') ? 404 : 200 }),
+    lookup: async () => ['93.184.216.34'],
+    now: () => new Date('2026-11-06T12:00:00.000Z'),
+    timeoutMs: 100,
+  }) as { claims: { status: string; sources: { urlCheck: { code: number }; urlDead: boolean }[] }[] };
+  check('URL : résultat par source', urlView.claims[0]!.sources[0]!.urlCheck.code === 200 && urlView.claims[1]!.sources[0]!.urlCheck.code === 404 && urlView.claims[1]!.sources[0]!.urlDead);
+  check('URL : le statut ne bouge pas', urlView.claims[0]!.status === 'valide' && urlView.claims[1]!.status === 'propose');
+
+  // Aperçu
+  const sujetApercu = (query: string, h: Record<string, string> = { Host: secondHost }) => request(secondPort, { path: `/apercu-sujet?${query}`, headers: h });
+  const page = await sujetApercu(`dir=${BOOK_DIR}&subject=alpha`);
+  check('aperçu du sujet : texte réel, sans script', page.status === 200 && page.body.includes('Fictivore') && !/<script/.test(page.body));
+  check('aperçu du sujet : CSP propre', /default-src 'none'/.test(String(page.headers['content-security-policy'])));
+  check('aperçu du sujet : POST refusé', (await request(secondPort, { method: 'POST', path: '/apercu-sujet', headers })).status === 405);
+  check('aperçu du sujet : Host refusé', (await sujetApercu(`dir=${BOOK_DIR}&subject=alpha`, { Host: 'attaque.example' })).status === 403);
+  check('aperçu du sujet : paramètres manquants', (await sujetApercu('')).status === 400);
+  await new Promise((resolve) => second.close(resolve));
 }
 
 finish('serveur');

@@ -67,6 +67,12 @@ function essaiImage(trim: Trim): string {
   return uri;
 }
 
+const LEGEND = 'QR factice : ne pas scanner, c\'est un essai';
+
 export function essaiContent(theme: string, trim: Trim, lang: RenderContent['lang'] = 'fr'): RenderContent {
-  return { title: 'Essai', lang, theme, texts: TEXTS, fiche: FICHE, images: { illustration: essaiImage(trim) }, qrSvg: fakeQr(), qrLegend: 'QR factice : ne pas scanner, c\'est un essai' };
+  return { title: 'Essai', lang, theme, texts: TEXTS, fiche: FICHE, ficheMissing: 'valeur d\'essai', images: { illustration: essaiImage(trim) }, qrSvg: fakeQr(), qrLegend: LEGEND };
 }
+
+/** Pour C13 : aucune de ces phrases ne doit se retrouver dans un vrai sujet. */
+export const ESSAI_PHRASES = [TEXTS.titre, ...[TEXTS.chapeau, TEXTS.texte].flatMap((t) => t.split(/(?<=[.:])\s+/)), LEGEND];
+export const ESSAI_FICHE_VALUES = Object.values(FICHE);

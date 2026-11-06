@@ -1,6 +1,7 @@
 // src/schema/subject.ts — `<bookId>/subjects/<sujetId>/subject.json` (spec §3.3).
-// `blocks` et `illustrations` n'acceptent pour l'instant que la liste vide : leurs schémas complets viennent en MP3 et MP4.
+// `illustrations` n'accepte pour l'instant que la liste vide : son schéma complet vient en MP4.
 import { z } from 'zod';
+import { blockSchema } from './block';
 import { glbiIdSchema, schemaVersionSchema, slugSchema, templatePages, TEMPLATE_ID_PATTERN } from './common';
 
 const titleText = z.string().trim().min(1, 'titre vide');
@@ -19,7 +20,9 @@ export const subjectSchema = z
     pages: z.number({ error: 'pages : entier attendu' }).int('pages : entier attendu').min(2, 'pages : 2 au moins'),
     template: z.string().regex(TEMPLATE_ID_PATTERN, 'gabarit : par exemple 4B ou 12A'),
     variant: z.strictObject({ mirror: z.boolean(), theme: slugSchema }),
-    blocks: z.array(z.unknown()).max(0, 'blocs : schéma complet au lot MP3, liste vide en attendant'),
+    blocks: z.array(blockSchema),
+    /** Légende du QR, par langue : un texte du sujet, sans fait ni affirmation. Absente d'un sujet créé avant MP3. */
+    qrLegend: z.strictObject({ fr: titleText.optional(), en: titleText.optional(), es: titleText.optional() }).optional(),
     illustrations: z.array(z.unknown()).max(0, 'illustrations : schéma complet au lot MP4, liste vide en attendant'),
     status: z.enum(SUBJECT_STATUS),
   })
@@ -30,5 +33,10 @@ export const subjectSchema = z
     if (!s.sceneId && Object.keys(s.title).length === 0) {
       ctx.addIssue({ code: 'custom', path: ['title'], message: 'sujet sans scène : au moins un titre attendu' });
     }
+    const ids = new Set<string>();
+    s.blocks.forEach((b, i) => {
+      if (ids.has(b.id)) ctx.addIssue({ code: 'custom', path: ['blocks', i, 'id'], message: `bloc en double : ${b.id}` });
+      ids.add(b.id);
+    });
   });
 export type Subject = z.infer<typeof subjectSchema>;

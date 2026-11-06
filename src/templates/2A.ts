@@ -17,7 +17,7 @@ export const TEMPLATE_2A: Template = {
         { id: 'titre', type: 'titre', bleed: false, box: { outer: safe(0), inner: safe(0), top: safe(0), heightMm: 23 }, constraints: { maxChars: 40 } },
         { id: 'chapeau', type: 'chapeau', bleed: false, box: { outer: safe(0), inner: safe(0), top: safe(28), heightMm: 24 }, constraints: { maxChars: 140 } },
         { id: 'texte', type: 'texte', bleed: false, box: { outer: safe(0), inner: safe(0), top: safe(53), bottom: safe(58) }, constraints: { maxChars: 600 } },
-        { id: 'fiche', type: 'fiche', bleed: false, box: { outer: safe(0), inner: safe(0), bottom: safe(9), heightMm: 46 }, constraints: { maxPictos: 6 } },
+        { id: 'fiche', type: 'fiche', bleed: false, box: { outer: safe(0), inner: safe(0), bottom: safe(9), heightMm: 46 }, constraints: { maxPictos: 6, itemMaxChars: 28 } },
         { id: 'folio-g', type: 'folio', bleed: false, box: { outer: safe(0), inner: safe(0), bottom: safe(0), heightMm: 7 } },
       ],
     },

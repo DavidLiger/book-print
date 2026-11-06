@@ -9,20 +9,31 @@ export interface Rendered {
   chromium: string;
 }
 
-export async function renderPdf(html: string, trim: Trim): Promise<Rendered> {
+async function inPage<T>(html: string, run: (page: import('playwright').Page, browser: import('playwright').Browser) => Promise<T>): Promise<T> {
   // Chargé ici : le reste de l'outil démarre sans Playwright.
   const { chromium } = await import('playwright');
-  const size = pageSize(trim);
   const browser = await chromium.launch();
   try {
     const page = await browser.newPage();
     await page.emulateMedia({ media: 'print' });
     await page.setContent(html, { waitUntil: 'load' });
     await page.evaluate('Promise.all([document.fonts.ready, ...Array.from(document.images).map((i) => i.decode())]).then(() => true)');
-    const measures = (await page.evaluate(MEASURE_SCRIPT)) as Measures;
-    const pdf = await page.pdf({ width: `${size.widthIn}in`, height: `${size.heightIn}in`, printBackground: true, preferCSSPageSize: true });
-    return { pdf, measures, chromium: browser.version() };
+    return await run(page, browser);
   } finally {
     await browser.close();
   }
+}
+
+export function renderPdf(html: string, trim: Trim): Promise<Rendered> {
+  const size = pageSize(trim);
+  return inPage(html, async (page, browser) => {
+    const measures = (await page.evaluate(MEASURE_SCRIPT)) as Measures;
+    const pdf = await page.pdf({ width: `${size.widthIn}in`, height: `${size.heightIn}in`, printBackground: true, preferCSSPageSize: true });
+    return { pdf, measures, chromium: browser.version() };
+  });
+}
+
+/** Les mesures seules, sans PDF : C12 sur un sujet (§16.6). */
+export function measureHtml(html: string): Promise<Measures> {
+  return inPage(html, async (page) => (await page.evaluate(MEASURE_SCRIPT)) as Measures);
 }

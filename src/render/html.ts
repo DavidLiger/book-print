@@ -1,6 +1,7 @@
 // src/render/html.ts — HTML des pages d'un sujet. Le même texte sert à l'aperçu et au PDF : une feuille `@media screen` pose
 // seulement les deux pages côte à côte. Les repères ne sont jamais ici : la page locale les dessine par-dessus (`src/ui/`).
 // Les pages sont des blocs de taille fixe, sans moteur de pagination (MP-5). Aucune taille en dur : tout vient de la géométrie.
+import type { PrintBook } from '../schema/print-book';
 import type { Style } from '../schema/style';
 import { pageSize, type LayoutPage, type LayoutZone, type Rect, type Trim } from '../templates/geometry';
 import { FONT_PACK, fontFaces } from './fonts';
@@ -16,11 +17,20 @@ export interface RenderContent {
   texts: Record<string, string>;
   /** Valeur par information de la fiche (`style.fiche[].id`). */
   fiche: Record<string, string>;
+  /** Texte d'une information sans valeur : une valeur factice pour l'essai, rien pour un vrai sujet (C13 la refuse). */
+  ficheMissing: string;
   /** Source `data:` par identifiant de zone. */
   images: Record<string, string>;
   /** SVG inséré tel quel, seul le prologue XML est retiré. */
   qrSvg: string;
   qrLegend: string;
+}
+
+/** Fiche d'un livre (P-30) : celle de `print-book.json` si elle existe, avec les mêmes contrôles que celle du style. */
+export function applyBookFiche(style: Style, book: Pick<PrintBook, 'fiche'>): Style {
+  if (!book.fiche) return style;
+  for (const item of book.fiche) if (!(item.picto in style.pictos)) throw new RenderRefused(`Fiche de print-book.json : pictogramme inconnu, ${item.picto}.`);
+  return { ...style, fiche: book.fiche };
 }
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -43,11 +53,12 @@ html, body { margin: 0; padding: 0; background: ${palette.paper}; }
 .page { position: relative; display: block; overflow: hidden; width: ${size.widthIn}in; height: ${size.heightIn}in; break-after: page; background: ${palette.paper}; color: ${palette.text}; ${font(fonts.body)}; }
 .page:last-child { break-after: auto; }
 .zone { position: absolute; margin: 0; }
+.zone > span[data-fill] { display: block; min-width: 0; overflow-wrap: break-word; }
 .fond { background: ${theme}; }
 .titre { ${font(fonts.title)}; font-weight: 700; color: ${palette.paper}; display: flex; align-items: flex-end; }
 .chapeau { ${font(fonts.lead)}; font-weight: 600; color: ${theme}; }
 .illustration { display: block; object-fit: cover; }
-.fiche { display: grid; grid-template-columns: 1fr 1fr; grid-auto-rows: 1fr; gap: 1mm 3mm; padding: 2mm 3mm; background: ${fiche}; border: 1pt solid ${theme}; ${font(fonts.label)}; }
+.fiche { display: grid; grid-template-columns: 1fr 1fr; grid-auto-rows: 1fr; gap: 1mm 3mm; padding: 1.5mm 3mm; background: ${fiche}; border: 1pt solid ${theme}; ${font(fonts.label)}; }
 .info { display: flex; align-items: center; gap: 2mm; min-width: 0; }
 .info svg { flex: none; width: 8mm; height: 8mm; color: ${theme}; }
 .info b { display: block; font-weight: 700; }
@@ -72,8 +83,8 @@ function ficheMarkup(zone: LayoutZone, style: Style, content: RenderContent, pic
   if (max !== undefined && style.fiche.length > max) throw new RenderRefused(`La fiche a ${style.fiche.length} informations : le gabarit en pose ${max} au plus.`);
   return style.fiche
     .map((item) => {
-      const value = content.fiche[item.id] ?? 'valeur d\'essai';
-      return `<div class="info">${pictos[item.picto]}<span><b>${esc(item.label[content.lang])}</b>${esc(value)}</span></div>`;
+      const value = content.fiche[item.id] ?? content.ficheMissing;
+      return `<div class="info" data-item="${esc(item.id)}">${pictos[item.picto]}<span data-fill><b>${esc(item.label[content.lang])}</b>${esc(value)}</span></div>`;
     })
     .join('');
 }
@@ -89,10 +100,10 @@ function zoneMarkup(zone: LayoutZone, page: LayoutPage, style: Style, content: R
     case 'fond':
       return `<div ${attrs}></div>`;
     case 'titre':
-      return `<h1 ${attrs}><span>${text()}</span></h1>`;
+      return `<h1 ${attrs}><span data-fill>${text()}</span></h1>`;
     case 'chapeau':
     case 'texte':
-      return `<p ${attrs}>${text()}</p>`;
+      return `<p ${attrs}><span data-fill>${text()}</span></p>`;
     case 'fiche':
       return `<div ${attrs}>${ficheMarkup(zone, style, content, pictos)}</div>`;
     case 'illustration': {
@@ -103,7 +114,7 @@ function zoneMarkup(zone: LayoutZone, page: LayoutPage, style: Style, content: R
     case 'folio':
       return style.folio.show ? `<div ${attrs}><span>${page.number}</span></div>` : '';
     case 'qr':
-      return `<div ${attrs}>${qrMarkup(zone, content)}<p>${esc(content.qrLegend)}</p></div>`;
+      return `<div ${attrs}>${qrMarkup(zone, content)}<p data-fill>${esc(content.qrLegend)}</p></div>`;
     default:
       throw new RenderRefused(`Zone de type ${zone.type} : pas encore rendue, le gabarit 2A n'en a pas.`);
   }

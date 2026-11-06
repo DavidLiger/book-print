@@ -40,6 +40,21 @@ const fontSchema = z.strictObject({
   lineHeight: z.number().min(1, 'interligne : 1 au moins'),
 });
 
+const ficheItemSchema = z.strictObject({ id: slugSchema, picto: slugSchema, label: z.strictObject({ fr: labelSchema, en: labelSchema, es: labelSchema }) });
+
+/** Informations de la fiche : `style.json` porte celles de la collection, `print-book.json` peut les remplacer pour un livre. */
+export const ficheSchema = z
+  .array(ficheItemSchema)
+  .min(1, 'fiche : une information au moins')
+  .superRefine((list, ctx) => {
+    const seen = new Set<string>();
+    list.forEach((item, i) => {
+      if (seen.has(item.id)) ctx.addIssue({ code: 'custom', path: [i], message: `information en double : ${item.id}` });
+      seen.add(item.id);
+    });
+  });
+export type Fiche = z.infer<typeof ficheSchema>;
+
 export const styleSchema = z
   .strictObject({
     schemaVersion: schemaVersionSchema,
@@ -62,9 +77,7 @@ export const styleSchema = z
     /** Jeu de pictogrammes, en nombre libre : un fichier de `collection/pictos/`, relié au registre des droits. */
     pictos: z.record(slugSchema, z.strictObject({ file: z.string().regex(/^[a-z0-9-]+\.svg$/, 'fichier : nom simple en .svg'), rights: slugSchema })),
     /** Informations de la fiche d'identité, dans l'ordre, en nombre libre. Le gabarit fixe le maximum qu'il peut poser. */
-    fiche: z
-      .array(z.strictObject({ id: slugSchema, picto: slugSchema, label: z.strictObject({ fr: labelSchema, en: labelSchema, es: labelSchema }) }))
-      .min(1, 'fiche : une information au moins'),
+    fiche: ficheSchema,
     folio: z.strictObject({ show: z.boolean(), sizePt: z.number().min(7, 'numéro de page : 7 pt au moins (KDP)') }),
     /** Règles de variation (§4.4) : rotation des thèmes. Le miroir viendra avec les gabarits suivants. */
     variants: z.strictObject({ rotation: z.array(slugSchema).min(1, 'rotation : un thème au moins') }),
@@ -79,10 +92,7 @@ export const styleSchema = z
     for (const [name, color] of Object.entries(s.palette.themes)) needs(s.palette.paper, color, ['palette', 'themes', name], `titre sur le thème ${name}`);
     for (const [name, color] of Object.entries(s.palette.boxes)) needs(s.palette.text, color, ['palette', 'boxes', name], `texte sur l'encadré ${name}`);
     if (s.fonts.body.sizePt < BODY_MIN_PT) issue(['fonts', 'body', 'sizePt'], `texte courant : ${BODY_MIN_PT} pt au moins`);
-    const seen = new Set<string>();
     s.fiche.forEach((item, i) => {
-      if (seen.has(item.id)) issue(['fiche', i], `information en double : ${item.id}`);
-      seen.add(item.id);
       if (!(item.picto in s.pictos)) issue(['fiche', i], `pictogramme inconnu : ${item.picto}`);
     });
     s.variants.rotation.forEach((name, i) => {

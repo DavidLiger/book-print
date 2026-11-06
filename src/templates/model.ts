@@ -45,6 +45,8 @@ const constraintsSchema = z.strictObject({
   maxChars: z.number().int().positive().optional(),
   ratio: z.number().positive().optional(),
   maxPictos: z.number().int().positive().optional(),
+  /** Longueur d'une information de fiche : `maxChars` vaut pour une zone à un seul texte. */
+  itemMaxChars: z.number().int().positive().optional(),
   qrSideMm: z.number().min(QR_MIN_SIDE_MM, `QR : côté de ${QR_MIN_SIDE_MM} mm au moins`).optional(),
 });
 

@@ -25,7 +25,7 @@ export const TEMPLATE_ID_PATTERN = /^[1-9][0-9]*[A-Z]$/;
 export const templatePages = (id: string): number => Number.parseInt(id, 10);
 
 /** Noms que Windows réserve : un `bookId` devient un nom de dossier. */
-const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+export const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
 /** `collection/` porte les données communes (architecture §4) : sans casse, car Windows confond `Collection` et `collection`. */
 const DATA_RESERVED = /^collection$/i;
 export const bookIdSchema = glbiIdSchema

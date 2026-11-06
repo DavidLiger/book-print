@@ -1,5 +1,8 @@
-// scripts/test-checks.ts — contrôles C1, C3, C4, C6, C7, C8, C14, C15 : pour chacun un cas vert et un cas rouge, sur des faits construits
+// scripts/test-checks.ts — contrôles C1, C3, C4, C6, C7, C8, C10, C12, C13, C14, C15 : pour chacun un cas vert et un cas rouge, sur des faits construits
 // à la main. La chaîne réelle (Chromium, puis relecture par pdf-lib) est dans test-render.ts.
+import { c10Sources, c12Texts, c13Filler, charCount, runSubjectChecks, urlIsDead, type C10Claim, type TextInput } from '../src/checks/content';
+import { expectedBlocks } from '../src/research/blocks';
+import type { Block } from '../src/schema/block';
 import { c14Clean, c15FileSize, c1PageSize, c3Safety, c4Bleed, c6Transparency, c7Fonts, c8Sizes, KDP_MAX_BYTES, runChecks, type CheckResult } from '../src/checks/rules';
 import type { PdfFacts } from '../src/checks/pdf-facts';
 import type { MeasuredBox, Measures } from '../src/render/measure';
@@ -38,6 +41,7 @@ const measures = (over: Partial<Measures> = {}): Measures => ({
   texts: [{ page: 6, zone: 'texte', type: 'texte', sizePt: 13, family: 'Andika' }, { page: 6, zone: 'titre', type: 'titre', sizePt: 30, family: '"Baloo 2"' }],
   lines: [{ page: 6, zone: 'fiche', widthPt: 1 }],
   faults: [],
+  overflows: [],
   ...over,
 });
 
@@ -134,6 +138,61 @@ red('C15, au-delà de 650 Mo', c15FileSize(facts({ sizeBytes: KDP_MAX_BYTES + 1 
   const all = runChecks({ facts: facts(), measures: measures(), pages, pack });
   check('huit contrôles livrés, dans l’ordre', all.map((c) => c.id).join() === 'C1,C3,C4,C6,C7,C8,C14,C15', all);
   check('tout vert sur un cas propre', all.every((c) => c.level === 'ok'), all);
+}
+
+// C10, C12, C13
+const fiche = [{ id: 'taille', picto: 'taille', label: { fr: 'Taille', en: 'Size', es: 'Tamaño' } }];
+const expected = expectedBlocks(TEMPLATE_2A, fiche, 'fr');
+const block = (id: string, text: string, over: Partial<Block> = {}): Block => ({ id, zone: id, type: 'texte', text: { fr: text }, claims: ['c1'], state: 'valide', ...over });
+const blocks = (): Block[] => [block('chapeau', 'Un chapeau.', { type: 'chapeau' }), block('texte', 'Un texte réel.'), block('fiche-taille', '2 m', { zone: 'fiche', type: 'fiche', item: 'taille' })];
+const claim = (over: Partial<C10Claim> = {}): C10Claim => ({ id: 'c1', status: 'valide', sources: [{ url: 'https://s.example/' }], ...over });
+const dead = (code: number | null, error: string | null = null) => ({ date: '2026-11-06T12:00:00.000Z', code, error });
+const alerting = (name: string, r: CheckResult, text: string) => check(`alerte : ${name}`, r.level === 'alerte' && r.details.some((d) => d.includes(text)), r);
+
+green('C10, affirmation validée', c10Sources(blocks(), [claim()]));
+green('C10, corrigée compte comme validée', c10Sources(blocks(), [claim({ status: 'corrige' })]));
+green('C10, affirmation rejetée que rien ne cite', c10Sources(blocks(), [claim(), claim({ id: 'c2', status: 'rejete' })]));
+green('C10, URL en ordre', c10Sources(blocks(), [claim({ sources: [{ url: 'https://s.example/', urlCheck: dead(200) }] })]));
+red('C10, affirmation proposée citée', c10Sources(blocks(), [claim({ status: 'propose' })]), 'non validée');
+red('C10, affirmation rejetée citée', c10Sources(blocks(), [claim({ status: 'rejete' })]), 'non validée');
+red('C10, affirmation inconnue', c10Sources(blocks(), []), 'inconnue');
+red('C10, affirmation validée sans source', c10Sources(blocks(), [claim({ sources: [] })]), 'aucune source');
+alerting('C10, URL sans réponse', c10Sources(blocks(), [claim({ sources: [{ url: 'https://s.example/', urlCheck: dead(null, 'aucune réponse') }] })]), 'ne répond plus');
+alerting('C10, URL en 404', c10Sources(blocks(), [claim({ sources: [{ url: 'https://s.example/', urlCheck: dead(404) }] })]), '404');
+check('C10 : une erreur passe avant une alerte', c10Sources(blocks(), [claim({ status: 'propose' }), claim({ id: 'c2', sources: [{ url: 'https://s.example/', urlCheck: dead(500) }] })]).level === 'erreur');
+check('URL : aucun contrôle, rien à reprocher', !urlIsDead(undefined));
+check('URL : 2xx en ordre', !urlIsDead(dead(200)) && !urlIsDead(dead(204)));
+check('URL : robots bloqués, sans alerte', [401, 403, 429].every((c) => !urlIsDead(dead(c))));
+check('URL : 3xx restant, 404, 410, 500, sans réponse', [304, 404, 410, 500].every((c) => urlIsDead(dead(c))) && urlIsDead(dead(null, 'x')));
+
+const texts = (over: Partial<TextInput> = {}): TextInput => ({ blocks: blocks(), expected, lang: 'fr', title: 'Titre', titleMax: 40, legend: 'Légende', legendMax: 44, ...over });
+const noOverflow = { overflows: [] };
+green('C12, tout tient', c12Texts(texts(), noOverflow));
+red('C12, texte absent dans la langue', c12Texts(texts({ lang: 'en' }), noOverflow), 'aucun texte en en');
+red('C12, texte vide', c12Texts(texts({ blocks: [block('texte', '   ')] }), noOverflow), 'aucun texte');
+red('C12, limite du bloc', c12Texts(texts({ blocks: [block('chapeau', 'x'.repeat(141), { type: 'chapeau' })] }), noOverflow), '141 caractères, 140 au plus');
+red('C12, limite d’une information de fiche', c12Texts(texts({ blocks: [block('fiche-taille', 'x'.repeat(29), { zone: 'fiche', type: 'fiche', item: 'taille' })] }), noOverflow), '29 caractères, 28 au plus');
+red('C12, titre trop long', c12Texts(texts({ title: 'x'.repeat(41) }), noOverflow), 'titre');
+red('C12, légende trop longue', c12Texts(texts({ legend: 'x'.repeat(45) }), noOverflow), 'légende du QR');
+red('C12, débordement mesuré', c12Texts(texts(), { overflows: [{ page: 6, zone: 'texte', item: null, overMm: 4.25 }] }), 'page 6, texte : déborde de 4,3 mm');
+red('C12, débordement d’une case de fiche', c12Texts(texts(), { overflows: [{ page: 6, zone: 'fiche', item: 'lieu', overMm: 1 }] }), 'fiche, lieu');
+green('C12, limite exacte', c12Texts(texts({ blocks: [block('chapeau', 'x'.repeat(140), { type: 'chapeau' })] }), noOverflow));
+check('caractères : lettres accentuées et emoji comptés une fois', charCount('é') === 1 && charCount('🦖') === 1);
+
+const filler = (over: Partial<Parameters<typeof c13Filler>[0]> = {}) => c13Filler({ blocks: blocks(), expected, lang: 'fr', title: 'Titre', legend: 'Légende', essaiPhrases: ['Ceci est une phrase d\'essai bien reconnaissable.'], essaiValues: ['3 cartons'], ...over });
+green('C13, vrai texte', filler());
+for (const t of ['Lorem ipsum dolor', 'Texte factice ici', 'Texte d’essai', 'À compléter plus tard', 'TODO', 'XXXX', 'Essaisaurus']) red(`C13, remplissage : ${t}`, filler({ blocks: [block('chapeau', t, { type: 'chapeau' }), ...blocks().slice(1)] }), 'remplissage');
+red('C13, phrase du sujet d’essai', filler({ blocks: [block('chapeau', 'Voici : ceci est une  phrase d’essai bien reconnaissable.', { type: 'chapeau' }), ...blocks().slice(1)] }), 'sujet d\'essai');
+red('C13, valeur de fiche d’essai', filler({ blocks: [...blocks().slice(0, 2), block('fiche-taille', '3 cartons', { zone: 'fiche', type: 'fiche', item: 'taille' })] }), 'sujet d\'essai');
+green('C13, une valeur courte n’est pas cherchée dans une phrase', filler({ blocks: [block('chapeau', 'Il pèse 3 cartons de lait.', { type: 'chapeau' }), ...blocks().slice(1)] }));
+red('C13, zone sans bloc', filler({ blocks: blocks().slice(1) }), 'zone chapeau vide');
+red('C13, information de fiche vide', filler({ blocks: blocks().slice(0, 2) }), 'zone fiche, taille vide');
+red('C13, titre vide', filler({ title: ' ' }), 'titre vide');
+red('C13, légende vide', filler({ legend: '' }), 'légende du QR vide');
+red('C13, titre de remplissage', filler({ title: 'Lorem ipsum' }), 'titre');
+{
+  const all = runSubjectChecks({ ...texts(), claims: [claim()], measures: noOverflow, essaiPhrases: [], essaiValues: [] });
+  check('contrôles du sujet : C10, C12, C13, tous verts', all.map((c) => `${c.id}:${c.level}`).join() === 'C10:ok,C12:ok,C13:ok', all);
 }
 
 finish('contrôles');

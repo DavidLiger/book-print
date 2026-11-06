@@ -7,10 +7,11 @@ import path from 'node:path';
 import { chromium, type Page, type Route } from 'playwright';
 import { createPrintServer } from '../src/server/app';
 import { BOOK_ID, makeGlbi, put, tempDir } from './fixtures/make-glbi';
+import { makeResearch } from './fixtures/recherche';
 import { check, finish } from './test-lib';
 
 const SIZES = [{ width: 1920, height: 950 }, { width: 1366, height: 650 }];
-const STEP_IDS = ['livre', 'prix', 'collection', 'essai'];
+const STEP_IDS = ['livre', 'prix', 'collection', 'essai', 'sujets'];
 
 const glbRoot = makeGlbi();
 const parent = tempDir();
@@ -64,9 +65,9 @@ const statesText = async () => (await tabs()).map((t) => t.sign).join();
 await open();
 {
   const all = await tabs();
-  check('menu : quatre étapes numérotées, dans l’ordre', all.map((t) => t.id).join() === STEP_IDS.join() && all.every((t, i) => t.text.startsWith(String(i + 1))), all);
+  check('menu : cinq étapes numérotées, dans l’ordre', all.map((t) => t.id).join() === STEP_IDS.join() && all.every((t, i) => t.text.startsWith(String(i + 1))), all);
   check('ouverture : première étape non validée', (await current()) === 'livre');
-  check('départ : Livre à faire, le reste verrouillé', (await statesText()) === 'à faire,verrouillée,verrouillée,verrouillée', await statesText());
+  check('départ : Livre à faire, le reste verrouillé', (await statesText()) === 'à faire,verrouillée,verrouillée,verrouillée,verrouillée', await statesText());
   check('étape verrouillée : motif lisible sur l’onglet', (await tab('essai')).text.includes('Valider d\'abord « Livre »'), await tab('essai'));
   await page.click('#etapes button[data-step="essai"]', { force: true });
   check('étape verrouillée : ne s’ouvre pas', (await current()) === 'livre' && await page.isHidden('#essai'));
@@ -124,13 +125,13 @@ await open();
   await page.reload();
   await page.waitForSelector('#etapes li');
   await until(`document.querySelector('#etapes li[data-state="validee"]') !== null`);
-  check('tout validé : ouverture sur la dernière étape', (await current()) === 'essai');
+  check('Essai validé, aucun sujet : ouverture sur Sujets', (await current()) === 'sujets');
 
   await go('prix');
   await page.click('#v-scenarios');
   await page.click('#prix-scenarios button:has-text("Ne plus retenir")');
   await untilTab('essai', 'verrouillée');
-  check('étape redevenue non validée : la suite se reverrouille', (await statesText()) === 'validée,à faire,verrouillée,verrouillée', await statesText());
+  check('étape redevenue non validée : la suite se reverrouille', (await statesText()) === 'validée,à faire,verrouillée,verrouillée,verrouillée', await statesText());
   check('reverrouillage : aucune donnée perdue', fs.existsSync(style) && fs.existsSync(path.join(dataRoot, BOOK_ID, 'export', 'essai-2A.pdf')));
   await page.reload();
   await until(`document.querySelector('#etapes li[data-state="a-faire"]') !== null`);
@@ -138,7 +139,204 @@ await open();
   await page.click('#v-scenarios');
   await page.click('#prix-scenarios button:has-text("Retenir")');
   await untilTab('essai', 'validée');
-  check('scénario de nouveau retenu : le parcours revient', (await statesText()) === 'validée,validée,validée,validée', await statesText());
+  check('scénario de nouveau retenu : le parcours revient', (await statesText()) === 'validée,validée,validée,validée,à faire', await statesText());
+}
+
+// Sujet réel, de la création à « relu »
+const subjectFile = () => JSON.parse(fs.readFileSync(path.join(dataRoot, BOOK_ID, 'subjects', 'alpha', 'subject.json'), 'utf8'));
+const researchFile = () => JSON.parse(fs.readFileSync(path.join(dataRoot, BOOK_ID, 'subjects', 'alpha', 'research.json'), 'utf8'));
+const subTab = (id: string) => page.evaluate(`document.querySelector('#sous-etapes button[data-step="${id}"] .nom-signe')?.getAttribute('aria-label')`) as Promise<string | null>;
+const goSub = (id: string) => page.click(`#sous-etapes button[data-step="${id}"]`);
+const untilSub = (id: string, sign: string) => until(`document.querySelector('#sous-etapes button[data-step="${id}"] .nom-signe')?.getAttribute('aria-label') === '${sign}'`);
+const importJson = (value: unknown) => page.setInputFiles('#r-fichier', { name: 'research.json', mimeType: 'application/json', buffer: Buffer.from(typeof value === 'string' ? value : JSON.stringify(value)) });
+const claimButton = (id: string, name: string) => page.click(`[data-claim="${id}"] button:has-text("${name}")`);
+const stateOfBlock = (id: string) => page.getAttribute(`[data-block="${id}"]`, 'data-state');
+const stateOfClaim = (id: string) => page.getAttribute(`[data-claim="${id}"]`, 'data-state');
+const untilBlock = (id: string, state: string) => until(`document.querySelector('[data-block="${id}"]')?.dataset.state === '${state}'`);
+const untilClaim = (id: string, state: string) => until(`document.querySelector('[data-claim="${id}"]')?.dataset.state === '${state}'`);
+const runControl = async (button: string) => {
+  await page.click(button);
+  await until(`!document.querySelector('#sa-controler').disabled && document.querySelector('#sa-resultat table') !== null`);
+};
+const levels = () => page.evaluate(`[...document.querySelectorAll('#sa-resultat tr')].slice(1).map((r) => r.cells[0].textContent + ':' + r.cells[2].querySelector('.signe').getAttribute('aria-label'))`) as Promise<string[]>;
+{
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.setViewportSize(SIZES[0]!);
+  await open();
+  await until(`document.querySelector('#s-scene option') !== null`);
+  check('Sujets : la scène et le gabarit viennent de la lecture et du registre', (await page.inputValue('#s-scene')) === 'alpha' && (await page.inputValue('#s-gabarit')) === '2A');
+  check('Sujets : thème proposé par la rotation', (await page.inputValue('#s-theme')) === 'foret');
+  check('Sujets : aucun sujet', (await text('#sujets-liste')).includes('Aucun sujet'));
+  await page.fill('#s-pages', '4');
+  check('Sujets : aucun gabarit de 4 pages, création impossible', await page.isDisabled('#s-creer'));
+  await page.fill('#s-pages', '2');
+  await page.click('#s-creer');
+  await until(`document.querySelector('#sujet-message').textContent.includes('alpha')`);
+  check('création : le total suit', (await text('#sujets-total')).includes('2 pages de sujets') && (await text('#sujets-total')).includes('page 8'), await text('#sujets-total'));
+  check('création : Essai reste validé', (await tab('essai')).sign === 'validée');
+  check('création : le sujet est dans la liste', (await text('#sujets-liste')).includes('alpha fr') && (await tab('sujets')).sign === 'à faire');
+  check('création : thème suivant proposé', (await page.inputValue('#s-theme')) === 'ocean');
+  await page.selectOption('#s-scene', 'alpha');
+  await page.click('#s-creer');
+  await until(`document.querySelector('#sujet-message .erreur') !== null`);
+  check('création : second essai refusé, message visible', (await text('#sujet-message')).includes('existe déjà'));
+
+  await page.click('#sujets-liste button:has-text("Ouvrir")');
+  await untilSub('sujet-recherche', 'à faire');
+  check('sujet : Relecture et Aperçu verrouillés avant l’import', (await subTab('sujet-relecture')) === 'verrouillée' && (await subTab('sujet-apercu')) === 'verrouillée');
+  await page.click('#r-preparer');
+  await until(`document.querySelector('#r-copie').textContent !== ''`);
+  check('prompt : affiché', (await page.inputValue('#r-prompt')).includes('alpha fr'));
+  // Le presse-papiers dépend du navigateur de test : la batterie le vérifie pour de vrai.
+  if ((await text('#r-copie')).includes('copié')) check('prompt : dans le presse-papiers', ((await page.evaluate('navigator.clipboard.readText()')) as string).replace(/\r\n/g, "\n") === await page.inputValue("#r-prompt"));
+
+  const { generatedAt: _g, ...withoutField } = makeResearch();
+  await importJson(withoutField);
+  await until(`document.querySelector('#r-resultat .erreur') !== null`);
+  check('import : champ manquant, nommé', (await text('#r-resultat')).includes('champ generatedAt'), await text('#r-resultat'));
+  check('import refusé : aucun fichier écrit', !fs.existsSync(path.join(dataRoot, BOOK_ID, 'subjects', 'alpha', 'research.json')));
+  await importJson(makeResearch('beta'));
+  await until(`document.querySelector('#r-resultat').textContent.includes('subjectId')`);
+  await importJson(makeResearch());
+  await untilSub('sujet-recherche', 'validée');
+  check('import : relecture ouverte', (await subTab('sujet-relecture')) === 'à faire' && (await subTab('sujet-apercu')) === 'à faire');
+  check('import : fichiers dans le dossier de données', researchFile().claims[0].status === 'propose' && subjectFile().blocks[0].state === 'a-relire');
+
+  await goSub('sujet-relecture');
+  await page.waitForSelector('[data-claim="c1"]');
+  check('relecture : source en lien sûr', (await page.getAttribute('[data-claim="c1"] a', 'href')) === 'https://source-1.example/page' && (await page.getAttribute('[data-claim="c1"] a', 'rel'))!.includes('noopener'));
+  check('relecture : paraphrase et URL non contrôlée', (await text('[data-claim="c1"]')).includes('autres mots') && (await text('[data-claim="c1"]')).includes('non contrôlée'));
+  check('relecture : fait débattu signalé', (await text('[data-claim="c3"]')).includes('fait débattu'));
+  check('relecture : compteur par rapport à la zone', (await text('[data-block="chapeau"] .compteur')).includes(' / 140'));
+  check('relecture : bloc non validable avant ses affirmations', await page.isDisabled('[data-block="chapeau"] button:has-text("Valider le bloc")'));
+
+  await claimButton('c1', 'Valider');
+  await untilClaim('c1', 'valide');
+  await claimButton('c2', 'Corriger');
+  await page.fill('[data-claim="c2"] textarea', 'Le Fictivore mesure deux mètres et demi.');
+  await page.click('[data-claim="c2"] button:has-text("Enregistrer la correction")');
+  await untilClaim('c2', 'corrige');
+  await claimButton('c3', 'Rejeter');
+  await untilClaim('c3', 'rejete');
+  check('rejet : les blocs qui la citent sont à reprendre', (await stateOfBlock('texte')) === 'a-reprendre' && (await stateOfBlock('fiche-regime')) === 'a-reprendre');
+  check('relecture : enregistré aussitôt', researchFile().claims[0].status === 'valide' && researchFile().claims[2].status === 'rejete' && researchFile().claims[1].correctedText.includes('deux mètres et demi'));
+  await page.fill('[data-claim="c1"] input', 'Vu avec soin.');
+  await page.press('[data-claim="c1"] input', 'Tab');
+  await until(`document.querySelector('[data-claim="c1"] input').value === 'Vu avec soin.'`);
+  check('note : enregistrée', await (async () => {
+    for (let i = 0; i < 100 && researchFile().claims[0].note === ''; i++) await page.waitForTimeout(20);
+    return researchFile().claims[0].note === 'Vu avec soin.';
+  })());
+
+  check('citation : on ne retire pas la dernière', await page.isDisabled('[data-block="fiche-regime"] .cite button'));
+  await page.selectOption('[data-block="fiche-regime"] .cite select', 'c1');
+  await until(`document.querySelectorAll('[data-block="fiche-regime"] .cite button').length === 2`);
+  await page.click('[data-block="fiche-regime"] .cite button:has-text("c3")');
+  await until(`document.querySelectorAll('[data-block="fiche-regime"] .cite button').length === 1`);
+  await page.click('[data-block="texte"] .cite button:has-text("c3")');
+  await until(`document.querySelectorAll('[data-block="texte"] .cite button').length === 1`);
+
+  await goSub('sujet-apercu');
+  await until(`document.querySelector('#sa-page').src.includes('/apercu-sujet?')`);
+  await page.waitForTimeout(100);
+  check('aperçu : le texte réel est dans le cadre', ((await page.frameLocator('#sa-page').locator('[data-zone="chapeau"]').textContent()) ?? '').includes('Fictivore'));
+  check('aperçu : titre de la scène', (await page.frameLocator('#sa-page').locator('[data-zone="titre"]').textContent()) === 'alpha fr');
+  check('aperçu : numéros réels', (await page.frameLocator('#sa-page').locator('section').first().getAttribute('data-page')) === '6');
+  check('aperçu : illustration et QR marqués', ((await page.frameLocator('#sa-page').locator('[data-zone="illustration"]').getAttribute('src')) ?? '').includes('venir') && ((await page.frameLocator('#sa-page').locator('[data-zone="qr"]').textContent()) ?? '').includes('FACTICE'));
+  await page.check('input[data-sujet-layer="zones"]');
+  check('aperçu : repères repris de l’essai', (await page.getAttribute('#sa-reperes g[data-layer="zones"]', 'display')) === 'inline' && (await page.locator('#sa-reperes text').count()) > 5);
+  await runControl('#sa-relu');
+  check('relu refusé : blocs à valider', (await text('#sa-resultat')).includes('à valider') && subjectFile().status === 'brouillon', await text('#sa-resultat'));
+  check('contrôles : verts sur des textes corrects', (await levels()).join() === 'C10:contrôle réussi,C12:contrôle réussi,C13:contrôle réussi', await levels());
+
+  await goSub('sujet-relecture');
+  for (const id of ['chapeau', 'texte', 'fiche-taille', 'fiche-poids', 'fiche-epoque', 'fiche-regime', 'fiche-lieu']) {
+    await page.click(`[data-block="${id}"] button:has-text("Valider le bloc")`);
+    await untilBlock(id, 'valide');
+  }
+  await untilSub('sujet-relecture', 'validée');
+  await goSub('sujet-apercu');
+  await runControl('#sa-relu');
+  await untilSub('sujet-apercu', 'validée');
+  check('relu : écrit dans subject.json', subjectFile().status === 'relu' && (await text('#sa-resultat')).includes('marqué relu'));
+  await untilTab('sujets', 'validée');
+
+  // Débordement réel : Aperçu reste ouvert quand un bloc repasse à relire.
+  await goSub('sujet-relecture');
+  await page.fill('[data-block="texte"] textarea', 'Une phrase un peu longue pour remplir toute la zone de texte de la page. '.repeat(12));
+  check('compteur : passe en erreur à la frappe', await page.evaluate(`document.querySelector('[data-block="texte"] .compteur').classList.contains('erreur')`) as boolean);
+  await page.press('[data-block="texte"] textarea', 'Tab');
+  await untilBlock('texte', 'a-relire');
+  check('bloc modifié : sujet en brouillon', subjectFile().status === 'brouillon');
+  await untilSub('sujet-relecture', 'à faire');
+  check('bloc à relire : Aperçu reste ouvert', (await subTab('sujet-apercu')) === 'à faire');
+  await goSub('sujet-apercu');
+  await runControl('#sa-controler');
+  const red = await text('#sa-resultat');
+  check('C12 rouge : limite et débordement mesuré', (await levels()).includes('C12:erreur') && red.includes('caractères') && red.includes('déborde'), red);
+  await goSub('sujet-relecture');
+  await page.fill('[data-block="texte"] textarea', 'Le Fictivore mesure deux mètres et demi. Il vit dans les pages de tests.');
+  await page.press('[data-block="texte"] textarea', 'Tab');
+  await until(`document.querySelector('[data-block="texte"] .compteur').classList.contains('erreur') === false`);
+  await page.waitForTimeout(100);
+  await goSub('sujet-apercu');
+  await runControl('#sa-controler');
+  check('C12 de nouveau vert', (await levels()).includes('C12:contrôle réussi'), await levels());
+
+  // Second import : confirmation, ancien fichier daté
+  await goSub('sujet-recherche');
+  await importJson(makeResearch());
+  await until(`!document.querySelector('#r-confirmation').hidden`);
+  check('second import : confirmation demandée, rien d’écrit', (await text('#r-resume')).includes('Affirmations gardées') && researchFile().claims[0].status === 'valide');
+  await page.click('#r-annuler');
+  check('second import annulé : rien ne change', await page.isHidden('#r-confirmation'));
+  await importJson(makeResearch());
+  await until(`!document.querySelector('#r-confirmation').hidden`);
+  await page.click('#r-remplacer');
+  await until(`document.querySelector('#r-resultat').textContent.includes('Anciens fichiers')`);
+  const names = fs.readdirSync(path.join(dataRoot, BOOK_ID, 'subjects', 'alpha'));
+  check('second import : anciens fichiers gardés, datés', names.filter((n) => /^research\..+\.json$/.test(n)).length === 1 && names.filter((n) => /^subject\..+\.json$/.test(n)).length === 1, names);
+  check('second import : correction de David gardée', researchFile().claims[1].correctedText?.includes('deux mètres et demi'));
+
+  // Titre et légende
+  await goSub('sujet-relecture');
+  await page.fill('#rl-titre', 'Titre surchargé');
+  await page.press('#rl-titre', 'Tab');
+  await until(`document.querySelector('#rl-champs').textContent.includes('surchargé')`);
+  check('titre : surcharge enregistrée, signalée', subjectFile().title.fr === 'Titre surchargé');
+  await page.fill('#rl-titre', '');
+  await page.press('#rl-titre', 'Tab');
+  await until(`document.querySelector('#rl-champs').textContent.includes('lu dans la scène')`);
+  check('titre : surcharge retirée', subjectFile().title.fr === undefined);
+  await page.fill('#rl-legende', 'Légende de David');
+  await page.press('#rl-legende', 'Tab');
+  await until(`document.querySelector('#rl-legende').value === 'Légende de David'`);
+  await page.waitForTimeout(150);
+  check('légende : enregistrée', subjectFile().qrLegend.fr === 'Légende de David');
+  await goSub('sujet-apercu');
+  await page.selectOption('#sa-theme', 'ocean');
+  await until(`document.querySelector('#sa-theme').value === 'ocean'`);
+  await page.waitForTimeout(150);
+  check('thème : changé dans l’aperçu', subjectFile().variant.theme === 'ocean');
+
+  // Remise au vert pour la suite : tout validé, sujet relu
+  await goSub('sujet-relecture');
+  for (const id of (await page.evaluate(`[...document.querySelectorAll('[data-claim][data-state="propose"], [data-claim][data-state="rejete"]')].map((e) => e.dataset.claim)`) as string[])) {
+    await claimButton(id, 'Valider');
+    await untilClaim(id, 'valide');
+  }
+  for (const id of (await page.evaluate(`[...document.querySelectorAll('[data-block]:not([data-state="valide"])')].map((e) => e.dataset.block)`) as string[])) {
+    await page.click(`[data-block="${id}"] button:has-text("Valider le bloc")`);
+    await untilBlock(id, 'valide');
+  }
+  await goSub('sujet-apercu');
+  await runControl('#sa-relu');
+  await untilTab('sujets', 'validée');
+  await page.click('#sujet-retour');
+  await page.selectOption('#s-scene', 'beta');
+  await page.click('#s-creer');
+  await until(`document.querySelector('#sujet-message').textContent.includes('beta')`);
+  check('second sujet : commence en page 8', (await text('#sujets-total')).includes('page 10'));
 }
 
 // Sans défilement. Chaque boîte qui ne porte pas une liste doit contenir ce qu'elle affiche, et chaque commande doit tenir dans la fenêtre.
@@ -147,13 +345,13 @@ const FIT = `(() => {
   const seen = (e) => e.getClientRects().length > 0;
   const frames = '.liste, .defile';
   const off = [];
-  for (const e of document.querySelectorAll('button, select, input, label, h2, dt, dd, fieldset, #apercu-cadre')) {
-    if (!seen(e) || e.closest(frames) || e.closest('#apercu-echelle')) continue;
+  for (const e of document.querySelectorAll('button, select, input, textarea, label, h2, dt, dd, fieldset, .cadre-apercu')) {
+    if (!seen(e) || e.closest(frames) || e.closest('.echelle-apercu')) continue;
     const r = e.getBoundingClientRect();
     if (r.top < -0.5 || r.left < -0.5 || r.bottom > innerHeight + 0.5 || r.right > innerWidth + 0.5) off.push(e.id || e.tagName + ' ' + e.textContent.slice(0, 24));
   }
   const clipped = [];
-  for (const e of document.querySelectorAll('.panneau, .colonne, #prix-form, #essai-zone')) {
+  for (const e of document.querySelectorAll('.panneau, .colonne, .sous-panneau, #prix-form, .zone-apercu')) {
     if (seen(e) && (e.scrollHeight > e.clientHeight + 1 || e.scrollWidth > e.clientWidth + 1)) clipped.push(e.id || e.className);
   }
   const small = [];
@@ -162,9 +360,9 @@ const FIT = `(() => {
   }
   return { sh: root.scrollHeight, h: innerHeight, sw: root.scrollWidth, w: innerWidth, off, clipped, small };
 })()`;
-const PREVIEW_FIT = `(() => {
-  const f = document.querySelector('#apercu-cadre').getBoundingClientRect();
-  const p = document.querySelector('#apercu-echelle').getBoundingClientRect();
+const previewFit = (frame: string, inner: string) => `(() => {
+  const f = document.querySelector('${frame}').getBoundingClientRect();
+  const p = document.querySelector('${inner}').getBoundingClientRect();
   return { inside: p.left >= f.left - 1 && p.right <= f.right + 1 && p.top >= f.top - 1 && p.bottom <= f.bottom + 1, width: p.width, height: p.height };
 })()`;
 const FORM_FIT = `(() => {
@@ -198,9 +396,31 @@ async function everyStep(label: string): Promise<void> {
   await until(`document.querySelector('#apercu-echelle').style.transform !== ''`);
   await page.waitForTimeout(50);
   await fits(`${label}, Essai`);
-  const preview = await page.evaluate(PREVIEW_FIT) as { inside: boolean; width: number; height: number };
+  const preview = await page.evaluate(previewFit('#apercu-cadre', '#apercu-echelle')) as { inside: boolean; width: number; height: number };
   check(`${label}, Essai : double page entière et lisible`, preview.inside && preview.height > 300 && Math.abs(preview.width / preview.height - 12.25 / 9.25) < 0.02, preview);
   check(`${label}, Essai : repères et export à côté de l’aperçu`, await page.isVisible('#r-fold') && await page.isVisible('#essai-exporter'));
+  await go('sujets');
+  await until(`document.querySelector('#sujets-liste table') !== null`);
+  await fits(`${label}, Sujets`);
+  await page.click('#sujets-liste button:has-text("Ouvrir")');
+  await until(`document.querySelector('#sous-etapes button[aria-current="step"]') !== null`);
+  await goSub('sujet-recherche');
+  await page.click('#r-preparer');
+  await until(`document.querySelector('#r-copie').textContent !== ''`);
+  await fits(`${label}, Recherche`);
+  await goSub('sujet-relecture');
+  await page.waitForSelector('[data-claim]');
+  await fits(`${label}, Relecture`);
+  check(`${label}, Relecture : les commandes du haut restent visibles`, await page.isVisible('#rl-urls') && await page.isVisible('#rl-titre'));
+  await goSub('sujet-apercu');
+  await until(`document.querySelector('#sa-echelle').style.transform !== ''`);
+  await page.waitForTimeout(50);
+  await fits(`${label}, Aperçu du sujet`);
+  const sujetPreview = await page.evaluate(previewFit('#sa-cadre', '#sa-echelle')) as { inside: boolean; width: number; height: number };
+  check(`${label}, Aperçu du sujet : double page entière et lisible`, sujetPreview.inside && sujetPreview.height > 300, sujetPreview);
+  await runControl('#sa-controler');
+  await fits(`${label}, Aperçu du sujet, contrôles`);
+  await page.click('#sujet-retour');
 }
 
 // Plusieurs scénarios, retenus ou non, avec le scénario retenu en écart de pages.
@@ -237,7 +457,27 @@ await page.route('**/api/pricing/compute', patchJson(({ result }) => {
   result.alerts = many('Alerte', 40);
 }));
 await page.route('**/api/pricing/state', patchJson((view) => { view.deviation = many('Écart', 12); }));
-await page.route('**/api/parcours', patchJson((view) => { view.steps[1].reasons = many('Écart', 12); view.steps[1].state = 'alerte'; }));
+await page.route('**/api/parcours', patchJson((view) => {
+  view.steps[1].reasons = many('Écart', 12);
+  view.steps[1].state = 'alerte';
+  const [s] = view.subjects;
+  view.subjects = [...view.subjects, ...Array.from({ length: 13 }, (_, i) => ({ ...s, id: `sujet-${i}`, title: `Sujet au titre assez long numéro ${i}` }))];
+  for (const subject of view.subjects) subject.steps[1].reasons = many('Motif', 6);
+}));
+const longClaims = (view: Record<string, any>) => {
+  const [claim] = view.claims;
+  view.claims = Array.from({ length: 40 }, (_, i) => ({ ...claim, id: `c${i}`, sources: [...claim.sources, ...claim.sources] }));
+  const [block] = view.subject.blocks;
+  view.subject.blocks = [...view.subject.blocks, ...Array.from({ length: 20 }, (_, i) => ({ ...block, id: `bloc-${i}`, claims: Array.from({ length: 8 }, (_c, j) => `c${j}`) }))];
+};
+await page.route('**/api/sujet/state', patchJson(longClaims));
+await page.route('**/api/sujet/check', patchJson((r) => {
+  longClaims(r);
+  for (const c of r.checks) {
+    c.level = 'erreur';
+    c.details = many('Détail', 10);
+  }
+}));
 await page.route('**/api/create', patchJson(({ result }) => {
   result.kept = many('Conservé', 30);
   result.alerts = many('Alerte', 20);
@@ -274,7 +514,7 @@ await page.unrouteAll({ behavior: 'ignoreErrors' });
   await open();
   await until(`document.querySelector('#etapes li[data-state="validee"]') !== null`);
   const labels = await page.evaluate(`[...document.querySelectorAll('#etapes .nom-signe')].map((e) => [e.getAttribute('role'), e.getAttribute('aria-label'), e.textContent])`) as string[][];
-  check('signes : image nommée, texte visible', labels.length === 4 && labels.every(([role, label, text]) => role === 'img' && !!label && !!text), labels);
+  check('signes : image nommée, texte visible', labels.length === 5 && labels.every(([role, label, text]) => role === 'img' && !!label && !!text), labels);
 }
 
 // Configuration invalide : le menu reste affiché et dit quoi corriger.

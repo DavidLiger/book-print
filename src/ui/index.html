@@ -13,7 +13,7 @@
       <label for="choix">Livre</label>
       <select id="choix" disabled></select>
     </div>
-    <nav aria-label="Étapes du parcours"><ol id="etapes"></ol></nav>
+    <nav aria-label="Étapes du parcours"><ol id="etapes" class="etapes"></ol></nav>
   </header>
 
   <main>
@@ -116,11 +116,11 @@
         <button id="essai-recharger" type="button" class="secondaire">Recharger l'aperçu</button>
       </div>
       <div id="essai-message"></div>
-      <div id="essai-zone" hidden>
-        <div id="apercu-cadre">
-          <div id="apercu-echelle">
-            <iframe id="apercu" title="Aperçu de la double page" sandbox scrolling="no"></iframe>
-            <svg id="reperes" aria-hidden="true"></svg>
+      <div id="essai-zone" class="zone-apercu" hidden>
+        <div id="apercu-cadre" class="cadre-apercu">
+          <div id="apercu-echelle" class="echelle-apercu">
+            <iframe id="apercu" class="cadre-page" title="Aperçu de la double page" sandbox scrolling="no"></iframe>
+            <svg id="reperes" class="reperes" aria-hidden="true"></svg>
           </div>
         </div>
         <div class="colonne">
@@ -134,6 +134,113 @@
           </fieldset>
           <div class="boutons"><button id="essai-exporter" type="button">Exporter le PDF d'essai</button></div>
           <div id="essai-resultat" class="liste"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="sujets" class="panneau" aria-labelledby="t-sujets" hidden>
+      <div id="sujets-accueil" class="colonnes">
+        <div class="colonne">
+          <h2 id="t-sujets">Sujets du livre</h2>
+          <p id="sujets-total" class="note"></p>
+          <div id="sujets-liste" class="defile"></div>
+        </div>
+        <div class="colonne">
+          <h2>Nouveau sujet</h2>
+          <form id="sujet-form" autocomplete="off">
+            <div class="grille">
+              <div class="champ large"><label for="s-scene">Scène de GLBInterpreter</label><select id="s-scene"></select></div>
+              <div class="champ"><label for="s-pages">Pages</label><input id="s-pages" type="number" min="2" step="1" value="2"></div>
+              <div class="champ"><label for="s-gabarit">Gabarit</label><select id="s-gabarit"></select></div>
+              <div class="champ"><label for="s-theme">Thème</label><select id="s-theme"></select></div>
+            </div>
+            <div class="boutons"><button id="s-creer" type="submit">Créer le sujet</button></div>
+          </form>
+          <div id="sujet-message" class="liste"></div>
+        </div>
+      </div>
+
+      <div id="sujet-ouvert" class="colonne etire" hidden>
+        <div class="sujet-tete">
+          <button id="sujet-retour" type="button" class="secondaire">← Tous les sujets</button>
+          <h2 id="sujet-nom"></h2>
+          <nav aria-label="Étapes du sujet"><ol id="sous-etapes" class="etapes"></ol></nav>
+        </div>
+        <div id="sujet-motifs" class="liste" hidden></div>
+        <div id="sujet-erreur"></div>
+
+        <div id="sujet-recherche" class="sous-panneau colonnes" hidden>
+          <div class="colonne">
+            <h3>Préparer la recherche</h3>
+            <p class="note">Le prompt est copié : le coller dans une conversation Claude avec la recherche web, puis enregistrer le fichier produit.</p>
+            <div class="boutons"><button id="r-preparer" type="button">Préparer la recherche</button></div>
+            <p id="r-copie" class="note" aria-live="polite"></p>
+            <textarea id="r-prompt" class="etire" readonly aria-label="Prompt de recherche" hidden></textarea>
+          </div>
+          <div class="colonne">
+            <h3>Importer le fichier</h3>
+            <label id="r-depot" for="r-fichier">Déposer research.json ici, ou cliquer pour le choisir<input id="r-fichier" type="file" accept=".json,application/json"></label>
+            <div id="r-confirmation" hidden>
+              <p class="alerte">Ce sujet a déjà une recherche.</p>
+              <div id="r-resume"></div>
+              <div class="boutons">
+                <button id="r-remplacer" type="button">Remplacer, en gardant l'ancien fichier daté</button>
+                <button id="r-annuler" type="button" class="secondaire">Annuler</button>
+              </div>
+            </div>
+            <div id="r-resultat" class="liste"></div>
+          </div>
+        </div>
+
+        <div id="sujet-relecture" class="sous-panneau" hidden>
+          <div class="tete">
+            <button id="rl-urls" type="button" class="secondaire">Contrôler les URL</button>
+            <p id="rl-compte" class="note"></p>
+          </div>
+          <div id="rl-message"></div>
+          <div class="colonnes">
+            <div class="colonne">
+              <h3>Affirmations</h3>
+              <div id="rl-claims" class="liste"></div>
+            </div>
+            <div class="colonne">
+              <h3>Blocs</h3>
+              <div class="grille deux">
+                <div class="champ"><label for="rl-titre">Titre</label><input id="rl-titre" data-key="titre"></div>
+                <div class="champ"><label for="rl-legende">Légende du QR</label><input id="rl-legende" data-key="legende"></div>
+              </div>
+              <p id="rl-champs" class="note"></p>
+              <div id="rl-blocks" class="liste"></div>
+            </div>
+          </div>
+        </div>
+
+        <div id="sujet-apercu" class="sous-panneau" hidden>
+          <div id="sa-zone" class="zone-apercu">
+            <div id="sa-cadre" class="cadre-apercu">
+              <div id="sa-echelle" class="echelle-apercu">
+                <iframe id="sa-page" class="cadre-page" title="Aperçu du sujet" sandbox scrolling="no"></iframe>
+                <svg id="sa-reperes" class="reperes" aria-hidden="true"></svg>
+              </div>
+            </div>
+            <div class="colonne">
+              <div class="champ"><label for="sa-theme">Thème</label><select id="sa-theme"></select></div>
+              <fieldset>
+                <legend>Repères</legend>
+                <label><input type="checkbox" data-sujet-layer="bleed"> Fond perdu</label>
+                <label><input type="checkbox" data-sujet-layer="safe"> Zone de sécurité</label>
+                <label><input type="checkbox" data-sujet-layer="fold"> Pli</label>
+                <label><input type="checkbox" data-sujet-layer="zones"> Zones</label>
+              </fieldset>
+              <div class="boutons">
+                <button id="sa-controler" type="button" class="secondaire">Contrôler</button>
+                <button id="sa-relu" type="button">Marquer relu</button>
+                <button id="sa-recharger" type="button" class="secondaire">Recharger l'aperçu</button>
+              </div>
+              <p class="note">Illustration et QR factices : ils arrivent avec les lots suivants.</p>
+              <div id="sa-resultat" class="liste"></div>
+            </div>
+          </div>
         </div>
       </div>
     </section>

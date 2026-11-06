@@ -10,24 +10,31 @@ import { readPdfFacts } from '../checks/pdf-facts';
 import { runChecks, type CheckResult } from '../checks/rules';
 import { readCollection, type Collection } from '../data/collection';
 import { bookFolder, readPrintBook } from '../data/pricing-file';
+import type { PrintBook } from '../schema/print-book';
 import { TEMPLATES } from '../templates';
 import { layoutTemplate, pageSize, type LayoutPage, type Trim } from '../templates/geometry';
 import { FONT_PACK } from './fonts';
-import { renderHtml, RenderRefused } from './html';
+import { applyBookFiche, renderHtml, RenderRefused } from './html';
 import { renderPdf } from './pdf';
 
 export const ESSAI_FILE = 'essai-2A.pdf';
 export const ESSAI_CONTROL_FILE = 'essai-2A.controle.json';
 
 const checkSchema = z.strictObject({ id: z.string(), label: z.string(), level: z.enum(['ok', 'alerte', 'erreur']), details: z.array(z.string()) });
-export const essaiControlSchema = z.strictObject({ schemaVersion: z.literal(1), date: z.iso.datetime(), bookId: z.string(), theme: z.string(), checks: z.array(checkSchema) });
+/** `book` : ce qui, dans `print-book.json`, change le rendu d'essai. Absent d'un fichier écrit avant MP3 : la fraîcheur se juge alors à la date. */
+export const essaiControlSchema = z.strictObject({ schemaVersion: z.literal(1), date: z.iso.datetime(), bookId: z.string(), theme: z.string(), book: z.string().optional(), checks: z.array(checkSchema) });
 export type EssaiControl = z.infer<typeof essaiControlSchema>;
+
+/** La liste `subjects` n'y est pas : créer un sujet ne rend pas l'essai à refaire. */
+export const bookSnapshot = (book: Pick<PrintBook, 'edition' | 'fiche'>) => JSON.stringify({ edition: book.edition, fiche: book.fiche ?? null });
 
 export interface Essai {
   html: string;
   layout: LayoutPage[];
   trim: Trim;
   theme: string;
+  /** `bookSnapshot` du livre rendu. */
+  book?: string;
 }
 
 export function buildEssai(trim: Trim, collection: Collection, theme: string): Essai {
@@ -44,7 +51,8 @@ export function essaiFor(dataRoot: string, bookId: string, theme?: string): Essa
   if (!book) throw new RenderRefused(error ?? `Dossier du livre absent : ${bookId}/. Le créer d'abord dans la page.`);
   const collection = readCollection(dataRoot);
   if (!collection) throw new RenderRefused('collection/ absent : le créer d\'abord dans la page.');
-  return buildEssai(book.edition.trim, collection, theme ?? collection.style.variants.rotation[0]!);
+  const style = applyBookFiche(collection.style, book);
+  return { ...buildEssai(book.edition.trim, { ...collection, style }, theme ?? style.variants.rotation[0]!), book: bookSnapshot(book) };
 }
 
 export const packFonts = () => Object.values(FONT_PACK).map(({ family, pdfName }) => ({ family, pdfName }));
@@ -131,7 +139,7 @@ export async function exportEssai(dataRoot: string, bookId: string, theme: strin
   if (!exportDir) throw new RenderRefused(`${bookId}/export/ n'est pas un dossier réel : rien n'est écrit.`);
   const { pdf, ...rest } = await renderEssai(essai);
   const file = writeExport(exportDir, ESSAI_FILE, pdf);
-  const control: EssaiControl = { schemaVersion: 1, date, bookId, theme, checks: rest.checks };
+  const control: EssaiControl = { schemaVersion: 1, date, bookId, theme, ...(essai.book ? { book: essai.book } : {}), checks: rest.checks };
   writeExport(exportDir, ESSAI_CONTROL_FILE, `${JSON.stringify(control, null, 2)}\n`);
   return { ...rest, file };
 }

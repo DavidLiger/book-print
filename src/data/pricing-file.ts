@@ -1,7 +1,6 @@
 // src/data/pricing-file.ts — `<bookId>/pricing.json` (spec §9.6). Contrairement aux fichiers de MP1, celui-ci est réécrit à
 // chaque enregistrement : écriture dans un fichier temporaire puis renommage, pour qu'une coupure ne laisse jamais un
 // fichier à moitié écrit. Un fichier existant et invalide n'est jamais écrasé. `print-book.json` est seulement lu.
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
@@ -9,6 +8,7 @@ import { isInside } from '../glbi/paths';
 import { emptyPricing, pricingFileSchema, type PricingFile, type Scenario, type ScenarioInput } from '../pricing/scenarios';
 import { bookIdSchema } from '../schema/common';
 import { printBookSchema, type PrintBook } from '../schema/print-book';
+import { writeAtomic } from './atomic';
 
 export class PricingRefused extends Error {}
 
@@ -50,21 +50,8 @@ function readFrom(dir: string, bookId: string): PricingFile {
   return parsed.data;
 }
 
-/** Le temporaire est dans le même dossier : le renommage reste atomique. `wx` n'écrase rien et ne suit pas un lien. */
 function writeTo(dir: string, content: PricingFile): void {
-  const tmp = path.join(dir, `${FILE}.${crypto.randomBytes(6).toString('hex')}.tmp`);
-  try {
-    const fd = fs.openSync(tmp, 'wx');
-    try {
-      fs.writeFileSync(fd, `${JSON.stringify(content, null, 2)}\n`, 'utf8');
-      fs.fsyncSync(fd);
-    } finally {
-      fs.closeSync(fd);
-    }
-    fs.renameSync(tmp, path.join(dir, FILE));
-  } finally {
-    fs.rmSync(tmp, { force: true });
-  }
+  writeAtomic(dir, FILE, `${JSON.stringify(content, null, 2)}\n`);
 }
 
 function update(dataRoot: string, bookId: string, change: (file: PricingFile) => void): PricingFile {

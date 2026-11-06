@@ -12,7 +12,9 @@
     "test:render": "tsx scripts/test-render.ts",
     "test:checks": "tsx scripts/test-checks.ts",
     "test:parcours": "tsx scripts/test-parcours.ts",
-    "test:ui": "tsx scripts/test-ui.ts"
+    "test:ui": "tsx scripts/test-ui.ts",
+    "test:research": "tsx scripts/test-research.ts",
+    "schema:research": "tsx scripts/gen-research-schema.ts"
   },
   "keywords": [],
   "author": "",
