@@ -1,5 +1,5 @@
 // src/data/create-book.ts — crée le dossier de données d'un livre (spec §3.2, architecture §4).
-// Seul module qui écrit. Aucune écriture hors de `dataRoot` ; un fichier existant n'est jamais écrasé.
+// Aucune écriture hors de `dataRoot` ; un fichier existant n'est jamais écrasé.
 import fs from 'node:fs';
 import path from 'node:path';
 import { bookIdSchema, SCHEMA_VERSION } from '../schema/common';
@@ -9,17 +9,20 @@ import { isInside } from '../glbi/paths';
 export const DATA_GITIGNORE = ['*/illustrations/', '*/export/', '*/.cache/'];
 const BOOK_DIRS = ['subjects', 'illustrations', 'export'];
 
-export interface CreateResult {
-  bookId: string;
+export interface WriteReport {
   created: string[];
   kept: string[];
+}
+
+export interface CreateResult extends WriteReport {
+  bookId: string;
   alerts: string[];
 }
 
 export class CreateRefused extends Error {}
 
 /** Crée `<root>/<rel>` segment par segment : un lien ou une jonction ferait sortir de `root` (Windows : jonction = lien). */
-function ensureDir(root: string, segments: string[], out: CreateResult): void {
+export function ensureDir(root: string, segments: string[], out: WriteReport): void {
   let current = root;
   for (const [i, segment] of segments.entries()) {
     current = path.join(current, segment);
@@ -37,7 +40,7 @@ function ensureDir(root: string, segments: string[], out: CreateResult): void {
 }
 
 /** Écrit sans jamais écraser : `wx` échoue si le chemin existe, même s'il s'agit d'un lien. */
-function writeNew(root: string, rel: string, content: string, out: CreateResult): void {
+export function writeNew(root: string, rel: string, content: string, out: WriteReport): void {
   try {
     fs.writeFileSync(path.join(root, ...rel.split('/')), content, { encoding: 'utf8', flag: 'wx' });
     out.created.push(rel);

@@ -60,3 +60,17 @@ button.petit { padding: 2px 8px; font-size: 13px; margin: 0 4px 4px 0; }
 .defile td { min-width: 150px; vertical-align: top; }
 .retenu { color: var(--bien); font-weight: 600; }
 p.cellule { margin: 0 0 4px; }
+code { font-size: 13px; }
+.reglages { display: flex; flex-wrap: wrap; gap: 16px; align-items: end; margin: 12px 0; }
+fieldset { border: 1px solid var(--bord); border-radius: 6px; padding: 4px 12px 8px; margin: 0; display: flex; flex-wrap: wrap; gap: 4px 16px; }
+legend { color: var(--doux); font-size: 14px; padding: 0 4px; }
+fieldset label { display: flex; gap: 6px; align-items: center; margin: 0; color: var(--texte); }
+#apercu-cadre { position: relative; overflow: hidden; border: 1px solid var(--bord); }
+#apercu-echelle { position: relative; transform-origin: top left; }
+#apercu { display: block; width: 100%; height: 100%; border: 0; background: #ffffff; }
+#reperes { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.r-bleed { fill: #d0342c; fill-opacity: 0.45; }
+.r-safe { fill: none; stroke: #0a8f3c; stroke-width: 0.4; }
+.r-fold { stroke: #1f5fa8; stroke-width: 0.5; stroke-dasharray: 3 2; }
+.r-zone { fill: none; stroke: #c76a00; stroke-width: 0.3; stroke-dasharray: 2 1.5; }
+.r-label { fill: #c76a00; font: 3px system-ui, sans-serif; }

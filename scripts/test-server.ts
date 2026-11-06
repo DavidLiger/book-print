@@ -90,6 +90,53 @@ fs.rmSync(path.join(glbRoot, 'out', 'book.json'));
 const blocked = await post('/api/create', { dir: BOOK_DIR });
 check('création refusée si la lecture est en erreur', blocked.status === 409 && blocked.body.includes('out/book.json'), blocked);
 
+// Essai du gabarit 2A : collection et aperçu (l'export passe par Chromium, dans test-render)
+const essaiState = async () => JSON.parse((await post('/api/essai/state', { bookId: BOOK_ID })).body);
+const apercu = (query: string) => request(port, { path: `/apercu?${query}`, headers: { Host: host } });
+{
+  const before = await essaiState();
+  check('essai : collection absente, sans erreur', before.collection.exists === false && before.layout === null, before);
+  check('aperçu sans collection : 409', (await apercu(`bookId=${BOOK_ID}&theme=foret`)).status === 409);
+  const firstMade = JSON.parse((await post('/api/collection/create', {})).body).result;
+  check('collection créée par action', firstMade.created.includes('collection/style.json') && fs.existsSync(path.join(dataRoot, 'collection', 'pictos', 'lieu.svg')), firstMade);
+  const secondMade = JSON.parse((await post('/api/collection/create', {})).body).result;
+  check('seconde création : rien de créé', secondMade.created.length === 0 && secondMade.kept.includes('collection/style.json'), secondMade);
+  const after = await essaiState();
+  check('essai : thèmes lus dans le style', after.themes.length === 5 && after.theme === 'foret', after);
+  check('essai : géométrie à deux pages, gauche puis droite', after.layout.length === 2 && after.layout[0].side === 'gauche' && after.layout[1].side === 'droite', after.layout);
+  const page = await apercu(`bookId=${BOOK_ID}&theme=ocean`);
+  check('aperçu servi : le HTML des pages', page.status === 200 && page.body.includes('data-zone="illustration"') && page.body.includes('@page { size: 6.125in 9.25in'));
+  check('aperçu : aucun script, aucune ressource externe', !/<script|https?:\/\/(?!www\.w3\.org)/.test(page.body));
+  check('aperçu : CSP propre, sans script, cadre de la page seulement', /default-src 'none'/.test(String(page.headers['content-security-policy'])) && /frame-ancestors 'self'/.test(String(page.headers['content-security-policy'])));
+  check('aperçu : Host refusé', (await request(port, { path: `/apercu?bookId=${BOOK_ID}&theme=foret`, headers: { Host: 'attaque.example' } })).status === 403);
+  check('aperçu : Origin refusée', (await request(port, { path: `/apercu?bookId=${BOOK_ID}&theme=foret`, headers: { Host: host, Origin: 'https://attaque.example' } })).status === 403);
+  check('aperçu : POST refusé', (await request(port, { method: 'POST', path: '/apercu', headers: action })).status === 405);
+  check('aperçu : thème inconnu', (await apercu(`bookId=${BOOK_ID}&theme=nuit`)).status === 409);
+  check('aperçu : thème invalide', (await apercu(`bookId=${BOOK_ID}&theme=..%2Fx`)).status === 400);
+  check('aperçu : paramètres manquants', (await apercu('')).status === 400);
+  check('aperçu : bookId hors dossier', (await apercu('bookId=..&theme=foret')).status === 409);
+  check('aperçu : livre sans dossier', (await apercu('bookId=autre&theme=foret')).status === 409);
+  check('essai : corps sans bookId, 400', (await post('/api/essai/state', {})).status === 400);
+  check('export : thème invalide, 400', (await post('/api/essai/export', { bookId: BOOK_ID, theme: 'A B' })).status === 400);
+  check('export : livre sans dossier, 409', (await post('/api/essai/export', { bookId: 'autre', theme: 'foret' })).status === 409);
+  check('GET d’export refusé', (await request(port, { path: '/api/essai/export', headers: { Host: host } })).status === 405);
+  check('création de collection sans en-tête refusée', (await post('/api/collection/create', {}, noHeader)).status === 403);
+  put(dataRoot, 'collection/style.json', '{}');
+  const broken = await essaiState();
+  check('style invalide : message dans la page, sans rendu', broken.collection.error?.includes('collection/style.json invalide') && broken.layout === null, broken);
+  const printBook = path.join(dataRoot, BOOK_ID, 'print-book.json');
+  fs.rmSync(path.join(dataRoot, 'collection', 'style.json'));
+  (await post('/api/collection/create', {})).body;
+  const book = JSON.parse(fs.readFileSync(printBook, 'utf8'));
+  put(dataRoot, `${BOOK_ID}/print-book.json`, { ...book, edition: { ...book.edition, trim: { widthIn: 2, heightIn: 3 } } });
+  const tiny = await essaiState();
+  check('format trop petit pour le gabarit : message dans la page', tiny.error?.includes('ne tient pas') && tiny.layout === null, tiny);
+  put(dataRoot, `${BOOK_ID}/print-book.json`, book);
+}
+const uiHtml = (await request(port, { path: '/', headers: { Host: host } })).body;
+check('page : pages par sujet en saisie libre, 2 au moins', /id="p-par-sujet" type="number" min="2"/.test(uiHtml));
+check('page : section d’essai et repères présents', uiHtml.includes('id="essai"') && uiHtml.includes('data-layer="fold"'));
+
 put(parent, 'config.local.json', '{');
 const bad = JSON.parse((await post('/api/state', {})).body);
 check('configuration invalide : message dans la page, sans relance', !bad.config.ok && bad.config.message.includes('config.local.json'), bad);

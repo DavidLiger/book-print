@@ -6,10 +6,14 @@ import type { AddressInfo } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import '../schema/common';
+import { CollectionRefused } from '../data/collection';
 import { CreateRefused, createBookFolder } from '../data/create-book';
 import { PricingRefused } from '../data/pricing-file';
 import { listBooks, readBook } from '../glbi/read';
+import { RenderRefused } from '../render/html';
+import { GeometryRefused } from '../templates/geometry';
 import { loadConfig, type ConfigState } from './config';
+import { BadEssaiRequest, ESSAI_ACTIONS, previewHtml, PREVIEW_CSP } from './essai-actions';
 import { BadPricingRequest, PRICING_ACTIONS } from './pricing-actions';
 import { ACTION_HEADER, actionAllowed, hostAllowed } from './rules';
 
@@ -76,7 +80,7 @@ function parseDir(value: unknown): string {
   return body.data.dir;
 }
 
-const ACTIONS: Record<string, (body: unknown, configPath: string) => Json> = {
+const ACTIONS: Record<string, (body: unknown, configPath: string) => Json | Promise<Json>> = {
   '/api/state': (_body, configPath) => {
     const state = loadConfig(configPath);
     if (!state.ok) return { config: { ok: false, message: state.message }, books: [] };
@@ -90,7 +94,7 @@ const ACTIONS: Record<string, (body: unknown, configPath: string) => Json> = {
     return { result: createBookFolder(config.dataRoot, reading.bookId) };
   },
   ...Object.fromEntries(
-    Object.entries(PRICING_ACTIONS).map(([route, run]) => [route, (body: unknown, configPath: string) => run(body, configured(loadConfig(configPath)).dataRoot)]),
+    Object.entries({ ...PRICING_ACTIONS, ...ESSAI_ACTIONS }).map(([route, run]) => [route, (body: unknown, configPath: string) => run(body, configured(loadConfig(configPath)).dataRoot)]),
   ),
 };
 
@@ -106,7 +110,15 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, port:
       port,
     );
     if (!allowed) return sendJson(res, 403, { error: `action refusée : POST JSON avec ${ACTION_HEADER}: 1 attendu` });
-    return sendJson(res, 200, action(await readBody(req), configPath));
+    return sendJson(res, 200, await action(await readBody(req), configPath));
+  }
+
+  // Aperçu : le HTML du PDF, dans un cadre de la page. Lecture seule, sur contenu d'essai : polices et images en `data:`, aucun script.
+  if (url === '/apercu') {
+    if (req.method !== 'GET') return sendJson(res, 405, { error: 'GET attendu' }, { Allow: 'GET' });
+    const query = new URL(req.url ?? '/', 'http://local').searchParams;
+    const html = previewHtml(query.get('bookId'), query.get('theme'), configured(loadConfig(configPath)).dataRoot);
+    return send(res, 200, html, 'text/html; charset=utf-8', { 'Content-Security-Policy': PREVIEW_CSP });
   }
 
   const page = Object.hasOwn(STATIC, url) ? STATIC[url] : undefined;
@@ -122,8 +134,10 @@ export function createPrintServer(configPath: string): http.Server {
     handle(req, res, port, configPath).catch((e: unknown) => {
       if (res.headersSent) return res.destroy();
       if (e instanceof HttpError) return sendJson(res, e.status, { error: e.message });
-      if (e instanceof BadPricingRequest) return sendJson(res, 400, { error: e.message });
-      if (e instanceof CreateRefused || e instanceof PricingRefused) return sendJson(res, 409, { error: e.message });
+      if (e instanceof BadPricingRequest || e instanceof BadEssaiRequest) return sendJson(res, 400, { error: e.message });
+      if (e instanceof CreateRefused || e instanceof PricingRefused || e instanceof CollectionRefused || e instanceof RenderRefused || e instanceof GeometryRefused) {
+        return sendJson(res, 409, { error: e.message });
+      }
       console.error('book-print :', e);
       sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) });
     });

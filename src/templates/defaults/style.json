@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "margins": { "outerMm": 12, "topMm": 12, "bottomMm": 12, "gutterMm": 15 },
+  "palette": {
+    "text": "#22262b",
+    "paper": "#ffffff",
+    "themes": {
+      "foret": "#1f6f5c",
+      "ocean": "#1d5f8a",
+      "volcan": "#b5432a",
+      "savane": "#8a6100",
+      "crepuscule": "#6a3f8f"
+    },
+    "boxes": {
+      "fiche": "#fdf3d3",
+      "savais-tu": "#e3f1ea",
+      "a-cote-de-toi": "#e4eefa"
+    }
+  },
+  "fonts": {
+    "body": { "pack": "andika", "sizePt": 13, "lineHeight": 1.4 },
+    "title": { "pack": "baloo-2", "sizePt": 30, "lineHeight": 1.05 },
+    "lead": { "pack": "baloo-2", "sizePt": 15, "lineHeight": 1.25 },
+    "label": { "pack": "andika", "sizePt": 11, "lineHeight": 1.2 }
+  },
+  "pictos": {
+    "taille": { "file": "taille.svg", "rights": "pictos-maison" },
+    "poids": { "file": "poids.svg", "rights": "pictos-maison" },
+    "epoque": { "file": "epoque.svg", "rights": "pictos-maison" },
+    "regime": { "file": "regime.svg", "rights": "pictos-maison" },
+    "lieu": { "file": "lieu.svg", "rights": "pictos-maison" }
+  },
+  "fiche": [
+    { "id": "taille", "picto": "taille", "label": { "fr": "Taille", "en": "Size", "es": "Tamaño" } },
+    { "id": "poids", "picto": "poids", "label": { "fr": "Poids", "en": "Weight", "es": "Peso" } },
+    { "id": "epoque", "picto": "epoque", "label": { "fr": "Époque", "en": "Period", "es": "Época" } },
+    { "id": "regime", "picto": "regime", "label": { "fr": "Régime", "en": "Diet", "es": "Dieta" } },
+    { "id": "lieu", "picto": "lieu", "label": { "fr": "Lieu de découverte", "en": "Found in", "es": "Lugar del hallazgo" } }
+  ],
+  "folio": { "show": true, "sizePt": 11 },
+  "variants": { "rotation": ["foret", "ocean", "volcan", "savane", "crepuscule"] }
+}

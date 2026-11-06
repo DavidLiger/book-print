@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "entries": [
+    {
+      "id": "andika",
+      "kind": "police",
+      "name": "Andika",
+      "author": "SIL International",
+      "license": "SIL OFL 1.1",
+      "url": "https://software.sil.org/andika/",
+      "credit": "Andika, © SIL International, sous licence SIL Open Font License 1.1.",
+      "commercialOk": "oui"
+    },
+    {
+      "id": "baloo-2",
+      "kind": "police",
+      "name": "Baloo 2",
+      "author": "The Baloo 2 Project Authors",
+      "license": "SIL OFL 1.1",
+      "url": "https://github.com/EkType/Baloo2",
+      "credit": "Baloo 2, © The Baloo 2 Project Authors, sous licence SIL Open Font License 1.1.",
+      "commercialOk": "oui"
+    },
+    {
+      "id": "pictos-maison",
+      "kind": "picto",
+      "name": "Pictogrammes de la collection",
+      "author": "Éditions Liger",
+      "license": "création maison",
+      "credit": "Pictogrammes : Éditions Liger.",
+      "commercialOk": "oui"
+    }
+  ],
+  "illustrations": []
+}

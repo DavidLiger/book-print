@@ -51,7 +51,7 @@
           <div class="champ" id="c-pages"><label for="p-pages">Pages</label><input id="p-pages" type="number" min="1" step="1" value="46"></div>
           <div class="champ" id="c-sujets"><label for="p-sujets">Sujets</label><input id="p-sujets" type="number" min="1" step="1" value="15"></div>
           <div class="champ" id="c-par-sujet"><label for="p-par-sujet">Pages par sujet</label>
-            <select id="p-par-sujet"><option value="2">2</option><option value="4">4</option><option value="6">6</option></select></div>
+            <input id="p-par-sujet" type="number" min="2" step="1" value="2"></div>
           <div class="champ" id="c-extra"><label for="p-extra">Pages liminaires et finales</label><input id="p-extra" type="number" min="0" step="1" value="14"></div>
           <div class="champ"><label for="p-marketplace">Marketplace</label><select id="p-marketplace"></select></div>
           <div class="champ"><label for="p-tva">TVA pour convertir un prix TTC</label>
@@ -70,6 +70,37 @@
       <h3>Scénarios enregistrés</h3>
       <div id="prix-ecart"></div>
       <div id="prix-scenarios" class="defile"></div>
+    </section>
+
+    <section id="essai" aria-labelledby="t-essai" hidden>
+      <h2 id="t-essai">Gabarit 2A : essai</h2>
+      <p class="note">Contenu factice. Thèmes, pictogrammes, informations de la fiche, marges et numéros de page se règlent dans <code>collection/style.json</code> : recharger l'aperçu suffit.</p>
+      <div class="boutons"><button id="collection-creer" type="button" class="secondaire">Créer la collection</button></div>
+      <div id="collection-resultat"></div>
+      <div id="essai-message"></div>
+      <div id="essai-zone" hidden>
+        <div class="reglages">
+          <div class="champ"><label for="essai-theme">Thème</label><select id="essai-theme"></select></div>
+          <fieldset>
+            <legend>Repères</legend>
+            <label><input type="checkbox" id="r-bleed" data-layer="bleed"> Fond perdu</label>
+            <label><input type="checkbox" id="r-safe" data-layer="safe"> Zone de sécurité</label>
+            <label><input type="checkbox" id="r-fold" data-layer="fold"> Pli</label>
+            <label><input type="checkbox" id="r-zones" data-layer="zones"> Zones</label>
+          </fieldset>
+        </div>
+        <div id="apercu-cadre">
+          <div id="apercu-echelle">
+            <iframe id="apercu" title="Aperçu de la double page" sandbox scrolling="no"></iframe>
+            <svg id="reperes" aria-hidden="true"></svg>
+          </div>
+        </div>
+        <div class="boutons">
+          <button id="essai-recharger" type="button" class="secondaire">Recharger l'aperçu</button>
+          <button id="essai-exporter" type="button">Exporter le PDF d'essai</button>
+        </div>
+        <div id="essai-resultat"></div>
+      </div>
     </section>
   </main>
   <script src="/app.js"></script>

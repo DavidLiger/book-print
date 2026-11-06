@@ -19,6 +19,11 @@ export const slugSchema = z.string().regex(SLUG_PATTERN, 'identifiant : minuscul
 export const GLBI_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 export const glbiIdSchema = z.string().regex(GLBI_ID_PATTERN, 'identifiant GLBInterpreter : lettres, chiffres, _ et -');
 
+/** Identifiant de gabarit (spec §3.3) : le nombre de pages suivi d'une lettre, `4B`, `12A`. */
+export const TEMPLATE_ID_PATTERN = /^[1-9][0-9]*[A-Z]$/;
+/** Le nombre entier de l'identifiant : `12A` donne 12, pas 1. */
+export const templatePages = (id: string): number => Number.parseInt(id, 10);
+
 /** Noms que Windows réserve : un `bookId` devient un nom de dossier. */
 const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
 /** `collection/` porte les données communes (architecture §4) : sans casse, car Windows confond `Collection` et `collection`. */

@@ -8,14 +8,20 @@
     "test:glbi": "tsx scripts/test-glbi.ts",
     "test:server": "tsx scripts/test-server.ts",
     "test:create": "tsx scripts/test-create.ts",
-    "test:pricing": "tsx scripts/test-pricing.ts"
+    "test:pricing": "tsx scripts/test-pricing.ts",
+    "test:render": "tsx scripts/test-render.ts",
+    "test:checks": "tsx scripts/test-checks.ts"
   },
   "keywords": [],
   "author": "",
   "description": "",
   "type": "module",
   "devDependencies": {
+    "@fontsource-variable/baloo-2": "5.3.0",
+    "@fontsource/andika": "5.3.0",
     "@types/node": "20.19.11",
+    "pdf-lib": "1.17.1",
+    "playwright": "1.64.0",
     "tsx": "4.23.15",
     "typescript": "5.9.2",
     "zod": "4.6.7"

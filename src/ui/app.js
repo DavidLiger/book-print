@@ -1,4 +1,4 @@
-// src/ui/app.js — page locale de book-print : état de la configuration, livre lu, alertes, création du dossier (MP1), simulateur de prix (PX1).
+// src/ui/app.js — page locale de book-print : état de la configuration, livre lu, alertes, création du dossier (MP1), simulateur de prix (PX1), essai du gabarit 2A (MP2).
 // Les textes viennent de fichiers : ils passent toujours par textContent.
 
 async function action(path, body = {}) {
@@ -67,6 +67,7 @@ async function readSelected() {
   $('creation').replaceChildren();
   $('donnees').hidden = true;
   $('prix').hidden = true;
+  $('essai').hidden = true;
   if (!dir) return;
   const { reading } = await action('/api/read', { dir });
   box.append(
@@ -85,7 +86,10 @@ async function readSelected() {
   $('donnees').hidden = false;
   $('creer').disabled = reading.errors.length > 0 || !reading.bookId;
   if ($('creer').disabled) $('creation').append(el('p', 'Création impossible tant que la lecture est en erreur.', 'alerte'));
-  if (reading.bookId) await openPricing(reading.bookId);
+  if (reading.bookId) {
+    await openPricing(reading.bookId);
+    await openEssai(reading.bookId);
+  }
 }
 
 async function createFolder() {
@@ -100,6 +104,7 @@ async function createFolder() {
       list(`Alertes (${result.alerts.length})`, result.alerts, 'alerte'),
     );
     await openPricing(result.bookId);
+    await openEssai(result.bookId);
   } catch (e) {
     box.append(el('p', e.message, 'erreur'));
   } finally {
@@ -378,6 +383,172 @@ async function saveCurrent(event) {
   if (await pricingAction('/api/pricing/save', body)) resetForm();
 }
 
+// Essai du gabarit 2A (spec §5.2, étape 7). L'aperçu est le HTML du PDF, dans un cadre sans script. Les repères sont dessinés ici,
+// par-dessus le cadre, à partir de la géométrie du serveur : ils n'existent pas dans le HTML imprimé.
+
+const essai = { bookId: null, layout: null };
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const PX_PER_MM = 96 / 25.4;
+
+function svgEl(tag, attrs, text) {
+  const e = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, String(v));
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+
+const rectAttrs = (r, x) => ({ x: r.left + x, y: r.top, width: r.right - r.left, height: r.bottom - r.top });
+
+function drawPageMarks(layers, page, x) {
+  const t = page.trim;
+  const outer = `M${x} 0h${page.widthMm}v${page.heightMm}h${-page.widthMm}z`;
+  const inner = `M${t.left + x} ${t.top}H${t.right + x}V${t.bottom}H${t.left + x}z`;
+  layers.bleed.append(svgEl('path', { d: `${outer}${inner}`, 'fill-rule': 'evenodd', class: 'r-bleed' }));
+  layers.safe.append(svgEl('rect', { ...rectAttrs(page.safe, x), class: 'r-safe' }));
+  layers.fold.append(svgEl('line', { x1: page.foldMm + x, x2: page.foldMm + x, y1: 0, y2: page.heightMm, class: 'r-fold' }));
+  for (const z of page.zones) {
+    layers.zones.append(svgEl('rect', { ...rectAttrs(z.rect, x), class: 'r-zone' }));
+    layers.zones.append(svgEl('text', { x: z.rect.left + x + 1, y: z.rect.top + 4, class: 'r-label' }, z.id));
+  }
+}
+
+function drawMarks() {
+  const width = essai.layout.reduce((sum, p) => sum + p.widthMm, 0);
+  const height = essai.layout[0].heightMm;
+  const svg = $('reperes');
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  svg.replaceChildren();
+  const layers = {};
+  for (const name of ['bleed', 'safe', 'fold', 'zones']) {
+    layers[name] = svgEl('g', { 'data-layer': name });
+    svg.append(layers[name]);
+  }
+  let x = 0;
+  for (const page of essai.layout) {
+    drawPageMarks(layers, page, x);
+    x += page.widthMm;
+  }
+  showLayers();
+  fitPreview();
+}
+
+function showLayers() {
+  for (const box of document.querySelectorAll('input[data-layer]')) {
+    const layer = $('reperes').querySelector(`g[data-layer="${box.dataset.layer}"]`);
+    if (layer) layer.setAttribute('display', box.checked ? 'inline' : 'none');
+  }
+}
+
+/** Double page à taille réelle réduite à la largeur disponible. Le PDF, lui, se juge à 100 %. */
+function fitPreview() {
+  if (!essai.layout) return;
+  const width = essai.layout.reduce((sum, p) => sum + p.widthMm, 0) * PX_PER_MM;
+  const height = essai.layout[0].heightMm * PX_PER_MM;
+  const scale = Math.min(1, $('apercu-cadre').clientWidth / width);
+  const inner = $('apercu-echelle');
+  inner.style.width = `${width}px`;
+  inner.style.height = `${height}px`;
+  inner.style.transform = `scale(${scale})`;
+  $('apercu-cadre').style.height = `${height * scale}px`;
+}
+
+function loadPreview() {
+  const query = new URLSearchParams({ bookId: essai.bookId, theme: $('essai-theme').value, t: String(Date.now()) });
+  $('apercu').src = `/apercu?${query}`;
+}
+
+function checksTable(checks) {
+  const table = el('table');
+  const head = el('tr');
+  for (const t of ['Contrôle', 'Objet', 'Résultat']) head.append(el('th', t));
+  table.append(head);
+  const WORDS = { ok: 'vert', alerte: 'alerte', erreur: 'erreur' };
+  const CLASSES = { ok: 'bien', alerte: 'alerte', erreur: 'erreur' };
+  for (const c of checks) {
+    const row = el('tr');
+    const verdict = el('td', WORDS[c.level], CLASSES[c.level]);
+    for (const d of c.details) verdict.append(el('p', d, `${CLASSES[c.level]} cellule`));
+    row.append(el('td', c.id), el('td', c.label), verdict);
+    table.append(row);
+  }
+  return table;
+}
+
+function showExport(r) {
+  const size = r.pages.map((p) => `p. ${p.number} : ${String(p.widthPt).replace('.', ',')} × ${String(p.heightPt).replace('.', ',')} pt`).join(' ; ');
+  $('essai-resultat').replaceChildren(
+    definitions([
+      ['Fichier', r.file],
+      ['Taille demandée', `${String(r.pageSizeIn.widthIn).replace('.', ',')} × ${String(r.pageSizeIn.heightIn).replace('.', ',')} "`],
+      ['Pages relues dans le PDF', size],
+      ['Polices relues dans le PDF', r.fonts.map((f) => `${f.name} (${f.how})`).join(' ; ')],
+      ['Poids', `${(r.sizeBytes / 1e6).toFixed(2).replace('.', ',')} Mo`],
+      ['Chromium', r.chromium],
+    ]),
+    checksTable(r.checks),
+  );
+}
+
+async function openEssai(bookId) {
+  essai.bookId = bookId;
+  $('essai').hidden = false;
+  $('essai-zone').hidden = true;
+  $('essai-resultat').replaceChildren();
+  const box = $('essai-message');
+  box.replaceChildren();
+  try {
+    const state = await action('/api/essai/state', { bookId });
+    if (!state.collection.exists) box.append(el('p', 'collection/ absent : le créer pour voir l\'aperçu.', 'alerte'));
+    if (state.collection.error) box.append(el('p', state.collection.error, 'erreur'));
+    if (state.error) box.append(el('p', state.error, 'erreur'));
+    if (!state.layout) return;
+    const select = $('essai-theme');
+    const current = select.value;
+    select.replaceChildren();
+    for (const name of state.themes) {
+      const option = el('option', name);
+      option.value = name;
+      select.append(option);
+    }
+    select.value = state.themes.includes(current) ? current : state.theme;
+    essai.layout = state.layout;
+    $('essai-zone').hidden = false;
+    drawMarks();
+    loadPreview();
+  } catch (e) {
+    box.append(el('p', e.message, 'erreur'));
+  }
+}
+
+async function createCollection() {
+  const box = $('collection-resultat');
+  box.replaceChildren();
+  $('collection-creer').disabled = true;
+  try {
+    const { result } = await action('/api/collection/create');
+    box.append(list(`Créés (${result.created.length})`, result.created, 'bien'), list(`Conservés, non modifiés (${result.kept.length})`, result.kept, ''));
+    await openEssai(essai.bookId);
+  } catch (e) {
+    box.append(el('p', e.message, 'erreur'));
+  } finally {
+    $('collection-creer').disabled = false;
+  }
+}
+
+async function exportEssai() {
+  const button = $('essai-exporter');
+  const box = $('essai-resultat');
+  button.disabled = true;
+  box.replaceChildren(el('p', 'Export en cours…', 'note'));
+  try {
+    showExport(await action('/api/essai/export', { bookId: essai.bookId, theme: $('essai-theme').value }));
+  } catch (e) {
+    box.replaceChildren(el('p', e.message, 'erreur'));
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function start() {
   const { config, books } = await action('/api/state');
   showConfig(config);
@@ -413,4 +584,10 @@ $('p-nouveau').addEventListener('click', () => {
   resetForm();
   computeNow();
 });
+$('collection-creer').addEventListener('click', createCollection);
+$('essai-exporter').addEventListener('click', exportEssai);
+$('essai-recharger').addEventListener('click', () => openEssai(essai.bookId));
+$('essai-theme').addEventListener('change', loadPreview);
+for (const box of document.querySelectorAll('input[data-layer]')) box.addEventListener('change', showLayers);
+window.addEventListener('resize', fitPreview);
 start().catch((e) => $('config').replaceChildren(el('p', e.message, 'erreur')));

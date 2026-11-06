@@ -14,7 +14,8 @@ const pagesSchema = z.discriminatedUnion('mode', [
   z.strictObject({
     mode: z.literal('estime'),
     subjects: count.positive('nombre de sujets positif'),
-    pagesPerSubject: z.union([z.literal(2), z.literal(4), z.literal(6)], { error: 'pages par sujet : 2, 4 ou 6' }),
+    /** Même règle que `pages` de `subject.json` (MP-14). Un `pricing.json` à 2, 4 ou 6 reste lisible. */
+    pagesPerSubject: count.min(2, 'pages par sujet : 2 au moins'),
     extraPages: count.nonnegative('pages liminaires et finales : positif ou nul'),
   }),
 ]);
