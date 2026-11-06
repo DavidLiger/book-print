@@ -10,6 +10,8 @@ import { CollectionRefused } from '../data/collection';
 import { CreateRefused, createBookFolder } from '../data/create-book';
 import { PricingRefused } from '../data/pricing-file';
 import { listBooks, readBook } from '../glbi/read';
+import { readFacts } from '../parcours/facts';
+import { computeParcours } from '../parcours/steps';
 import { RenderRefused } from '../render/html';
 import { GeometryRefused } from '../templates/geometry';
 import { loadConfig, type ConfigState } from './config';
@@ -25,6 +27,7 @@ const STATIC: Record<string, { file: string; type: string }> = {
 };
 const MAX_BODY = 64 * 1024;
 const dirBody = z.strictObject({ dir: z.string() });
+const parcoursBody = z.strictObject({ dir: z.string().nullable() });
 
 type Json = Record<string, unknown>;
 
@@ -92,6 +95,12 @@ const ACTIONS: Record<string, (body: unknown, configPath: string) => Json | Prom
     const reading = readBook(config.glbRoot, parseDir(body));
     if (reading.errors.length > 0 || !reading.bookId) throw new HttpError(409, `Lecture de GLBInterpreter en erreur : ${reading.errors.join(' ; ')}`);
     return { result: createBookFolder(config.dataRoot, reading.bookId) };
+  },
+  // Une configuration invalide n'est pas un refus : le parcours la montre, en erreur sur la première étape.
+  '/api/parcours': (value, configPath) => {
+    const body = parcoursBody.safeParse(value);
+    if (!body.success) throw new HttpError(400, 'corps attendu : { "dir": "<dossier du livre>" ou null }');
+    return { ...computeParcours(readFacts(loadConfig(configPath), body.data.dir)) };
   },
   ...Object.fromEntries(
     Object.entries({ ...PRICING_ACTIONS, ...ESSAI_ACTIONS }).map(([route, run]) => [route, (body: unknown, configPath: string) => run(body, configured(loadConfig(configPath)).dataRoot)]),

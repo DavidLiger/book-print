@@ -10,7 +10,9 @@
     "test:create": "tsx scripts/test-create.ts",
     "test:pricing": "tsx scripts/test-pricing.ts",
     "test:render": "tsx scripts/test-render.ts",
-    "test:checks": "tsx scripts/test-checks.ts"
+    "test:checks": "tsx scripts/test-checks.ts",
+    "test:parcours": "tsx scripts/test-parcours.ts",
+    "test:ui": "tsx scripts/test-ui.ts"
   },
   "keywords": [],
   "author": "",

@@ -7,79 +7,123 @@
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <main>
+  <header id="bandeau">
     <h1>book-print</h1>
-
-    <section aria-labelledby="t-config">
-      <h2 id="t-config">Configuration</h2>
-      <div id="config"></div>
-    </section>
-
-    <section id="livre" aria-labelledby="t-livre" hidden>
-      <h2 id="t-livre">Livre lu dans GLBInterpreter</h2>
+    <div class="choix-livre">
       <label for="choix">Livre</label>
-      <select id="choix"></select>
-      <div id="lecture"></div>
-    </section>
+      <select id="choix" disabled></select>
+    </div>
+    <nav aria-label="Étapes du parcours"><ol id="etapes"></ol></nav>
+  </header>
 
-    <section id="donnees" aria-labelledby="t-donnees" hidden>
-      <h2 id="t-donnees">Dossier de données</h2>
-      <button id="creer" type="button">Créer le dossier du livre</button>
-      <div id="creation"></div>
-    </section>
+  <main>
+    <div id="motifs" class="liste" aria-live="polite" hidden></div>
 
-    <section id="prix" aria-labelledby="t-prix" hidden>
-      <h2 id="t-prix">Simulateur de prix</h2>
-      <p id="prix-avertissement" class="note"></p>
-      <div id="prix-message"></div>
-      <form id="prix-form" autocomplete="off">
-        <div class="grille">
-          <div class="champ large"><label for="p-nom">Nom du scénario</label><input id="p-nom" maxlength="60"></div>
-          <div class="champ"><label for="p-reliure">Reliure</label>
-            <select id="p-reliure"><option value="paperback">Broché</option><option value="hardcover">Relié</option></select></div>
-          <div class="champ"><label for="p-format">Format</label><select id="p-format"></select></div>
-          <div class="champ"><label for="p-encre">Encre et papier</label>
-            <select id="p-encre">
-              <option value="premium-color">Couleur premium, papier blanc</option>
-              <option value="standard-color">Couleur standard, papier blanc</option>
-              <option value="black-white">Noir, papier blanc</option>
-              <option value="black-cream">Noir, papier crème</option>
-              <option value="black-groundwood">Noir, papier journal</option>
-            </select></div>
-          <div class="champ"><label for="p-mode">Nombre de pages</label>
-            <select id="p-mode"><option value="estime">Estimé</option><option value="saisi">Saisi</option></select></div>
-          <div class="champ" id="c-pages"><label for="p-pages">Pages</label><input id="p-pages" type="number" min="1" step="1" value="46"></div>
-          <div class="champ" id="c-sujets"><label for="p-sujets">Sujets</label><input id="p-sujets" type="number" min="1" step="1" value="15"></div>
-          <div class="champ" id="c-par-sujet"><label for="p-par-sujet">Pages par sujet</label>
-            <input id="p-par-sujet" type="number" min="2" step="1" value="2"></div>
-          <div class="champ" id="c-extra"><label for="p-extra">Pages liminaires et finales</label><input id="p-extra" type="number" min="0" step="1" value="14"></div>
-          <div class="champ"><label for="p-marketplace">Marketplace</label><select id="p-marketplace"></select></div>
-          <div class="champ"><label for="p-tva">TVA pour convertir un prix TTC</label>
-            <select id="p-tva"><option value="reduced">Taux réduit</option><option value="standard">Taux normal</option></select></div>
-          <div class="champ"><label for="p-type-prix">Prix saisi</label>
-            <select id="p-type-prix"><option value="ht">HT (prix saisi dans KDP)</option><option value="ttc">TTC (prix vu par le client)</option></select></div>
-          <div class="champ"><label for="p-prix">Prix</label><input id="p-prix" type="number" min="0" step="0.01" value="12"></div>
-          <div class="champ"><label for="p-visee">Redevance visée (facultatif)</label><input id="p-visee" type="number" min="0" step="0.01"></div>
+    <section id="livre" class="panneau colonnes" aria-labelledby="t-livre">
+      <div class="colonne">
+        <h2 id="t-livre">Configuration</h2>
+        <div id="config"></div>
+        <div id="donnees" class="colonne etire">
+          <h3>Dossier de données</h3>
+          <div class="boutons"><button id="creer" type="button" disabled>Créer le dossier du livre</button></div>
+          <div id="creation" class="liste"></div>
         </div>
-        <div id="prix-resultat"></div>
-        <div class="boutons">
-          <button id="p-enregistrer" type="submit">Enregistrer le scénario</button>
-          <button id="p-nouveau" type="button" class="secondaire">Nouveau scénario</button>
+      </div>
+      <div class="colonne">
+        <h2>Livre lu dans GLBInterpreter</h2>
+        <div id="lecture-resume"></div>
+        <div id="lecture" class="liste"></div>
+      </div>
+    </section>
+
+    <section id="prix" class="panneau" aria-labelledby="t-prix" hidden>
+      <div class="tete">
+        <h2 id="t-prix">Simulateur de prix</h2>
+        <div class="vues" role="group" aria-label="Vue du simulateur">
+          <button id="v-simulateur" type="button" class="secondaire" aria-pressed="true">Simulateur</button>
+          <button id="v-scenarios" type="button" class="secondaire" aria-pressed="false">Scénarios enregistrés</button>
+        </div>
+        <p id="prix-avertissement" class="note"></p>
+      </div>
+      <div id="prix-message"></div>
+      <form id="prix-form" class="colonnes" autocomplete="off">
+        <div class="colonne">
+          <div class="grille">
+            <div class="champ large"><label for="p-nom">Nom du scénario</label><input id="p-nom" maxlength="60"></div>
+            <div class="champ"><label for="p-reliure">Reliure</label>
+              <select id="p-reliure"><option value="paperback">Broché</option><option value="hardcover">Relié</option></select></div>
+            <div class="champ"><label for="p-format">Format</label><select id="p-format"></select></div>
+            <div class="champ"><label for="p-encre">Encre et papier</label>
+              <select id="p-encre">
+                <option value="premium-color">Couleur premium, papier blanc</option>
+                <option value="standard-color">Couleur standard, papier blanc</option>
+                <option value="black-white">Noir, papier blanc</option>
+                <option value="black-cream">Noir, papier crème</option>
+                <option value="black-groundwood">Noir, papier journal</option>
+              </select></div>
+            <div class="champ"><label for="p-mode">Nombre de pages</label>
+              <select id="p-mode"><option value="estime">Estimé</option><option value="saisi">Saisi</option></select></div>
+            <div class="champ" id="c-pages"><label for="p-pages">Pages</label><input id="p-pages" type="number" min="1" step="1" value="46"></div>
+            <div class="champ" id="c-sujets"><label for="p-sujets">Sujets</label><input id="p-sujets" type="number" min="1" step="1" value="15"></div>
+            <div class="champ" id="c-par-sujet"><label for="p-par-sujet">Pages par sujet</label>
+              <input id="p-par-sujet" type="number" min="2" step="1" value="2"></div>
+            <div class="champ" id="c-extra"><label for="p-extra">Pages liminaires et finales</label><input id="p-extra" type="number" min="0" step="1" value="14"></div>
+            <div class="champ"><label for="p-marketplace">Marketplace</label><select id="p-marketplace"></select></div>
+            <div class="champ"><label for="p-tva">TVA pour convertir un prix TTC</label>
+              <select id="p-tva"><option value="reduced">Taux réduit</option><option value="standard">Taux normal</option></select></div>
+            <div class="champ"><label for="p-type-prix">Prix saisi</label>
+              <select id="p-type-prix"><option value="ht">HT (prix saisi dans KDP)</option><option value="ttc">TTC (prix vu par le client)</option></select></div>
+            <div class="champ"><label for="p-prix">Prix</label><input id="p-prix" type="number" min="0" step="0.01" value="12"></div>
+            <div class="champ"><label for="p-visee">Redevance visée (facultatif)</label><input id="p-visee" type="number" min="0" step="0.01"></div>
+          </div>
+          <div class="boutons">
+            <button id="p-enregistrer" type="submit">Enregistrer le scénario</button>
+            <button id="p-nouveau" type="button" class="secondaire">Nouveau scénario</button>
+          </div>
+        </div>
+        <div class="colonne">
+          <div id="prix-resultat"></div>
+          <div id="prix-calcul" class="liste"></div>
         </div>
       </form>
-      <h3>Scénarios enregistrés</h3>
-      <div id="prix-ecart"></div>
-      <div id="prix-scenarios" class="defile"></div>
+      <div id="prix-liste" class="colonne etire" hidden>
+        <div id="prix-ecart"></div>
+        <div id="prix-scenarios" class="defile"></div>
+      </div>
     </section>
 
-    <section id="essai" aria-labelledby="t-essai" hidden>
-      <h2 id="t-essai">Gabarit 2A : essai</h2>
-      <p class="note">Contenu factice. Thèmes, pictogrammes, informations de la fiche, marges et numéros de page se règlent dans <code>collection/style.json</code> : recharger l'aperçu suffit.</p>
-      <div class="boutons"><button id="collection-creer" type="button" class="secondaire">Créer la collection</button></div>
-      <div id="collection-resultat"></div>
+    <section id="collection" class="panneau colonnes" aria-labelledby="t-collection" hidden>
+      <div class="colonne">
+        <h2 id="t-collection">Collection</h2>
+        <p class="note">Marges, palette, polices et pictogrammes, communs à tous les livres.</p>
+        <div class="boutons">
+          <button id="collection-creer" type="button">Créer la collection</button>
+          <button id="collection-relire" type="button" class="secondaire">Relire la collection</button>
+        </div>
+        <div id="collection-resultat" class="liste"></div>
+      </div>
+      <div class="colonne">
+        <h2>État du style</h2>
+        <p class="note">Thèmes, pictogrammes, informations de la fiche, marges et numéros de page se règlent dans <code>collection/style.json</code>.</p>
+        <div id="collection-etat" class="liste"></div>
+      </div>
+    </section>
+
+    <section id="essai" class="panneau" aria-labelledby="t-essai" hidden>
+      <div class="tete">
+        <h2 id="t-essai">Gabarit 2A : essai</h2>
+        <p class="note">Contenu factice.</p>
+        <button id="essai-recharger" type="button" class="secondaire">Recharger l'aperçu</button>
+      </div>
       <div id="essai-message"></div>
       <div id="essai-zone" hidden>
-        <div class="reglages">
+        <div id="apercu-cadre">
+          <div id="apercu-echelle">
+            <iframe id="apercu" title="Aperçu de la double page" sandbox scrolling="no"></iframe>
+            <svg id="reperes" aria-hidden="true"></svg>
+          </div>
+        </div>
+        <div class="colonne">
           <div class="champ"><label for="essai-theme">Thème</label><select id="essai-theme"></select></div>
           <fieldset>
             <legend>Repères</legend>
@@ -88,18 +132,9 @@
             <label><input type="checkbox" id="r-fold" data-layer="fold"> Pli</label>
             <label><input type="checkbox" id="r-zones" data-layer="zones"> Zones</label>
           </fieldset>
+          <div class="boutons"><button id="essai-exporter" type="button">Exporter le PDF d'essai</button></div>
+          <div id="essai-resultat" class="liste"></div>
         </div>
-        <div id="apercu-cadre">
-          <div id="apercu-echelle">
-            <iframe id="apercu" title="Aperçu de la double page" sandbox scrolling="no"></iframe>
-            <svg id="reperes" aria-hidden="true"></svg>
-          </div>
-        </div>
-        <div class="boutons">
-          <button id="essai-recharger" type="button" class="secondaire">Recharger l'aperçu</button>
-          <button id="essai-exporter" type="button">Exporter le PDF d'essai</button>
-        </div>
-        <div id="essai-resultat"></div>
       </div>
     </section>
   </main>

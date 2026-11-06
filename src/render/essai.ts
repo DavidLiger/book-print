@@ -1,8 +1,10 @@
 // src/render/essai.ts — aperçu et PDF d'essai du gabarit 2A (spec §5.2, étape 7). Le contenu est synthétique jusqu'à MP3 et MP4.
-// Le fichier d'essai porte un nom distinct : il ne prend jamais la place du PDF final.
+// Le fichier d'essai porte un nom distinct : il ne prend jamais la place du PDF final. Son résultat est conservé à côté de lui :
+// c'est le seul fait du parcours que les données ne donnent pas (spec §5.3).
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { z } from 'zod';
 import { essaiContent, essaiSubject, ESSAI_FIRST_PAGE } from '../../scripts/fixtures/sujet-essai';
 import { readPdfFacts } from '../checks/pdf-facts';
 import { runChecks, type CheckResult } from '../checks/rules';
@@ -15,6 +17,11 @@ import { renderHtml, RenderRefused } from './html';
 import { renderPdf } from './pdf';
 
 export const ESSAI_FILE = 'essai-2A.pdf';
+export const ESSAI_CONTROL_FILE = 'essai-2A.controle.json';
+
+const checkSchema = z.strictObject({ id: z.string(), label: z.string(), level: z.enum(['ok', 'alerte', 'erreur']), details: z.array(z.string()) });
+export const essaiControlSchema = z.strictObject({ schemaVersion: z.literal(1), date: z.iso.datetime(), bookId: z.string(), theme: z.string(), checks: z.array(checkSchema) });
+export type EssaiControl = z.infer<typeof essaiControlSchema>;
 
 export interface Essai {
   html: string;
@@ -68,30 +75,63 @@ export async function renderEssai(essai: Essai): Promise<EssaiResult & { pdf: Bu
 }
 
 /** Fichier temporaire puis renommage : un export coupé ne laisse pas de PDF à moitié écrit. */
-function writeExport(dir: string, pdf: Buffer): string {
-  const file = path.join(dir, ESSAI_FILE);
-  const tmp = path.join(dir, `${ESSAI_FILE}.${crypto.randomBytes(6).toString('hex')}.tmp`);
+function writeExport(dir: string, name: string, content: Buffer | string): string {
+  const file = path.join(dir, name);
+  const tmp = path.join(dir, `${name}.${crypto.randomBytes(6).toString('hex')}.tmp`);
   try {
-    fs.writeFileSync(tmp, pdf, { flag: 'wx' });
+    fs.writeFileSync(tmp, content, { flag: 'wx' });
     fs.renameSync(tmp, file);
     return file;
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code;
-    if (code === 'EPERM' || code === 'EBUSY' || code === 'EACCES') throw new RenderRefused(`${ESSAI_FILE} est ouvert dans un autre programme : le fermer, puis relancer l'export.`);
+    if (code === 'EPERM' || code === 'EBUSY' || code === 'EACCES') throw new RenderRefused(`${name} est ouvert dans un autre programme : le fermer, puis relancer l'export.`);
     throw e;
   } finally {
     fs.rmSync(tmp, { force: true });
   }
 }
 
-/** Le PDF d'essai est écrit même si un contrôle est rouge : il sert à voir la faute. L'export final, lui, sera bloqué (§5.2). */
-export async function exportEssai(dataRoot: string, bookId: string, theme: string): Promise<EssaiResult & { file: string }> {
-  const essai = essaiFor(dataRoot, bookId, theme);
+function realExportDir(dataRoot: string, bookId: string): string | null {
   const dir = bookFolder(dataRoot, bookId);
-  if (!dir) throw new RenderRefused(`Dossier du livre absent : ${bookId}/.`);
+  if (!dir) return null;
   const exportDir = path.join(dir, 'export');
-  const stat = fs.lstatSync(exportDir, { throwIfNoEntry: false });
-  if (!stat?.isDirectory()) throw new RenderRefused(`${bookId}/export/ n'est pas un dossier réel : rien n'est écrit.`);
+  return fs.lstatSync(exportDir, { throwIfNoEntry: false })?.isDirectory() ? exportDir : null;
+}
+
+/** Résultat du dernier export. Un fichier abîmé ne bloque rien : l'essai est simplement à refaire. */
+export function readEssaiControl(dataRoot: string, bookId: string): { control: EssaiControl | null; error: string | null } {
+  const dir = realExportDir(dataRoot, bookId);
+  if (!dir) return { control: null, error: null };
+  const file = path.join(dir, ESSAI_CONTROL_FILE);
+  const stat = fs.lstatSync(file, { throwIfNoEntry: false });
+  if (!stat) return { control: null, error: null };
+  const refused = { control: null, error: `${ESSAI_CONTROL_FILE} illisible.` };
+  if (!stat.isFile()) return refused;
+  let value: unknown;
+  try {
+    value = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return refused;
+  }
+  const parsed = essaiControlSchema.safeParse(value);
+  if (!parsed.success || parsed.data.bookId !== bookId) return refused;
+  return { control: parsed.data, error: null };
+}
+
+/**
+ * Le PDF d'essai est écrit même si un contrôle est rouge : il sert à voir la faute. L'export final, lui, sera bloqué (§5.2).
+ * La date est prise avant de lire le style : un fichier modifié pendant l'export rend l'essai à refaire. Si l'export échoue,
+ * l'ancien PDF et l'ancien résultat restent en place, ensemble.
+ */
+export async function exportEssai(dataRoot: string, bookId: string, theme: string): Promise<EssaiResult & { file: string }> {
+  const date = new Date().toISOString();
+  const essai = essaiFor(dataRoot, bookId, theme);
+  if (!bookFolder(dataRoot, bookId)) throw new RenderRefused(`Dossier du livre absent : ${bookId}/.`);
+  const exportDir = realExportDir(dataRoot, bookId);
+  if (!exportDir) throw new RenderRefused(`${bookId}/export/ n'est pas un dossier réel : rien n'est écrit.`);
   const { pdf, ...rest } = await renderEssai(essai);
-  return { ...rest, file: writeExport(exportDir, pdf) };
+  const file = writeExport(exportDir, ESSAI_FILE, pdf);
+  const control: EssaiControl = { schemaVersion: 1, date, bookId, theme, checks: rest.checks };
+  writeExport(exportDir, ESSAI_CONTROL_FILE, `${JSON.stringify(control, null, 2)}\n`);
+  return { ...rest, file };
 }

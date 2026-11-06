@@ -9,7 +9,7 @@ import { readPdfFacts } from '../src/checks/pdf-facts';
 import { runChecks, type CheckResult } from '../src/checks/rules';
 import { createCollection, readCollection, type Collection } from '../src/data/collection';
 import { createBookFolder } from '../src/data/create-book';
-import { buildEssai, ESSAI_FILE, packFonts, renderEssai, type Essai } from '../src/render/essai';
+import { buildEssai, ESSAI_CONTROL_FILE, ESSAI_FILE, packFonts, renderEssai, type Essai } from '../src/render/essai';
 import { renderHtml, RenderRefused } from '../src/render/html';
 import { renderPdf } from '../src/render/pdf';
 import { createPrintServer } from '../src/server/app';
@@ -220,7 +220,7 @@ for (const [name, trim, wantW, wantH] of [['6 × 9"', SIX_NINE, 441, 666], ['8,5
   check('export : tous les contrôles verts', first.json.checks?.every((c: CheckResult) => c.level === 'ok'), first.json.checks);
   check('export : dimensions et polices rendues à la page', first.json.pages?.length === 2 && first.json.fonts?.length >= 2 && first.json.pageSizeIn?.widthIn === 6.125, first.json);
   const second = await exportNow({ bookId: BOOK_ID, theme: 'volcan' });
-  check('export : le fichier d’essai se remplace, sans temporaire laissé', second.status === 200 && fs.readdirSync(path.join(data, BOOK_ID, 'export')).join() === ESSAI_FILE, fs.readdirSync(path.join(data, BOOK_ID, 'export')));
+  check('export : le fichier d’essai se remplace, sans temporaire laissé', second.status === 200 && fs.readdirSync(path.join(data, BOOK_ID, 'export')).sort().join() === `${ESSAI_CONTROL_FILE},${ESSAI_FILE}`, fs.readdirSync(path.join(data, BOOK_ID, 'export')));
   const book = JSON.parse(fs.readFileSync(path.join(data, BOOK_ID, 'print-book.json'), 'utf8'));
   put(data, `${BOOK_ID}/print-book.json`, { ...book, edition: { ...book.edition, trim: LETTER } });
   const letter = await exportNow({ bookId: BOOK_ID, theme: 'savane' });

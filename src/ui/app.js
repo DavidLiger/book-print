@@ -1,4 +1,5 @@
-// src/ui/app.js — page locale de book-print : état de la configuration, livre lu, alertes, création du dossier (MP1), simulateur de prix (PX1), essai du gabarit 2A (MP2).
+// src/ui/app.js — page locale de book-print : un menu d'étapes (UI1) et un panneau par étape : configuration, livre lu, dossier (MP1),
+// simulateur de prix (PX1), collection et essai du gabarit 2A (MP2). L'état des étapes vient du serveur (`/api/parcours`).
 // Les textes viennent de fichiers : ils passent toujours par textContent.
 
 async function action(path, body = {}) {
@@ -37,6 +38,66 @@ function definitions(pairs) {
   return dl;
 }
 
+// Parcours (spec §5.3). La page ne garde rien : elle demande les étapes au serveur après chaque action.
+
+const parcours = { steps: [], current: 'livre', turn: 0 };
+const SIGNS = { 'à faire': '○', 'à refaire': '↻', validée: '✓', alerte: '⚠', erreur: '✗', verrouillée: '🔒' };
+const shownSteps = () => parcours.steps.filter((s) => s.scope === 'livre');
+
+function stepButton(step) {
+  const button = el('button');
+  button.type = 'button';
+  button.dataset.step = step.id;
+  button.title = step.reasons.join(' ') || step.stateLabel;
+  const sign = el('span', SIGNS[step.stateLabel], 'nom-signe signe');
+  sign.setAttribute('role', 'img');
+  sign.setAttribute('aria-label', step.stateLabel);
+  // Le motif d'une étape verrouillée se lit sur l'onglet : son panneau ne s'ouvre pas.
+  const locked = step.state === 'verrouillee';
+  button.append(el('span', String(step.number), 'numero'), el('span', step.label, 'nom'), sign, el('span', locked ? step.reasons[0] : step.stateLabel, 'detail'));
+  if (locked) button.setAttribute('aria-disabled', 'true');
+  else button.addEventListener('click', () => showStep(step.id));
+  if (step.id === parcours.current) button.setAttribute('aria-current', 'step');
+  return button;
+}
+
+function showReasons(step) {
+  const box = $('motifs');
+  const classes = { erreur: 'erreur', alerte: 'alerte' };
+  box.replaceChildren(...(step?.reasons ?? []).map((r) => el('p', r, classes[step.state] ?? 'note')));
+  box.hidden = box.childElementCount === 0;
+}
+
+function showStep(id) {
+  parcours.current = id;
+  for (const step of shownSteps()) $(step.id).hidden = step.id !== id;
+  const items = shownSteps().map((step) => {
+    const li = el('li');
+    li.dataset.state = step.state;
+    li.append(stepButton(step));
+    return li;
+  });
+  $('etapes').replaceChildren(...items);
+  showReasons(shownSteps().find((s) => s.id === id));
+}
+
+/** `reopen` : le livre vient d'être choisi, on repart de la première étape non validée. Sinon on reste là où on est, si l'étape reste ouverte. */
+async function refreshParcours({ reopen = false } = {}) {
+  const turn = ++parcours.turn;
+  let view;
+  try {
+    view = await action('/api/parcours', { dir: $('choix').value || null });
+  } catch (e) {
+    $('motifs').replaceChildren(el('p', e.message, 'erreur'));
+    $('motifs').hidden = false;
+    return;
+  }
+  if (turn !== parcours.turn) return;
+  parcours.steps = view.steps;
+  const current = shownSteps().find((s) => s.id === parcours.current);
+  showStep(reopen || !current || current.state === 'verrouillee' ? view.open : parcours.current);
+}
+
 function showConfig(config) {
   const box = $('config');
   box.replaceChildren();
@@ -64,13 +125,12 @@ async function readSelected() {
   const dir = $('choix').value;
   const box = $('lecture');
   box.replaceChildren();
+  $('lecture-resume').replaceChildren();
   $('creation').replaceChildren();
-  $('donnees').hidden = true;
-  $('prix').hidden = true;
-  $('essai').hidden = true;
-  if (!dir) return;
+  $('creer').disabled = true;
+  if (!dir) return refreshParcours({ reopen: true });
   const { reading } = await action('/api/read', { dir });
-  box.append(
+  $('lecture-resume').append(
     definitions([
       ['Titre', reading.title?.fr ?? '—'],
       ['bookId', reading.bookId ?? '—'],
@@ -78,18 +138,20 @@ async function readSelected() {
       ['Scènes', String(reading.scenes.length)],
       ['QR du jeu', reading.gameQr?.file ?? 'aucun'],
     ]),
+  );
+  box.append(
     list(`Erreurs (${reading.errors.length})`, reading.errors, 'erreur'),
     list(`Alertes (${reading.alerts.length})`, reading.alerts, 'alerte'),
   );
   if (reading.errors.length === 0 && reading.alerts.length === 0) box.append(el('p', 'Aucune erreur ni alerte.', 'bien'));
   if (reading.scenes.length > 0) box.append(scenesTable(reading.scenes));
-  $('donnees').hidden = false;
   $('creer').disabled = reading.errors.length > 0 || !reading.bookId;
   if ($('creer').disabled) $('creation').append(el('p', 'Création impossible tant que la lecture est en erreur.', 'alerte'));
   if (reading.bookId) {
     await openPricing(reading.bookId);
     await openEssai(reading.bookId);
   }
+  await refreshParcours({ reopen: true });
 }
 
 async function createFolder() {
@@ -109,6 +171,7 @@ async function createFolder() {
     box.append(el('p', e.message, 'erreur'));
   } finally {
     $('creer').disabled = false;
+    await refreshParcours();
   }
 }
 
@@ -125,7 +188,7 @@ const BINDING_LABELS = { paperback: 'Broché', hardcover: 'Relié' };
 const CATEGORY_LABELS = { regular: 'format normal', large: 'grand format' };
 const SYMBOLS = { EUR: '€', GBP: '£', USD: '$' };
 
-const pricing = { bookId: null, catalog: null, editId: null, scenarios: [], timer: null, turn: 0 };
+const pricing = { bookId: null, catalog: null, editId: null, scenarios: [], timer: null, turn: 0, view: 'simulateur', folder: false };
 
 function money(cents, currency) {
   if (cents === null || cents === undefined) return '—';
@@ -218,9 +281,17 @@ function resultPairs(r) {
   ];
 }
 
+function showPricingView(view) {
+  pricing.view = view;
+  $('prix-form').hidden = view !== 'simulateur' || !pricing.folder;
+  $('prix-liste').hidden = view !== 'scenarios';
+  $('v-simulateur').setAttribute('aria-pressed', String(view === 'simulateur'));
+  $('v-scenarios').setAttribute('aria-pressed', String(view === 'scenarios'));
+}
+
 function showResult(result) {
-  $('prix-resultat').replaceChildren(
-    definitions(resultPairs(result)),
+  $('prix-resultat').replaceChildren(definitions(resultPairs(result)));
+  $('prix-calcul').replaceChildren(
     list(`Erreurs (${result.errors.length})`, result.errors, 'erreur'),
     list(`Alertes (${result.alerts.length})`, result.alerts, 'alerte'),
   );
@@ -232,7 +303,9 @@ async function computeNow() {
     const { result } = await action('/api/pricing/compute', { scenario: readForm() });
     if (turn === pricing.turn) showResult(result);
   } catch (e) {
-    if (turn === pricing.turn) $('prix-resultat').replaceChildren(el('p', e.message, 'erreur'));
+    if (turn !== pricing.turn) return;
+    $('prix-resultat').replaceChildren();
+    $('prix-calcul').replaceChildren(el('p', e.message, 'erreur'));
   }
 }
 
@@ -256,7 +329,7 @@ function scenarioActions(s, retained) {
       writeForm(s);
       computeNow();
       $('p-enregistrer').textContent = `Mettre à jour « ${s.name} »`;
-      $('prix-form').scrollIntoView({ block: 'start' });
+      showPricingView('simulateur');
     }),
     smallButton(retained ? 'Ne plus retenir' : 'Retenir', () => pricingAction('/api/pricing/retain', { id: retained ? null : s.id })),
     smallButton('Supprimer', () => pricingAction('/api/pricing/delete', { id: s.id })),
@@ -274,6 +347,7 @@ function messagesCell(items, className) {
 function showScenarios(view) {
   const box = $('prix-scenarios');
   box.replaceChildren();
+  $('v-scenarios').textContent = `Scénarios enregistrés (${view.scenarios.length})`;
   $('prix-ecart').replaceChildren(
     list('Écart entre print-book.json et le scénario retenu (fichier non modifié)', view.deviation, 'alerte'),
   );
@@ -327,6 +401,8 @@ async function pricingAction(path, body) {
   } catch (e) {
     $('prix-message').replaceChildren(el('p', e.message, 'erreur'));
     return false;
+  } finally {
+    await refreshParcours();
   }
 }
 
@@ -358,18 +434,19 @@ function setupForm(catalog) {
 
 async function openPricing(bookId) {
   pricing.bookId = bookId;
-  $('prix').hidden = false;
   $('prix-message').replaceChildren();
   try {
     const view = await action('/api/pricing/state', { bookId });
     pricing.catalog = view.catalog;
     setupForm(view.catalog);
-    $('prix-form').hidden = !view.folder;
+    pricing.folder = view.folder;
+    showPricingView(pricing.view);
     if (!view.folder) $('prix-message').append(el('p', 'Créer le dossier du livre pour enregistrer des scénarios.', 'alerte'));
     showPricing(view);
     if (view.folder) await computeNow();
   } catch (e) {
-    $('prix-form').hidden = true;
+    pricing.folder = false;
+    showPricingView(pricing.view);
     $('prix-scenarios').replaceChildren();
     $('prix-ecart').replaceChildren();
     $('prix-message').append(el('p', e.message, 'erreur'));
@@ -439,17 +516,18 @@ function showLayers() {
   }
 }
 
-/** Double page à taille réelle réduite à la largeur disponible. Le PDF, lui, se juge à 100 %. */
+/** Double page à taille réelle réduite à la place disponible, en largeur et en hauteur. Le PDF, lui, se juge à 100 %. */
 function fitPreview() {
-  if (!essai.layout) return;
+  const frame = $('apercu-cadre');
+  if (!essai.layout || frame.clientWidth === 0) return;
   const width = essai.layout.reduce((sum, p) => sum + p.widthMm, 0) * PX_PER_MM;
   const height = essai.layout[0].heightMm * PX_PER_MM;
-  const scale = Math.min(1, $('apercu-cadre').clientWidth / width);
+  const scale = Math.min(1, frame.clientWidth / width, frame.clientHeight / height);
   const inner = $('apercu-echelle');
   inner.style.width = `${width}px`;
   inner.style.height = `${height}px`;
+  inner.style.left = `${(frame.clientWidth - width * scale) / 2}px`;
   inner.style.transform = `scale(${scale})`;
-  $('apercu-cadre').style.height = `${height * scale}px`;
 }
 
 function loadPreview() {
@@ -462,12 +540,12 @@ function checksTable(checks) {
   const head = el('tr');
   for (const t of ['Contrôle', 'Objet', 'Résultat']) head.append(el('th', t));
   table.append(head);
-  const SIGNS = { ok: ['✓', 'contrôle réussi'], alerte: ['⚠', 'alerte'], erreur: ['✗', 'erreur'] };
+  const CHECK_SIGNS = { ok: ['✓', 'contrôle réussi'], alerte: ['⚠', 'alerte'], erreur: ['✗', 'erreur'] };
   const CLASSES = { ok: 'bien', alerte: 'alerte', erreur: 'erreur' };
   for (const c of checks) {
     const row = el('tr');
     const verdict = el('td');
-    const [sign, meaning] = SIGNS[c.level];
+    const [sign, meaning] = CHECK_SIGNS[c.level];
     const mark = el('span', sign, `signe ${CLASSES[c.level]}`);
     mark.title = meaning;
     mark.setAttribute('aria-label', meaning);
@@ -482,6 +560,7 @@ function checksTable(checks) {
 function showExport(r) {
   const size = r.pages.map((p) => `p. ${p.number} : ${String(p.widthPt).replace('.', ',')} × ${String(p.heightPt).replace('.', ',')} pt`).join(' ; ');
   $('essai-resultat').replaceChildren(
+    checksTable(r.checks),
     definitions([
       ['Fichier', r.file],
       ['Taille demandée', `${String(r.pageSizeIn.widthIn).replace('.', ',')} × ${String(r.pageSizeIn.heightIn).replace('.', ',')} "`],
@@ -490,19 +569,26 @@ function showExport(r) {
       ['Poids', `${(r.sizeBytes / 1e6).toFixed(2).replace('.', ',')} Mo`],
       ['Chromium', r.chromium],
     ]),
-    checksTable(r.checks),
   );
+}
+
+function showCollection(state) {
+  const { exists, error } = state.collection;
+  const box = $('collection-etat');
+  if (error) box.replaceChildren(el('p', error, 'erreur'));
+  else if (!exists) box.replaceChildren(el('p', 'collection/ absent.', 'alerte'));
+  else box.replaceChildren(el('p', 'collection/ présent et valide.', 'bien'), definitions([['Thèmes', state.themes.join(', ')], ['Premier thème', state.theme]]));
 }
 
 async function openEssai(bookId) {
   essai.bookId = bookId;
-  $('essai').hidden = false;
   $('essai-zone').hidden = true;
   $('essai-resultat').replaceChildren();
   const box = $('essai-message');
   box.replaceChildren();
   try {
     const state = await action('/api/essai/state', { bookId });
+    showCollection(state);
     if (!state.collection.exists) box.append(el('p', 'collection/ absent : le créer pour voir l\'aperçu.', 'alerte'));
     if (state.collection.error) box.append(el('p', state.collection.error, 'erreur'));
     if (state.error) box.append(el('p', state.error, 'erreur'));
@@ -537,6 +623,7 @@ async function createCollection() {
     box.append(el('p', e.message, 'erreur'));
   } finally {
     $('collection-creer').disabled = false;
+    await refreshParcours();
   }
 }
 
@@ -551,19 +638,24 @@ async function exportEssai() {
     box.replaceChildren(el('p', e.message, 'erreur'));
   } finally {
     button.disabled = false;
+    await refreshParcours();
   }
+}
+
+async function reloadEssai() {
+  await openEssai(essai.bookId);
+  await refreshParcours();
 }
 
 async function start() {
   const { config, books } = await action('/api/state');
   showConfig(config);
-  if (!config.ok) return;
-  $('livre').hidden = false;
+  if (!config.ok) return refreshParcours({ reopen: true });
   const select = $('choix');
   select.replaceChildren();
   if (books.length === 0) {
     $('lecture').replaceChildren(el('p', 'Aucun livre trouvé dans books/.', 'alerte'));
-    return;
+    return refreshParcours({ reopen: true });
   }
   for (const b of books) {
     const label = b.error ? `${b.dir} (illisible)` : `${b.dir}${b.built ? ' (dernier build)' : ''}`;
@@ -573,6 +665,7 @@ async function start() {
   }
   const built = books.find((b) => b.built);
   if (built) select.value = built.dir;
+  select.disabled = false;
   await readSelected();
 }
 
@@ -589,10 +682,13 @@ $('p-nouveau').addEventListener('click', () => {
   resetForm();
   computeNow();
 });
+$('v-simulateur').addEventListener('click', () => showPricingView('simulateur'));
+$('v-scenarios').addEventListener('click', () => showPricingView('scenarios'));
 $('collection-creer').addEventListener('click', createCollection);
+$('collection-relire').addEventListener('click', reloadEssai);
 $('essai-exporter').addEventListener('click', exportEssai);
-$('essai-recharger').addEventListener('click', () => openEssai(essai.bookId));
+$('essai-recharger').addEventListener('click', reloadEssai);
 $('essai-theme').addEventListener('change', loadPreview);
 for (const box of document.querySelectorAll('input[data-layer]')) box.addEventListener('change', showLayers);
-window.addEventListener('resize', fitPreview);
+new ResizeObserver(fitPreview).observe($('apercu-cadre'));
 start().catch((e) => $('config').replaceChildren(el('p', e.message, 'erreur')));
