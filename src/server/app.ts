@@ -28,6 +28,8 @@ import { ACTION_HEADER, actionAllowed, hostAllowed, uploadAllowed } from './rule
 import { BadSubjectRequest, IMPORT_MAX_BYTES, SUBJECT_ACTIONS, subjectPreviewHtml } from './subject-actions';
 
 const UI_DIR = fileURLToPath(new URL('../ui/', import.meta.url));
+/** L'icône de l'onglet : `print.ico`, à la racine du repo, à côté de `print.cmd`. */
+export const ICON_FILE = fileURLToPath(new URL('../../print.ico', import.meta.url));
 const STATIC: Record<string, { file: string; type: string }> = {
   '/': { file: 'index.html', type: 'text/html; charset=utf-8' },
   '/app.js': { file: 'app.js', type: 'text/javascript; charset=utf-8' },
@@ -167,6 +169,13 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, port:
     if (req.method !== 'GET') return sendJson(res, 405, { error: 'GET attendu' }, { Allow: 'GET' });
     const query = new URL(req.url ?? '/', 'http://local').searchParams;
     return send(res, 200, illustrationBytes(query, configured(loadConfig(configPath))), 'image/png');
+  }
+
+  // L'icône est binaire : lue en tampon, jamais en texte. Absente, 404 comme tout fichier hors liste.
+  if (url === '/favicon.ico') {
+    if (req.method !== 'GET') return sendJson(res, 405, { error: 'GET attendu' }, { Allow: 'GET' });
+    if (!fs.existsSync(ICON_FILE)) return sendJson(res, 404, { error: 'introuvable' });
+    return send(res, 200, fs.readFileSync(ICON_FILE), 'image/x-icon');
   }
 
   const page = Object.hasOwn(STATIC, url) ? STATIC[url] : undefined;

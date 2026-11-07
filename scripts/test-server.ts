@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
-import { createPrintServer } from '../src/server/app';
+import { createPrintServer, ICON_FILE } from '../src/server/app';
 import { loadConfig } from '../src/server/config';
 import { actionAllowed, hostAllowed } from '../src/server/rules';
 import { createCollection } from '../src/data/collection';
@@ -80,6 +80,14 @@ check('script servi', (await request(port, { path: '/app.js', headers: { Host: h
 check('page : Host refusé', (await request(port, { path: '/', headers: { Host: 'attaque.example' } })).status === 403);
 check('page : Origin refusée', (await request(port, { path: '/', headers: { Host: host, Origin: 'https://attaque.example' } })).status === 403);
 check('chemin hors liste : 404', (await request(port, { path: '/../config.local.json', headers: { Host: host } })).status === 404);
+{
+  const icon = await request(port, { path: '/favicon.ico', headers: { Host: host } });
+  if (fs.existsSync(ICON_FILE)) check('icône : print.ico servi tel quel, en binaire', icon.status === 200 && icon.headers['content-type'] === 'image/x-icon' && icon.bytes.equals(fs.readFileSync(ICON_FILE)), icon.status);
+  else check('icône : print.ico absent, 404 sans panne', icon.status === 404);
+  check('icône : déclarée dans la page', (await request(port, { path: '/', headers: { Host: host } })).body.includes('<link rel="icon" href="/favicon.ico">'));
+  check('icône : Host refusé', (await request(port, { path: '/favicon.ico', headers: { Host: 'attaque.example' } })).status === 403);
+  check('icône : POST refusé', (await request(port, { method: 'POST', path: '/favicon.ico', headers: action, body: '{}' })).status === 405);
+}
 
 check('POST : Host refusé', (await post('/api/state', {}, { ...action, Host: 'attaque.example' })).status === 403);
 check('POST : Origin refusée', (await post('/api/state', {}, { ...action, Origin: 'https://attaque.example' })).status === 403);
