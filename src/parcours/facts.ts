@@ -3,6 +3,7 @@
 // pas valides ne lit rien de plus : elle sera verrouillée.
 import fs from 'node:fs';
 import path from 'node:path';
+import { entryFaults } from '../checks/images';
 import { CollectionRefused, readCollection } from '../data/collection';
 import { bookFolder, PricingRefused, readPricing, readPrintBook } from '../data/pricing-file';
 import { readResearch, readSubject, SubjectRefused } from '../data/subject-file';
@@ -12,7 +13,8 @@ import { loadRates } from '../pricing/rates';
 import { deviation } from '../pricing/scenarios';
 import { bookSnapshot, essaiFor, readEssaiControl } from '../render/essai';
 import { RenderRefused } from '../render/html';
-import { subjectTitle } from '../render/subject';
+import { imageChecks, subjectContext, subjectTitle } from '../render/subject';
+import { missingDefaults, readBookRights, readCollectionRights, RightsRefused } from '../rights/registry';
 import type { PrintBook } from '../schema/print-book';
 import type { ConfigState } from '../server/config';
 import { GeometryRefused } from '../templates/geometry';
@@ -78,10 +80,37 @@ function essaiFacts(dataRoot: string, book: PrintBook, dir: string): ParcoursFac
   };
 }
 
+function droitsFacts(dataRoot: string, bookId: string): ParcoursFacts['droits'] {
+  try {
+    const collection = readCollectionRights(dataRoot);
+    const book = readBookRights(dataRoot, bookId);
+    const entries = [...collection.entries, ...book.entries];
+    const shared = book.entries.filter((e) => collection.entries.some((c) => c.id === e.id)).map((e) => `${e.id} : présent dans les deux registres`);
+    const invalid = entries.flatMap((e) => entryFaults(e).map((fault) => `${e.id} : ${fault}`));
+    const refused = entries.filter((e) => e.commercialOk === 'non').map((e) => `${e.id} : usage commercial refusé`);
+    return { error: null, missing: missingDefaults(collection).length, faults: [...shared, ...invalid, ...refused], toCheck: entries.filter((e) => e.commercialOk === 'a-verifier').map((e) => e.id) };
+  } catch (e) {
+    if (e instanceof RightsRefused || e instanceof CollectionRefused) return { error: e.message, missing: 0, faults: [], toCheck: [] };
+    throw e;
+  }
+}
+
+function illustrationFacts(dataRoot: string, bookId: string, id: string, scenes: SceneReading[]): SubjectFacts['illustrations'] {
+  try {
+    const { zones, checks } = imageChecks(subjectContext(dataRoot, bookId, id, scenes));
+    const details = (level: string) => checks.filter((c) => c.level === level).flatMap((c) => c.details.map((d) => `${c.id}, ${d}`));
+    return { error: null, zones: zones.length, missing: zones.filter((z) => !z.illustration).length, errors: [...zones.flatMap((z) => z.fault ?? []), ...details('erreur')], alerts: details('alerte') };
+  } catch (e) {
+    if (e instanceof RenderRefused || e instanceof GeometryRefused || e instanceof SubjectRefused || e instanceof CollectionRefused || e instanceof RightsRefused || e instanceof PricingRefused) return { error: e.message, zones: 0, missing: 0, errors: [], alerts: [] };
+    throw e;
+  }
+}
+
 function subjectFacts(dataRoot: string, book: PrintBook, id: string, scenes: SceneReading[]): SubjectFacts {
   const empty: SubjectFacts = {
     id, title: id, error: null, status: null, pages: 0, template: null, theme: null,
     research: { state: 'absent', error: null }, blocks: { total: 0, valide: 0, aRelire: 0, aReprendre: 0 }, claims: { total: 0, propose: 0 },
+    illustrations: { error: null, zones: 0, missing: 0, errors: [], alerts: [] },
   };
   let subject;
   try {
@@ -99,6 +128,7 @@ function subjectFacts(dataRoot: string, book: PrintBook, id: string, scenes: Sce
     template: subject.template,
     theme: subject.variant.theme,
     blocks: { total: subject.blocks.length, valide: count('valide'), aRelire: count('a-relire'), aReprendre: count('a-reprendre') },
+    illustrations: illustrationFacts(dataRoot, book.bookId, id, scenes),
   };
   try {
     const research = readResearch(dataRoot, book.bookId, id);
@@ -118,6 +148,7 @@ export function readFacts(state: ConfigState, dir: string | null): ParcoursFacts
     pricing: { error: null, retained: false, retainedErrors: [], deviation: [], bookAlert: null },
     collection: { exists: false, error: null },
     essai: { renderError: null, control: null, controlError: null, styleMs: null, printBookMs: null, bookChanged: null },
+    droits: { error: null, missing: 0, faults: [], toCheck: [] },
     subjects: [],
   };
   if (!state.ok || dir === null) return facts;
@@ -142,7 +173,10 @@ export function readFacts(state: ConfigState, dir: string | null): ParcoursFacts
 
   facts.pricing = pricingFacts(dataRoot, bookId);
   facts.collection = collectionFacts(dataRoot);
-  if (facts.collection.exists && !facts.collection.error) facts.essai = essaiFacts(dataRoot, book, folder);
+  if (facts.collection.exists && !facts.collection.error) {
+    facts.essai = essaiFacts(dataRoot, book, folder);
+    facts.droits = droitsFacts(dataRoot, bookId);
+  }
   facts.subjects = book.subjects.map((id) => subjectFacts(dataRoot, book, id, reading.scenes));
   return facts;
 }

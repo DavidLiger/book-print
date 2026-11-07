@@ -19,6 +19,16 @@ export interface SubjectFacts {
   research: { state: 'absent' | 'ok' | 'invalide'; error: string | null };
   blocks: { total: number; valide: number; aRelire: number; aReprendre: number };
   claims: { total: number; propose: number };
+  illustrations: {
+    /** Sujet impossible à poser (gabarit, thème, collection) ou registre illisible. */
+    error: string | null;
+    zones: number;
+    /** Zones sans image. */
+    missing: number;
+    /** Lignes en erreur : fichier absent ou refusé, C5, C11. */
+    errors: string[];
+    alerts: string[];
+  };
 }
 
 export interface ParcoursFacts {
@@ -38,6 +48,16 @@ export interface ParcoursFacts {
     printBookMs: number | null;
     /** Le format ou la fiche ont changé depuis l'export. `null` : export d'avant MP3, seule la date de `print-book.json` le dit. */
     bookChanged: boolean | null;
+  };
+  droits: {
+    /** Un registre illisible. */
+    error: string | null;
+    /** Valeurs par défaut absentes de `collection/rights.json`. */
+    missing: number;
+    /** Entrées invalides ou à `commercialOk: non`. */
+    faults: string[];
+    /** Entrées à `a-verifier`. */
+    toCheck: string[];
   };
   subjects: SubjectFacts[];
 }
@@ -132,6 +152,14 @@ function essai({ essai: e }: ParcoursFacts): StepVerdict {
   return { state: 'validee', reasons: [] };
 }
 
+function droits({ droits: d }: ParcoursFacts): StepVerdict {
+  if (d.error) return { state: 'erreur', reasons: [d.error] };
+  if (d.faults.length > 0) return { state: 'erreur', reasons: d.faults };
+  if (d.missing > 0) return { state: 'a-faire', reasons: [`${count(d.missing, 'entrée')} par défaut à ajouter : « Ajouter ce qui manque ».`] };
+  if (d.toCheck.length > 0) return { state: 'alerte', reasons: [`À vérifier : ${d.toCheck.join(', ')}.`] };
+  return { state: 'validee', reasons: [] };
+}
+
 const isRelu = (s: SubjectFacts) => s.status === 'relu' || s.status === 'prêt';
 
 function sujets({ subjects }: ParcoursFacts): StepVerdict {
@@ -161,6 +189,16 @@ function sujetRelecture(_f: ParcoursFacts, s?: SubjectFacts): StepVerdict {
   return { state: 'a-faire', reasons: [`${parts.join(', ')}.`] };
 }
 
+function sujetIllustrations(_f: ParcoursFacts, s?: SubjectFacts): StepVerdict {
+  if (!s) return { state: 'a-faire', reasons: [] };
+  const { error, missing, errors, alerts } = s.illustrations;
+  if (error) return { state: 'erreur', reasons: [error] };
+  if (errors.length > 0) return { state: 'erreur', reasons: errors };
+  if (missing > 0) return { state: 'a-faire', reasons: [`${count(missing, 'zone')} sans image.`] };
+  if (alerts.length > 0) return { state: 'alerte', reasons: alerts };
+  return { state: 'validee', reasons: [] };
+}
+
 function sujetApercu(_f: ParcoursFacts, s?: SubjectFacts): StepVerdict {
   if (s && isRelu(s)) return { state: 'validee', reasons: [] };
   return { state: 'a-faire', reasons: ['Contrôler le sujet, puis le marquer relu.'] };
@@ -168,6 +206,8 @@ function sujetApercu(_f: ParcoursFacts, s?: SubjectFacts): StepVerdict {
 
 /**
  * Sujets exige Collection et non Essai : une couleur modifiée ne reverrouille pas tout le contenu. Essai reste jusqu'à MP5.
+ * Droits exige Collection : le registre commun y vit. Sujets ne l'exige pas : une licence à revoir ne reverrouille pas le contenu.
+ * Illustrations exige Recherche et ne touche pas `relu`, qui porte sur le texte.
  * Aperçu exige Recherche et non Relecture : un bloc allongé repasse à relire, et c'est justement dans l'aperçu que se voit son débordement.
  */
 export const STEPS: StepDef[] = [
@@ -175,9 +215,11 @@ export const STEPS: StepDef[] = [
   { id: 'prix', label: 'Prix', scope: 'livre', requires: ['livre'], evaluate: prix },
   { id: 'collection', label: 'Collection', scope: 'livre', requires: ['prix'], evaluate: collection },
   { id: 'essai', label: 'Essai', scope: 'livre', requires: ['collection'], evaluate: essai },
+  { id: 'droits', label: 'Droits', scope: 'livre', requires: ['collection'], evaluate: droits },
   { id: 'sujets', label: 'Sujets', scope: 'livre', requires: ['collection'], evaluate: sujets },
   { id: 'sujet-recherche', label: 'Recherche', scope: 'sujet', requires: [], evaluate: sujetRecherche },
   { id: 'sujet-relecture', label: 'Relecture', scope: 'sujet', requires: ['sujet-recherche'], evaluate: sujetRelecture },
+  { id: 'sujet-illustrations', label: 'Illustrations', scope: 'sujet', requires: ['sujet-recherche'], evaluate: sujetIllustrations },
   { id: 'sujet-apercu', label: 'Aperçu', scope: 'sujet', requires: ['sujet-recherche'], evaluate: sujetApercu },
 ];
 

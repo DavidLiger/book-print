@@ -4,12 +4,12 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-export function writeAtomic(dir: string, name: string, content: string): void {
+export function writeAtomic(dir: string, name: string, content: string | Buffer): void {
   const tmp = path.join(dir, `${name}.${crypto.randomBytes(6).toString('hex')}.tmp`);
   try {
     const fd = fs.openSync(tmp, 'wx');
     try {
-      fs.writeFileSync(fd, content, 'utf8');
+      fs.writeFileSync(fd, content);
       fs.fsyncSync(fd);
     } finally {
       fs.closeSync(fd);

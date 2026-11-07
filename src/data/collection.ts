@@ -23,7 +23,7 @@ export interface Collection {
 }
 
 /** `collection/` réel sous `dataRoot`, `null` s'il n'existe pas encore. Mêmes refus que le dossier d'un livre. */
-function collectionFolder(dataRoot: string): string | null {
+export function collectionFolder(dataRoot: string): string | null {
   const root = fs.realpathSync.native(dataRoot);
   const dir = path.join(root, 'collection');
   const stat = fs.lstatSync(dir, { throwIfNoEntry: false });

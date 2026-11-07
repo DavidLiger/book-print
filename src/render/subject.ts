@@ -1,18 +1,23 @@
-// src/render/subject.ts — texte relu d'un sujet dans son gabarit (spec §5.2, étape 7). Même HTML que le PDF. L'illustration et le QR réels
-// arrivent en MP4 et MP5 : un aplat neutre marqué « à venir » et un faux QR tamponné en tiennent la place. Pas d'export PDF dans ce lot.
+// src/render/subject.ts — texte relu et illustrations d'un sujet dans son gabarit (spec §5.2, étape 7). Même HTML que le PDF. Une zone sans image
+// garde un aplat neutre marqué « à venir ». Le QR réel arrive en MP5 : un faux QR tamponné en tient la place. Pas d'export PDF du sujet.
+import fs from 'node:fs';
 import { ESSAI_FICHE_VALUES, ESSAI_PHRASES, fakeQr } from '../../scripts/fixtures/sujet-essai';
 import { runSubjectChecks } from '../checks/content';
 import type { CheckResult } from '../checks/rules';
+import { c5Resolution, c11Rights, ppiOf, type PlacedImage } from '../checks/images';
 import { readCollection, type Collection } from '../data/collection';
+import { illustrationFile } from '../data/illustration-file';
 import { firstPageOf, QR_LEGEND_DEFAULT, readSubject } from '../data/subject-file';
 import { readPrintBook } from '../data/pricing-file';
 import type { SceneReading } from '../glbi/read';
+import { placement, targetPixels, visibleCrop, type Crop, type Placement, type Size, type ZoneSizeMm } from '../images/crop';
 import { expectedBlocks, zoneLimit, type ExpectedBlock } from '../research/blocks';
+import { allEntries, illustrationRights, readBookRights } from '../rights/registry';
 import type { PrintBook } from '../schema/print-book';
 import type { StoredResearch } from '../schema/research';
-import type { Subject } from '../schema/subject';
+import type { Illustration, Subject } from '../schema/subject';
 import { TEMPLATES } from '../templates';
-import { layoutTemplate, type LayoutPage, type Trim } from '../templates/geometry';
+import { layoutTemplate, type LayoutPage, type LayoutZone, type Trim } from '../templates/geometry';
 import type { Template } from '../templates/model';
 import { applyBookFiche, RenderRefused, renderHtml, type RenderContent } from './html';
 import { measureHtml } from './pdf';
@@ -20,6 +25,7 @@ import { measureHtml } from './pdf';
 type Lang = RenderContent['lang'];
 
 export interface SubjectContext {
+  dataRoot: string;
   book: PrintBook;
   lang: Lang;
   collection: Collection;
@@ -67,6 +73,7 @@ export function subjectContext(dataRoot: string, bookId: string, subjectId: stri
   const lang = book.edition.lang;
   const scene = scenes.find((s) => s.id === subject.sceneId);
   return {
+    dataRoot,
     book,
     lang,
     collection,
@@ -82,6 +89,70 @@ export function subjectContext(dataRoot: string, bookId: string, subjectId: stri
   };
 }
 
+export const illustrationZones = (ctx: SubjectContext): LayoutZone[] => ctx.layout.flatMap((p) => p.zones).filter((z) => z.type === 'illustration');
+const sizeOf = (zone: LayoutZone): ZoneSizeMm => ({ widthMm: zone.rect.right - zone.rect.left, heightMm: zone.rect.bottom - zone.rect.top });
+
+export interface ZoneImage {
+  zone: string;
+  size: ZoneSizeMm;
+  /** Pixels à fournir pour 300 ppp dans cette zone, à ce format. */
+  target: Size;
+  illustration: Illustration | null;
+  /** Dimensions lues dans le fichier. `null` : pas d'image utilisable. */
+  image: Size | null;
+  /** Le sujet cite une image que le disque ne donne pas. Les illustrations sont hors git : un clone n'en a aucune. */
+  fault: string | null;
+  crop: Crop | null;
+  ppi: number | null;
+  /** Droits rattachés ; `null` : pas d'entrée dans `rights.json`. */
+  rights: string[] | null;
+}
+
+export function zoneImages(ctx: SubjectContext): ZoneImage[] {
+  const { dataRoot, book, subject } = ctx;
+  const rights = readBookRights(dataRoot, book.bookId);
+  return illustrationZones(ctx).map((zone): ZoneImage => {
+    const size = sizeOf(zone);
+    const illustration = subject.illustrations.find((i) => i.zone === zone.id) ?? null;
+    const base = { zone: zone.id, size, target: targetPixels(size), illustration, image: null, fault: null, crop: null, ppi: null, rights: illustrationRights(rights, subject.id, zone.id)?.rights ?? null };
+    if (!illustration) return base;
+    const file = illustrationFile(dataRoot, book.bookId, subject.id, zone.id);
+    if (file.state === 'absent') return { ...base, fault: `${zone.id} : fichier absent du disque, le redéposer.` };
+    if (file.state === 'refuse') return { ...base, fault: `${zone.id} : ${file.message}` };
+    const image = { width: file.header.width, height: file.header.height };
+    const placed: PlacedImage = { zone: zone.id, image, size, framing: illustration.framing };
+    return { ...base, image, crop: visibleCrop(image, size, illustration.framing), ppi: ppiOf(placed) };
+  });
+}
+
+export interface ImageChecks {
+  zones: ZoneImage[];
+  checks: CheckResult[];
+}
+
+/** C5 sur ce qui a une image ; C11 sur ce que le sujet cite. Aucun Chromium : le parcours peut les calculer à chaque lecture. */
+export function imageChecks(ctx: SubjectContext): ImageChecks {
+  const zones = zoneImages(ctx);
+  const registry = allEntries(ctx.collection.rights, readBookRights(ctx.dataRoot, ctx.book.bookId));
+  const placed = zones.flatMap((z) => (z.image && z.illustration ? [{ zone: z.zone, image: z.image, size: z.size, framing: z.illustration.framing }] : []));
+  const linked = zones.filter((z) => z.illustration).map((z) => ({ zone: z.zone, rights: z.rights }));
+  return { zones, checks: [c5Resolution(placed), c11Rights(linked, registry)] };
+}
+
+/** L'image réelle, en `data:`, et son cadrage ; l'aplat si la zone n'a pas d'image utilisable : c'est l'étape Illustrations qui le signale. */
+function subjectImages(ctx: SubjectContext): { images: Record<string, string>; placements: Record<string, Placement> } {
+  const images: Record<string, string> = {};
+  const placements: Record<string, Placement> = {};
+  for (const z of zoneImages(ctx)) {
+    const file = z.image && illustrationFile(ctx.dataRoot, ctx.book.bookId, ctx.subject.id, z.zone);
+    if (z.image && z.illustration && file?.state === 'ok') {
+      images[z.zone] = `data:image/png;base64,${fs.readFileSync(file.path).toString('base64')}`;
+      placements[z.zone] = placement(z.image, z.size, visibleCrop(z.image, z.size, z.illustration.framing));
+    } else images[z.zone] = placeholderImage();
+  }
+  return { images, placements };
+}
+
 /** Un bloc absent laisse sa zone vide : c'est C13 qui le dit, l'aperçu doit rester visible. */
 export function subjectContent(ctx: SubjectContext): RenderContent {
   const texts: Record<string, string> = {};
@@ -93,8 +164,7 @@ export function subjectContent(ctx: SubjectContext): RenderContent {
     if (block.item) fiche[block.item] = text;
     else texts[block.zone] = text;
   }
-  const images = Object.fromEntries(ctx.template.sheets.flatMap((s) => s.zones).filter((z) => z.type === 'illustration').map((z) => [z.id, placeholderImage()]));
-  return { title: 'Aperçu', lang: ctx.lang, theme: ctx.subject.variant.theme, texts, fiche, ficheMissing: '', images, qrSvg: stampedQr(), qrLegend: ctx.legend };
+  return { title: 'Aperçu', lang: ctx.lang, theme: ctx.subject.variant.theme, texts, fiche, ficheMissing: '', ...subjectImages(ctx), qrSvg: stampedQr(), qrLegend: ctx.legend };
 }
 
 export const subjectHtml = (ctx: SubjectContext) => renderHtml(ctx.layout, ctx.trim, ctx.collection.style, subjectContent(ctx), ctx.collection.pictos);

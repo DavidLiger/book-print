@@ -21,13 +21,11 @@ export interface ActionHeaders {
   host?: string;
 }
 
-/** Action admise : `POST`, corps JSON, en-tête propre, `Origin` présent et admis (un navigateur l'envoie sur tout `POST`). */
-export function actionAllowed(h: ActionHeaders, port: number): boolean {
-  return (
-    h.method === 'POST' &&
-    /^application\/json\b/i.test(h.contentType ?? '') &&
-    h.actionHeader === '1' &&
-    h.origin !== undefined &&
-    hostAllowed(h.host, h.origin, port)
-  );
-}
+/** `POST`, en-tête propre, `Origin` présent et admis (un navigateur l'envoie sur tout `POST`). */
+const ownPost = (h: ActionHeaders, port: number) => h.method === 'POST' && h.actionHeader === '1' && h.origin !== undefined && hostAllowed(h.host, h.origin, port);
+
+/** Action admise : corps JSON. */
+export const actionAllowed = (h: ActionHeaders, port: number): boolean => ownPost(h, port) && /^application\/json\b/i.test(h.contentType ?? '');
+
+/** Dépôt d'une image : mêmes protections, corps binaire. La signature est contrôlée ensuite, sur le fichier lui-même. */
+export const uploadAllowed = (h: ActionHeaders, port: number): boolean => ownPost(h, port) && /^image\/png$/i.test(h.contentType ?? '');

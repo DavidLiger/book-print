@@ -14,7 +14,9 @@
     "test:parcours": "tsx scripts/test-parcours.ts",
     "test:ui": "tsx scripts/test-ui.ts",
     "test:research": "tsx scripts/test-research.ts",
-    "schema:research": "tsx scripts/gen-research-schema.ts"
+    "schema:research": "tsx scripts/gen-research-schema.ts",
+    "test:images": "tsx scripts/test-images.ts",
+    "test:rights": "tsx scripts/test-rights.ts"
   },
   "keywords": [],
   "author": "",
@@ -26,6 +28,7 @@
     "@types/node": "20.19.11",
     "pdf-lib": "1.17.1",
     "playwright": "1.64.0",
+    "sharp": "0.35.5",
     "tsx": "4.23.15",
     "typescript": "5.9.2",
     "zod": "4.6.7"

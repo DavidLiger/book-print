@@ -14,12 +14,17 @@ import { listBooks, readBook } from '../glbi/read';
 import { readFacts } from '../parcours/facts';
 import { computeParcours } from '../parcours/steps';
 import { RenderRefused } from '../render/html';
+import { ImageRefused } from '../images/clean';
 import { ResearchRefused } from '../research/errors';
+import { CreditsRefused } from '../rights/credits';
+import { RightsRefused } from '../rights/registry';
 import { GeometryRefused } from '../templates/geometry';
 import { loadConfig, type ConfigState } from './config';
 import { BadEssaiRequest, ESSAI_ACTIONS, previewHtml, PREVIEW_CSP } from './essai-actions';
+import { BadImageRequest, depositIllustration, DEPOSIT_ROUTE, ILLUSTRATION_ACTIONS, illustrationBytes, UploadTooLarge } from './illustration-actions';
 import { BadPricingRequest, PRICING_ACTIONS } from './pricing-actions';
-import { ACTION_HEADER, actionAllowed, hostAllowed } from './rules';
+import { BadRightsRequest, RIGHTS_ACTIONS } from './rights-actions';
+import { ACTION_HEADER, actionAllowed, hostAllowed, uploadAllowed } from './rules';
 import { BadSubjectRequest, IMPORT_MAX_BYTES, SUBJECT_ACTIONS, subjectPreviewHtml } from './subject-actions';
 
 const UI_DIR = fileURLToPath(new URL('../ui/', import.meta.url));
@@ -30,7 +35,7 @@ const STATIC: Record<string, { file: string; type: string }> = {
 };
 const MAX_BODY = 64 * 1024;
 /** Limites propres à une route : toutes les autres restent à `MAX_BODY`. */
-const BODY_LIMITS: Record<string, number> = { '/api/sujet/import': IMPORT_MAX_BYTES };
+const BODY_LIMITS: Record<string, number> = { '/api/sujet/import': IMPORT_MAX_BYTES, '/api/droits/credits': IMPORT_MAX_BYTES };
 const dirBody = z.strictObject({ dir: z.string() });
 const parcoursBody = z.strictObject({ dir: z.string().nullable() });
 
@@ -42,7 +47,7 @@ class HttpError extends Error {
   }
 }
 
-function send(res: http.ServerResponse, status: number, body: string, type: string, extra: Record<string, string> = {}): void {
+function send(res: http.ServerResponse, status: number, body: string | Buffer, type: string, extra: Record<string, string> = {}): void {
   res.writeHead(status, {
     'Content-Type': type,
     'Cache-Control': 'no-store',
@@ -110,12 +115,24 @@ const ACTIONS: Record<string, (body: unknown, configPath: string) => Json | Prom
   ...Object.fromEntries(
     Object.entries({ ...PRICING_ACTIONS, ...ESSAI_ACTIONS }).map(([route, run]) => [route, (body: unknown, configPath: string) => run(body, configured(loadConfig(configPath)).dataRoot)]),
   ),
-  ...Object.fromEntries(Object.entries(SUBJECT_ACTIONS).map(([route, run]) => [route, (body: unknown, configPath: string) => run(body, configured(loadConfig(configPath)))])),
+  ...Object.fromEntries(Object.entries({ ...SUBJECT_ACTIONS, ...ILLUSTRATION_ACTIONS, ...RIGHTS_ACTIONS }).map(([route, run]) => [route, (body: unknown, configPath: string) => run(body, configured(loadConfig(configPath)))])),
 };
 
 async function handle(req: http.IncomingMessage, res: http.ServerResponse, port: number, configPath: string): Promise<void> {
   if (!hostAllowed(req.headers.host, req.headers.origin, port)) return sendJson(res, 403, { error: 'Host ou Origin refusé' });
   const url = (req.url ?? '/').split('?')[0];
+
+  // Dépôt d'une illustration : seule route à corps binaire. Le corps n'est pas gardé en mémoire : il va en flux dans un temporaire.
+  if (url === DEPOSIT_ROUTE) {
+    if (req.method !== 'POST') return sendJson(res, 405, { error: 'action : POST attendu' }, { Allow: 'POST' });
+    const allowed = uploadAllowed(
+      { method: req.method, contentType: req.headers['content-type'], actionHeader: req.headers[ACTION_HEADER], origin: req.headers.origin, host: req.headers.host },
+      port,
+    );
+    if (!allowed) return sendJson(res, 403, { error: `dépôt refusé : POST image/png avec ${ACTION_HEADER}: 1 attendu` });
+    const query = new URL(req.url ?? '/', 'http://local').searchParams;
+    return sendJson(res, 200, await depositIllustration(query, req, configured(loadConfig(configPath))));
+  }
 
   const action = Object.hasOwn(ACTIONS, url) ? ACTIONS[url] : undefined;
   if (action) {
@@ -145,6 +162,13 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, port:
     return send(res, 200, html, 'text/html; charset=utf-8', { 'Content-Security-Policy': PREVIEW_CSP });
   }
 
+  // L'image gardée, pour la vignette de cadrage. Lecture seule : sujet et zone passent les mêmes refus que le dépôt.
+  if (url === '/illustration') {
+    if (req.method !== 'GET') return sendJson(res, 405, { error: 'GET attendu' }, { Allow: 'GET' });
+    const query = new URL(req.url ?? '/', 'http://local').searchParams;
+    return send(res, 200, illustrationBytes(query, configured(loadConfig(configPath))), 'image/png');
+  }
+
   const page = Object.hasOwn(STATIC, url) ? STATIC[url] : undefined;
   if (!page) return sendJson(res, 404, { error: 'introuvable' });
   if (req.method !== 'GET') return sendJson(res, 405, { error: 'GET attendu' }, { Allow: 'GET' });
@@ -158,8 +182,13 @@ export function createPrintServer(configPath: string): http.Server {
     handle(req, res, port, configPath).catch((e: unknown) => {
       if (res.headersSent) return res.destroy();
       if (e instanceof HttpError) return sendJson(res, e.status, { error: e.message });
-      if (e instanceof BadPricingRequest || e instanceof BadEssaiRequest || e instanceof BadSubjectRequest) return sendJson(res, 400, { error: e.message });
-      if (e instanceof CreateRefused || e instanceof PricingRefused || e instanceof CollectionRefused || e instanceof RenderRefused || e instanceof GeometryRefused || e instanceof SubjectRefused || e instanceof ResearchRefused) {
+      // Le reste du corps n'est pas lu : la connexion se ferme après la réponse.
+      if (e instanceof UploadTooLarge) {
+        res.once('finish', () => req.destroy());
+        return sendJson(res, 413, { error: e.message }, { Connection: 'close' });
+      }
+      if (e instanceof BadPricingRequest || e instanceof BadEssaiRequest || e instanceof BadSubjectRequest || e instanceof BadImageRequest || e instanceof BadRightsRequest) return sendJson(res, 400, { error: e.message });
+      if (e instanceof CreateRefused || e instanceof PricingRefused || e instanceof CollectionRefused || e instanceof RenderRefused || e instanceof GeometryRefused || e instanceof SubjectRefused || e instanceof ResearchRefused || e instanceof RightsRefused || e instanceof CreditsRefused || e instanceof ImageRefused) {
         return sendJson(res, 409, { error: e.message });
       }
       console.error('book-print :', e);

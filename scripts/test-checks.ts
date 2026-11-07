@@ -8,6 +8,8 @@ import type { PdfFacts } from '../src/checks/pdf-facts';
 import type { MeasuredBox, Measures } from '../src/render/measure';
 import { TEMPLATE_2A } from '../src/templates/2A';
 import { BLEED_MM, layoutTemplate, type LayoutPage, type Rect } from '../src/templates/geometry';
+import { c5Resolution, c11Rights, entryFaults } from '../src/checks/images';
+import type { RightsEntry } from '../src/schema/rights';
 import { check, finish } from './test-lib';
 
 const margins = { outerMm: 12, topMm: 12, bottomMm: 12, gutterMm: 15 };
@@ -193,6 +195,54 @@ red('C13, titre de remplissage', filler({ title: 'Lorem ipsum' }), 'titre');
 {
   const all = runSubjectChecks({ ...texts(), claims: [claim()], measures: noOverflow, essaiPhrases: [], essaiValues: [] });
   check('contrôles du sujet : C10, C12, C13, tous verts', all.map((c) => `${c.id}:${c.level}`).join() === 'C10:ok,C12:ok,C13:ok', all);
+}
+
+// C5 : le fichier source et le cadrage (spec §16.6)
+{
+  const size = { widthMm: 155.575, heightMm: 234.95 };
+  const framing = { focusX: 0.5, focusY: 0.5, zoom: 1 };
+  const placed = (width: number, height: number, zoom = 1) => ({ zone: 'illustration', image: { width, height }, size, framing: { ...framing, zoom } });
+  const c5 = (...items: ReturnType<typeof placed>[]) => c5Resolution(items);
+  check('C5 : taille cible, vert', c5(placed(1838, 2775)).level === 'ok', c5(placed(1838, 2775)));
+  check('C5 : aucune image, vert', c5().level === 'ok');
+  check('C5 : 300 ppp pile, vert', c5(placed(1838, 2775)).details.length === 0);
+  check('C5 : sous 300 ppp, rouge, valeur donnée', c5(placed(919, 1388)).level === 'erreur' && c5(placed(919, 1388)).details[0]!.includes('150 ppp'), c5(placed(919, 1388)));
+  check('C5 : un pixel de moins, rouge', c5(placed(1837, 2774)).level === 'erreur');
+  check('C5 : le zoom réduit la résolution', c5(placed(1838, 2775, 1.01)).level === 'erreur' && c5(placed(1838, 2775, 1.01)).details[0]!.includes('297 ppp'), c5(placed(1838, 2775, 1.01)));
+  check('C5 : plus grand que la cible, le zoom reste vert', c5(placed(3676, 5550, 1.5)).level === 'ok', c5(placed(3676, 5550, 1.5)));
+  check('C5 : 600 ppp, vert', c5(placed(3676, 5550)).level === 'ok');
+  check('C5 : au-dessus de 600 ppp, alerte', c5(placed(4000, 6000)).level === 'alerte' && c5(placed(4000, 6000)).details[0]!.includes('fichier lourd'), c5(placed(4000, 6000)));
+  check('C5 : le zoom ramène une image lourde sous 600 ppp', c5(placed(4000, 6000, 1.2)).level === 'ok');
+  check('C5 : une erreur passe avant une alerte', c5(placed(4000, 6000), { ...placed(919, 1388), zone: 'autre' }).level === 'erreur');
+  check('C5 : chaque zone nommée', c5({ ...placed(919, 1388), zone: 'grande' }).details[0]!.startsWith('grande'));
+}
+
+// C11 : un cas vert et un cas rouge par règle
+{
+  const entry = (id: string, kind: RightsEntry['kind'], over: Partial<RightsEntry> = {}): RightsEntry => ({ id, kind, name: id, author: 'Auteur', license: 'CC BY 4.0', credit: `Crédit ${id}`, commercialOk: 'oui', ...over });
+  const registry = (...entries: RightsEntry[]) => new Map([entry('ia', 'modele-ia'), entry('m3d', 'modele-3d'), ...entries].map((e) => [e.id, e]));
+  const c11 = (rights: string[] | null, map = registry()) => c11Rights([{ zone: 'illustration', rights }], map);
+  check('C11 : modèle d’IA et modèle 3D, vert', c11(['ia', 'm3d']).level === 'ok', c11(['ia', 'm3d']));
+  check('C11 : aucune illustration, vert', c11Rights([], registry()).level === 'ok');
+  check('C11 : le report à MP6 est dit dans le contrôle', c11(['ia', 'm3d']).label.includes('MP6'));
+  check('C11 : image absente du registre, rouge', c11(null).level === 'erreur' && c11(null).details[0]!.includes('absente du registre'));
+  check('C11 : aucun droit rattaché, rouge', c11([]).level === 'erreur');
+  check('C11 : droit inconnu, rouge', c11(['ia', 'm3d', 'fantome']).level === 'erreur' && c11(['ia', 'm3d', 'fantome']).details.join().includes('fantome'));
+  check('C11 : sans modèle d’IA, rouge', c11(['m3d']).level === 'erreur' && c11(['m3d']).details.join().includes('modèle d\'IA'));
+  check('C11 : sans modèle 3D, alerte seulement', c11(['ia']).level === 'alerte' && c11(['ia']).details.join().includes('modèle 3D'), c11(['ia']));
+  const with3d = (over: Partial<RightsEntry>) => c11(['ia', 'x'], registry(entry('x', 'modele-3d', over)));
+  check('C11 : entrée sans licence, rouge', with3d({ license: '' }).level === 'erreur' && with3d({ license: '' }).details[0] === 'x : licence manquante', with3d({ license: '' }));
+  check('C11 : entrée avec licence, vert', with3d({ license: 'CC BY 4.0' }).level === 'ok');
+  check('C11 : crédit vide, rouge', with3d({ credit: '' }).level === 'erreur' && with3d({ credit: '' }).details[0] === 'x : crédit vide');
+  check('C11 : crédit présent, vert', with3d({ credit: 'Texte' }).level === 'ok');
+  check('C11 : commercialOk non, rouge', with3d({ commercialOk: 'non' }).level === 'erreur' && with3d({ commercialOk: 'non' }).details[0] === 'x : usage commercial refusé');
+  check('C11 : commercialOk oui, vert', with3d({ commercialOk: 'oui' }).level === 'ok');
+  check('C11 : à vérifier, alerte', with3d({ commercialOk: 'a-verifier' }).level === 'alerte');
+  check('C11 : une erreur passe avant une alerte', c11Rights([{ zone: 'a', rights: ['ia'] }, { zone: 'b', rights: null }], registry()).level === 'erreur');
+  const map = registry(entry('x', 'modele-3d', { credit: '' }));
+  check('C11 : une entrée fautive n’est citée qu’une fois', c11Rights([{ zone: 'a', rights: ['ia', 'x'] }, { zone: 'b', rights: ['ia', 'x'] }], map).details.length === 1, c11Rights([{ zone: 'a', rights: ['ia', 'x'] }, { zone: 'b', rights: ['ia', 'x'] }], map));
+  check('entrée : complète, aucune faute', entryFaults(entry('x', 'police')).length === 0);
+  check('entrée : licence et crédit manquants', entryFaults(entry('x', 'police', { license: '', credit: '' })).join() === 'licence manquante,crédit vide');
 }
 
 finish('contrôles');

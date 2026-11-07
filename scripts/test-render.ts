@@ -5,6 +5,8 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { PDFDocument } from 'pdf-lib';
+import { chromium } from 'playwright';
+import sharp from 'sharp';
 import { readPdfFacts } from '../src/checks/pdf-facts';
 import { runChecks, type CheckResult } from '../src/checks/rules';
 import { createCollection, readCollection, type Collection } from '../src/data/collection';
@@ -12,8 +14,11 @@ import { createBookFolder } from '../src/data/create-book';
 import { buildEssai, ESSAI_CONTROL_FILE, ESSAI_FILE, packFonts, renderEssai, type Essai } from '../src/render/essai';
 import { applyBookFiche, renderHtml, RenderRefused } from '../src/render/html';
 import { measureHtml, renderPdf } from '../src/render/pdf';
-import { controlSubject, subjectContent, subjectContext, subjectHtml } from '../src/render/subject';
+import { controlSubject, imageChecks, subjectContent, subjectContext, subjectHtml, zoneImages } from '../src/render/subject';
 import { createSubject, updateSubject } from '../src/data/subject-file';
+import { cleanPng } from '../src/images/clean';
+import { pngChunks } from '../src/images/png';
+import { ensureIllustrationRights, setIllustrationRights } from '../src/rights/registry';
 import { expectedBlocks } from '../src/research/blocks';
 import { mergeImport } from '../src/research/import';
 import { makeResearch } from './fixtures/recherche';
@@ -312,6 +317,88 @@ for (const [name, trim, wantW, wantH] of [['6 × 9"', SIX_NINE, 441, 666], ['8,5
   check('fiche du livre : attendue par les blocs', context().expected.map((b) => b.id).join() === 'chapeau,texte,fiche-portee');
   const miss = await checks();
   check('fiche du livre : bloc absent, C13 rouge', miss.C13!.details.some((d) => d.includes('fiche, portee vide')), miss.C13);
+}
+
+// Illustrations réelles, à deux formats : aucune taille n'est en dur, et le cadrage est celui qu'on imprime.
+{
+  /** Quatre quarts de couleurs franches : la partie visible se lit dans les pixels du rendu. */
+  const QUARTERS = { 'haut-gauche': [220, 30, 30], 'haut-droite': [30, 170, 60], 'bas-gauche': [30, 60, 220], 'bas-droite': [240, 200, 20] } as const;
+  const quarters = (width: number, height: number, channels: 3 | 4 = 3) =>
+    makePng(width, height, channels, (x, y) => {
+      const c = QUARTERS[`${y < height / 2 ? 'haut' : 'bas'}-${x < width / 2 ? 'gauche' : 'droite'}`];
+      return [c[0], c[1], c[2], ...(channels === 4 ? [255] : [])] as [number, number, number];
+    });
+  const browser = await chromium.launch();
+  /** La couleur au centre de la zone, dans le rendu réel. */
+  const centerColor = async (html: string) => {
+    const page = await browser.newPage({ viewport: { width: 1400, height: 1200 } });
+    await page.setContent(html, { waitUntil: 'load' });
+    await page.evaluate('Promise.all(Array.from(document.images).map((i) => i.decode()))');
+    const shot = await page.locator('[data-zone="illustration"]').screenshot();
+    await page.close();
+    const { width, height } = await sharp(shot).metadata();
+    return [...(await sharp(shot).extract({ left: Math.floor(width / 2), top: Math.floor(height / 2), width: 1, height: 1 }).removeAlpha().raw().toBuffer())];
+  };
+  const isColor = (found: number[], want: readonly number[]) => found.every((v, i) => Math.abs(v - want[i]!) <= 2);
+
+  for (const [name, trim, target] of [['6 × 9"', SIX_NINE, { width: 1838, height: 2775 }], ['8,5 × 11"', LETTER, { width: 2588, height: 3375 }]] as const) {
+    const parent = tempDir();
+    const dataRoot = path.join(parent, 'donnees');
+    fs.mkdirSync(dataRoot);
+    createBookFolder(dataRoot, BOOK_ID);
+    createCollection(dataRoot);
+    const bookFile = path.join(dataRoot, BOOK_ID, 'print-book.json');
+    const book = JSON.parse(fs.readFileSync(bookFile, 'utf8'));
+    put(dataRoot, `${BOOK_ID}/print-book.json`, { ...book, edition: { ...book.edition, trim } });
+    const scenes = [{ rank: 1, id: 'alpha', title: { fr: 'Alpha fr', en: 'Alpha en', es: 'Alpha es' }, modelCredits: [], qr: null }];
+    createSubject(dataRoot, BOOK_ID, { sceneId: 'alpha', pages: 2, template: '2A', theme: 'foret' }, ['alpha'], ['foret']);
+    const context = () => subjectContext(dataRoot, BOOK_ID, 'alpha', scenes);
+    check(`${name} : taille cible calculée depuis la zone`, JSON.stringify(zoneImages(context())[0]!.target) === JSON.stringify(target), zoneImages(context())[0]);
+    const folder = path.join(dataRoot, BOOK_ID, 'illustrations', 'alpha');
+    fs.mkdirSync(folder);
+    const place = async (input: Buffer, framing = { focusX: 0.5, focusY: 0.5, zoom: 1 }) => {
+      const { png, width, height } = await cleanPng(input);
+      fs.writeFileSync(path.join(folder, 'illustration.png'), png);
+      updateSubject(dataRoot, BOOK_ID, 'alpha', (d) => ({ ...d, subject: { ...d.subject, illustrations: [{ zone: 'illustration', file: 'illustrations/alpha/illustration.png', width, height, framing }] } }));
+      return png;
+    };
+    const frame = (framing: { focusX: number; focusY: number; zoom: number }) => updateSubject(dataRoot, BOOK_ID, 'alpha', (d) => ({ ...d, subject: { ...d.subject, illustrations: d.subject.illustrations.map((i) => ({ ...i, framing })) } }));
+
+    // C6 repassé à taille réelle : un PNG avec canal alpha, nettoyé par sharp, ne laisse aucun /SMask.
+    const kept = await place(quarters(target.width, target.height, 4));
+    check(`${name} : PNG gardé à la taille cible, sans métadonnées`, [...new Set(pngChunks(kept))].join() === 'IHDR,IDAT,IEND');
+    ensureIllustrationRights(dataRoot, BOOK_ID, 'alpha', 'illustration');
+    setIllustrationRights(dataRoot, BOOK_ID, 'alpha', 'illustration', ['sdxl-base-1-0']);
+    const html = subjectHtml(context());
+    check(`${name} : image réelle dans le HTML, sans aplat`, html.includes('data:image/png;base64,') && !html.includes('image/svg+xml'));
+    const { pdf, measures } = await renderPdf(html, trim);
+    const facts = await readPdfFacts(pdf);
+    const results = Object.fromEntries(runChecks({ facts, measures, pages: context().layout, pack: packFonts() }).map((c) => [c.id, c]));
+    check(`${name} : C4, l'image reste à fond perdu`, results.C4!.level === 'ok', results.C4);
+    check(`${name} : C6, PNG nettoyé à taille réelle, aucune transparence`, results.C6!.level === 'ok' && !facts.transparency.some((t) => t.kind.includes('SMask')), [results.C6, facts.transparency]);
+    check(`${name} : image embarquée sans recompression`, facts.images.some((i) => i.filter === '/FlateDecode'), facts.images);
+    const [c5, c11] = imageChecks(context()).checks;
+    check(`${name} : C5 vert à la taille cible, sur le fichier source`, c5!.level === 'ok', c5);
+    check(`${name} : C11 lu sur le registre réel`, c11!.level === 'alerte', c11);
+    frame({ focusX: 0.5, focusY: 0.5, zoom: 1.05 });
+    check(`${name} : zoom 1,05, C5 rouge`, imageChecks(context()).checks[0]!.level === 'erreur', imageChecks(context()).checks[0]);
+    frame({ focusX: 0.5, focusY: 0.5, zoom: 1 });
+
+    // Le cadrage est celui du rendu : à zoom 2, le quart visé remplit la zone.
+    for (const [corner, focusX, focusY] of [['haut-gauche', 0.25, 0.25], ['haut-droite', 0.75, 0.25], ['bas-gauche', 0.25, 0.75], ['bas-droite', 0.75, 0.75]] as const) {
+      frame({ focusX, focusY, zoom: 2 });
+      const color = await centerColor(subjectHtml(context()));
+      check(`${name} : point focal ${corner}, quart visé au centre`, isColor(color, QUARTERS[corner]), color);
+    }
+    frame({ focusX: 0.25, focusY: 0.25, zoom: 2 });
+    const zoomed = await renderPdf(subjectHtml(context()), trim);
+    const zoomedFacts = await readPdfFacts(zoomed.pdf);
+    const zoomedChecks = Object.fromEntries(runChecks({ facts: zoomedFacts, measures: zoomed.measures, pages: context().layout, pack: packFonts() }).map((c) => [c.id, c]));
+    check(`${name} : zoomée, l'image coupée ne casse ni C4 ni C6`, zoomedChecks.C4!.level === 'ok' && zoomedChecks.C6!.level === 'ok' && zoomedFacts.transparency.length === 0, [zoomedChecks.C4, zoomedChecks.C6, zoomedFacts.transparency]);
+    fs.rmSync(path.join(folder, 'illustration.png'));
+    check(`${name} : fichier absent, l'aperçu garde l'aplat`, subjectHtml(context()).includes('image/svg+xml'));
+  }
+  await browser.close();
 }
 
 finish('rendu');

@@ -1,4 +1,4 @@
-// scripts/fixtures/make-png.ts — PNG fabriqués sans sharp (MP4), par node:zlib : RVB sans alpha, ou RVBA pour le cas rouge de C6.
+// scripts/fixtures/make-png.ts — PNG fabriqués sans sharp, par node:zlib : RVB sans alpha, ou RVBA pour le cas rouge de C6.
 import zlib from 'node:zlib';
 
 const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
@@ -13,7 +13,7 @@ function crc32(buffers: Buffer[]): number {
   return (c ^ 0xffffffff) >>> 0;
 }
 
-function chunk(type: string, data: Buffer): Buffer {
+export function chunk(type: string, data: Buffer): Buffer {
   const head = Buffer.alloc(4);
   head.writeUInt32BE(data.length);
   const name = Buffer.from(type, 'latin1');
@@ -42,5 +42,8 @@ export function makePng(width: number, height: number, channels: 3 | 4, pixel: P
   }
   return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', header), chunk('IDAT', zlib.deflateSync(raw, { level: 6 })), chunk('IEND', Buffer.alloc(0))]);
 }
+
+/** Ajoute des fragments juste après `IHDR` : c'est là que ComfyUI range son workflow. */
+export const withChunks = (png: Buffer, ...chunks: Buffer[]) => Buffer.concat([png.subarray(0, 33), ...chunks, png.subarray(33)]);
 
 export const pngDataUri = (png: Buffer) => `data:image/png;base64,${png.toString('base64')}`;

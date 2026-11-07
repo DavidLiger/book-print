@@ -1,6 +1,7 @@
 // src/render/html.ts — HTML des pages d'un sujet. Le même texte sert à l'aperçu et au PDF : une feuille `@media screen` pose
 // seulement les deux pages côte à côte. Les repères ne sont jamais ici : la page locale les dessine par-dessus (`src/ui/`).
 // Les pages sont des blocs de taille fixe, sans moteur de pagination (MP-5). Aucune taille en dur : tout vient de la géométrie.
+import type { Placement } from '../images/crop';
 import type { PrintBook } from '../schema/print-book';
 import type { Style } from '../schema/style';
 import { pageSize, type LayoutPage, type LayoutZone, type Rect, type Trim } from '../templates/geometry';
@@ -21,6 +22,8 @@ export interface RenderContent {
   ficheMissing: string;
   /** Source `data:` par identifiant de zone. */
   images: Record<string, string>;
+  /** Cadrage par zone. Sans lui, l'image remplit sa zone : c'est le cas de l'aplat « à venir » et de l'image d'essai. */
+  placements?: Record<string, Placement>;
   /** SVG inséré tel quel, seul le prologue XML est retiré. */
   qrSvg: string;
   qrLegend: string;
@@ -57,7 +60,8 @@ html, body { margin: 0; padding: 0; background: ${palette.paper}; }
 .fond { background: ${theme}; }
 .titre { ${font(fonts.title)}; font-weight: 700; color: ${palette.paper}; display: flex; align-items: flex-end; }
 .chapeau { ${font(fonts.lead)}; font-weight: 600; color: ${theme}; }
-.illustration { display: block; object-fit: cover; }
+.illustration { display: block; object-fit: cover; overflow: hidden; }
+.illustration img { position: absolute; display: block; max-width: none; }
 .fiche { display: grid; grid-template-columns: 1fr 1fr; grid-auto-rows: 1fr; gap: 1mm 3mm; padding: 1.5mm 3mm; background: ${fiche}; border: 1pt solid ${theme}; ${font(fonts.label)}; }
 .info { display: flex; align-items: center; gap: 2mm; min-width: 0; }
 .info svg { flex: none; width: 8mm; height: 8mm; color: ${theme}; }
@@ -109,7 +113,10 @@ function zoneMarkup(zone: LayoutZone, page: LayoutPage, style: Style, content: R
     case 'illustration': {
       const src = content.images[zone.id];
       if (!src) throw new RenderRefused(`Zone ${zone.id} sans image.`);
-      return `<img ${attrs} src="${src}" alt="">`;
+      const place = content.placements?.[zone.id];
+      if (!place) return `<img ${attrs} src="${src}" alt="">`;
+      // Une boîte qui coupe : aucune transformation, rien qui puisse créer de la transparence (C6).
+      return `<div ${attrs}><img src="${src}" alt="" style="left:${mm(place.leftMm)};top:${mm(place.topMm)};width:${mm(place.widthMm)};height:${mm(place.heightMm)}"></div>`;
     }
     case 'folio':
       return style.folio.show ? `<div ${attrs}><span>${page.number}</span></div>` : '';

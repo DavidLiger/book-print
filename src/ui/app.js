@@ -1,5 +1,5 @@
 // src/ui/app.js — page locale de book-print : un menu d'étapes (UI1) et un panneau par étape : configuration, livre lu, dossier (MP1),
-// simulateur de prix (PX1), collection et essai du gabarit 2A (MP2), sujets et relecture (MP3). L'état des étapes vient du serveur (`/api/parcours`).
+// simulateur de prix (PX1), collection et essai du gabarit 2A (MP2), sujets et relecture (MP3), droits et illustrations (MP4). L'état des étapes vient du serveur (`/api/parcours`).
 // Les textes viennent de fichiers : ils passent toujours par textContent.
 
 async function action(path, body = {}) {
@@ -83,6 +83,7 @@ function showStep(id) {
   $('etapes').replaceChildren(...stepItems(shownSteps(), id, showStep));
   showReasons(id === 'sujets' && sujets.open ? undefined : shownSteps().find((s) => s.id === id));
   if (changed && id === 'sujets') loadSujets();
+  if (changed && id === 'droits') loadDroits();
 }
 
 /** `reopen` : le livre vient d'être choisi, on repart de la première étape non validée. Sinon on reste là où on est, si l'étape reste ouverte. */
@@ -161,6 +162,7 @@ async function readSelected() {
   closeSubject();
   await refreshParcours({ reopen: true });
   if (parcours.current === 'sujets') await loadSujets();
+  if (parcours.current === 'droits') await loadDroits();
 }
 
 async function createFolder() {
@@ -777,6 +779,7 @@ function showSubStep(id) {
   for (const step of facts?.steps ?? []) $(step.id).hidden = step.id !== id;
   showSubSteps();
   if (id === 'sujet-apercu') loadSubjectPreview();
+  if (id === 'sujet-illustrations') enqueue(loadImages, $('il-message'));
 }
 
 async function loadSubject() {
@@ -793,6 +796,7 @@ async function openSubject(id) {
   $('r-prompt').hidden = true;
   $('r-confirmation').hidden = true;
   $('rl-message').replaceChildren();
+  resetImages();
   sujets.open = id;
   $('motifs').hidden = true;
   $('sujets-accueil').hidden = true;
@@ -1116,6 +1120,296 @@ async function controlNow(mark) {
   }
 }
 
+// Illustrations d'un sujet (spec §5.2, étape 6). Tout est écrit aussitôt par le serveur, qui renvoie zones, contrôles et registre.
+
+const KIND_LABELS = { 'modele-3d': 'Modèles 3D', 'modele-ia': 'Modèles d\'IA', lora: 'LoRA', controlnet: 'ControlNet', 'image-reference': 'Style : image de référence', upscaler: 'Agrandissement', police: 'Polices', picto: 'Pictogrammes', extension: 'Extensions' };
+const COMMERCIAL_LABELS = { oui: 'oui', non: 'non', 'a-verifier': 'à vérifier' };
+const IMAGE_MAX = 64 * 1024 * 1024;
+const images = { view: null, stamp: Date.now(), pending: null };
+const imageZone = () => images.view?.zones.find((z) => z.zone === $('il-zone').value);
+const pct = (n) => Math.round(n * 1000) / 10;
+
+function resetImages() {
+  images.view = null;
+  images.pending = null;
+  images.stamp = Date.now();
+  $('il-message').replaceChildren();
+  $('il-confirmation').hidden = true;
+  $('il-image').removeAttribute('src');
+}
+
+async function loadImages() {
+  images.view = await action('/api/sujet/images', { dir: dirOf(), subjectId: sujets.open });
+  showImages();
+}
+
+/** La vignette tient dans son cadre, au rapport de l'image. */
+function fitThumb() {
+  const zone = imageZone();
+  const box = $('il-vignette');
+  if (!zone?.image) return;
+  const frame = $('il-cadre');
+  const scale = Math.min((frame.clientWidth - 4) / zone.image.width, (frame.clientHeight - 4) / zone.image.height);
+  box.style.width = `${zone.image.width * scale}px`;
+  box.style.height = `${zone.image.height * scale}px`;
+}
+
+function showThumb(zone) {
+  const box = $('il-vignette');
+  box.hidden = !zone?.image;
+  for (const id of ['il-zoom', 'il-x', 'il-y']) $(id).disabled = !zone?.image;
+  if (!zone?.image) return;
+  const query = new URLSearchParams({ dir: dirOf(), subject: sujets.open, zone: zone.zone, t: String(images.stamp) });
+  const src = `/illustration?${query}`;
+  if ($('il-image').getAttribute('src') !== src) $('il-image').src = src;
+  const { crop, image } = zone;
+  const visible = $('il-visible').style;
+  visible.left = `${(crop.left / image.width) * 100}%`;
+  visible.top = `${(crop.top / image.height) * 100}%`;
+  visible.width = `${(crop.width / image.width) * 100}%`;
+  visible.height = `${(crop.height / image.height) * 100}%`;
+  fitThumb();
+}
+
+function imagePairs(zone) {
+  const file = zone.image ? `${zone.image.width} × ${zone.image.height} px` : zone.fault ?? 'aucune image';
+  const pairs = [['Fichier', file]];
+  if (zone.ppi !== null) pairs.push(['Résolution effective', `${Math.floor(zone.ppi)} ppp`]);
+  return pairs;
+}
+
+function showRightsChoice(zone) {
+  const box = $('il-droits');
+  const top = box.scrollTop;
+  const frag = document.createDocumentFragment();
+  const entries = images.view.entries;
+  if (!zone.illustration) frag.append(el('p', 'Déposer d\'abord une image.', 'note'));
+  else if (entries.length === 0) frag.append(el('p', 'Registre vide : ouvrir l\'étape Droits.', 'note'));
+  else {
+    for (const kind of Object.keys(KIND_LABELS)) {
+      const group = entries.filter((e) => e.kind === kind);
+      if (group.length === 0) continue;
+      frag.append(el('p', KIND_LABELS[kind], 'titre-liste'));
+      for (const e of group) {
+        const label = el('label');
+        const tick = el('input');
+        tick.type = 'checkbox';
+        tick.value = e.id;
+        tick.checked = zone.rights?.includes(e.id) ?? false;
+        const warn = e.commercialOk === 'oui' ? '' : `, usage commercial : ${COMMERCIAL_LABELS[e.commercialOk]}`;
+        label.append(tick, el('span', `${e.name}, ${e.author || 'auteur inconnu'} (${e.license || 'licence manquante'}${warn})`));
+        frag.append(label);
+      }
+    }
+  }
+  box.replaceChildren(frag);
+  box.scrollTop = top;
+}
+
+function showImages() {
+  const { view } = images;
+  if (!view) return;
+  const keep = $('il-zone').value;
+  fillSelect($('il-zone'), view.zones.map((z) => [z.zone, z.zone]));
+  if (view.zones.some((z) => z.zone === keep)) $('il-zone').value = keep;
+  const zone = imageZone();
+  if (!zone) return;
+  $('il-cible').textContent = `Taille cible à 300 ppp : ${zone.target.width} × ${zone.target.height} px.`;
+  const framing = zone.illustration?.framing ?? { focusX: 0.5, focusY: 0.5, zoom: 1 };
+  $('il-zoom').value = String(framing.zoom);
+  $('il-zoom-valeur').textContent = framing.zoom.toFixed(2).replace('.', ',');
+  $('il-x').value = String(pct(framing.focusX));
+  $('il-y').value = String(pct(framing.focusY));
+  showThumb(zone);
+  $('il-infos').replaceChildren(definitions(imagePairs(zone)));
+  $('il-controles').replaceChildren(checksTable(view.checks));
+  showRightsChoice(zone);
+}
+
+/** Écrit aussitôt : point focal et zoom ne passent par aucun bouton. */
+function imageChange(path, body) {
+  const id = sujets.open;
+  $('il-message').replaceChildren();
+  return enqueue(async () => {
+    const view = await action(path, { dir: dirOf(), subjectId: id, zone: $('il-zone').value, ...body });
+    if (sujets.open !== id) return;
+    images.view = view;
+    showImages();
+    await refreshParcours();
+  }, $('il-message'));
+}
+
+const currentFraming = () => ({ focusX: Number($('il-x').value) / 100, focusY: Number($('il-y').value) / 100, zoom: Number($('il-zoom').value) });
+const sendFraming = (change) => imageChange('/api/sujet/cadrage', { framing: { ...currentFraming(), ...change } });
+
+function clickThumb(event) {
+  const box = $('il-image').getBoundingClientRect();
+  sendFraming({ focusX: Math.min(1, Math.max(0, (event.clientX - box.left) / box.width)), focusY: Math.min(1, Math.max(0, (event.clientY - box.top) / box.height)) });
+}
+
+function sendRights() {
+  imageChange('/api/sujet/droits-image', { rights: [...document.querySelectorAll('#il-droits input:checked')].map((b) => b.value) });
+}
+
+async function uploadImage(file, confirm) {
+  const message = $('il-message');
+  if (file.size > IMAGE_MAX) {
+    message.replaceChildren(el('p', 'Fichier trop gros : 64 Mio au plus.', 'erreur'));
+    return;
+  }
+  const id = sujets.open;
+  const query = new URLSearchParams({ dir: dirOf(), subject: id, zone: $('il-zone').value });
+  if (confirm) query.set('confirm', '1');
+  message.replaceChildren(el('p', 'Dépôt en cours…', 'note'));
+  const res = await fetch(`/api/sujet/illustration?${query}`, { method: 'POST', headers: { 'Content-Type': 'image/png', 'x-book-print': '1' }, body: file });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error ?? `erreur ${res.status}`);
+  if (sujets.open !== id) return;
+  if (data.needsConfirm) {
+    images.pending = file;
+    $('il-confirmation').hidden = false;
+    message.replaceChildren();
+    return;
+  }
+  images.pending = null;
+  images.stamp = Date.now();
+  images.view = data;
+  $('il-confirmation').hidden = true;
+  showImages();
+  message.replaceChildren(el('p', `Image gardée : ${data.width} × ${data.height} px, nettoyée, sans métadonnées.`, 'bien'));
+  await refreshParcours();
+}
+
+const depositImage = (file, confirm = false) => enqueue(() => uploadImage(file, confirm), $('il-message'));
+
+/** `input` : le champ fichier ; `run` reçoit le fichier choisi ou déposé. */
+function dropZone(box, input, run) {
+  input.addEventListener('change', () => {
+    const [file] = input.files;
+    if (file) run(file);
+    input.value = '';
+  });
+  for (const name of ['dragenter', 'dragover']) {
+    box.addEventListener(name, (event) => {
+      event.preventDefault();
+      box.classList.add('survol');
+    });
+  }
+  box.addEventListener('dragleave', () => box.classList.remove('survol'));
+  box.addEventListener('drop', (event) => {
+    event.preventDefault();
+    box.classList.remove('survol');
+    const [file] = event.dataTransfer.files;
+    if (file) run(file);
+  });
+}
+
+// Droits du livre (spec §3.8)
+
+const droits = { view: null, editing: null };
+
+function entriesTable(entries, scope) {
+  if (entries.length === 0) return el('p', 'Aucune entrée.', 'note');
+  const table = el('table');
+  const head = el('tr');
+  for (const t of ['Nom', 'Type', 'Licence', 'Commercial', '']) head.append(el('th', t));
+  table.append(head);
+  for (const e of entries) {
+    const row = el('tr');
+    row.dataset.entry = e.id;
+    const state = e.faults.length > 0 ? el('td', e.faults.join(', '), 'erreur') : el('td', COMMERCIAL_LABELS[e.commercialOk], e.commercialOk === 'oui' ? undefined : e.commercialOk === 'non' ? 'erreur' : 'alerte');
+    const act = el('td');
+    act.append(smallButton('Modifier', () => editEntry(e, scope)));
+    row.append(el('td', e.name), el('td', KIND_LABELS[e.kind] ?? e.kind), el('td', e.license || '—'), state, act);
+    table.append(row);
+  }
+  return table;
+}
+
+function showDroits(view) {
+  droits.view = view;
+  $('dr-note').textContent = view.missing.length > 0 ? `${view.missing.length} entrée${view.missing.length > 1 ? 's' : ''} par défaut absente${view.missing.length > 1 ? 's' : ''} du registre commun.` : 'Registre commun complet.';
+  if (view.error) $('dr-message').replaceChildren(el('p', view.error, 'erreur'));
+  fillSelect($('dr-type'), view.kinds.map((k) => [k, KIND_LABELS[k] ?? k]), $('dr-type').value || 'modele-3d');
+  $('dr-t-commun').textContent = `Registre commun (${view.collection.length})`;
+  $('dr-t-livre').textContent = `Registre du livre (${view.book.length})`;
+  $('dr-commun').replaceChildren(entriesTable(view.collection, 'collection'));
+  $('dr-livre').replaceChildren(entriesTable(view.book, 'livre'));
+}
+
+async function loadDroits() {
+  if (!dirOf()) return;
+  try {
+    $('dr-message').replaceChildren();
+    showDroits(await action('/api/droits/state', { dir: dirOf() }));
+  } catch (e) {
+    $('dr-message').replaceChildren(el('p', e.message, 'erreur'));
+  }
+}
+
+function resetEntry() {
+  droits.editing = null;
+  $('dr-form').reset();
+  $('dr-titre').textContent = 'Nouvelle entrée';
+  $('dr-registre').disabled = false;
+}
+
+function editEntry(e, scope) {
+  droits.editing = e.id;
+  $('dr-titre').textContent = `Modifier ${e.id}`;
+  $('dr-registre').value = scope;
+  $('dr-registre').disabled = true;
+  $('dr-type').value = e.kind;
+  $('dr-commercial').value = e.commercialOk;
+  $('dr-nom').value = e.name;
+  $('dr-auteur').value = e.author;
+  $('dr-licence').value = e.license;
+  $('dr-url').value = e.url ?? '';
+  $('dr-credit').value = e.credit;
+}
+
+async function droitsAction(path, body, done) {
+  const box = $('dr-message');
+  box.replaceChildren();
+  try {
+    const reply = await action(path, { dir: dirOf(), ...body });
+    showDroits(reply);
+    done(reply, box);
+  } catch (e) {
+    box.replaceChildren(el('p', e.message, 'erreur'));
+  } finally {
+    await refreshParcours();
+  }
+}
+
+function saveEntry(event) {
+  event.preventDefault();
+  const entry = { kind: $('dr-type').value, name: $('dr-nom').value, author: $('dr-auteur').value, license: $('dr-licence').value, url: $('dr-url').value, credit: $('dr-credit').value, commercialOk: $('dr-commercial').value };
+  const id = droits.editing;
+  return droitsAction('/api/droits/enregistrer', { scope: $('dr-registre').value, ...(id ? { id } : {}), entry }, (reply, box) => {
+    box.append(el('p', `Entrée ${reply.saved} enregistrée.`, 'bien'));
+    resetEntry();
+  });
+}
+
+function completeRegistry() {
+  return droitsAction('/api/droits/completer', {}, ({ completed }, box) => {
+    box.append(el('p', completed.added.length > 0 ? `${completed.added.length} entrées ajoutées : ${completed.added.join(', ')}.` : 'Rien à ajouter : le registre commun n\'a pas changé.', 'bien'));
+  });
+}
+
+async function importCredits(file) {
+  const box = $('dr-message');
+  if (file.size > IMPORT_MAX) {
+    box.replaceChildren(el('p', 'Fichier trop gros : 2 Mio au plus.', 'erreur'));
+    return;
+  }
+  await droitsAction('/api/droits/credits', { content: await file.text() }, ({ imported }, target) => {
+    target.append(el('p', `${imported.added.length} entrée(s) créée(s), ${imported.kept.length} conservée(s) sans modification, ${imported.originals} création(s) originale(s) ignorée(s).`, 'bien'));
+    if (imported.skipped.length > 0) target.append(list('Lignes écartées', imported.skipped, 'alerte'));
+  });
+}
+
 async function start() {
   const { config, books } = await action('/api/state');
   showConfig(config);
@@ -1203,6 +1497,28 @@ $('sa-recharger').addEventListener('click', async () => {
   await enqueue(loadSubject, $('sa-resultat'));
   loadSubjectPreview();
 });
+$('il-zone').addEventListener('change', showImages);
+dropZone($('il-depot'), $('il-fichier'), (file) => depositImage(file));
+$('il-remplacer').addEventListener('click', () => {
+  $('il-confirmation').hidden = true;
+  if (images.pending) depositImage(images.pending, true);
+});
+$('il-annuler').addEventListener('click', () => {
+  images.pending = null;
+  $('il-confirmation').hidden = true;
+});
+$('il-image').addEventListener('click', clickThumb);
+$('il-image').addEventListener('load', fitThumb);
+$('il-zoom').addEventListener('input', () => { $('il-zoom-valeur').textContent = Number($('il-zoom').value).toFixed(2).replace('.', ','); });
+$('il-zoom').addEventListener('change', () => sendFraming({}));
+$('il-x').addEventListener('change', () => sendFraming({}));
+$('il-y').addEventListener('change', () => sendFraming({}));
+$('il-droits').addEventListener('change', sendRights);
+new ResizeObserver(fitThumb).observe($('il-cadre'));
+$('dr-completer').addEventListener('click', completeRegistry);
+dropZone($('dr-depot'), $('dr-fichier'), importCredits);
+$('dr-form').addEventListener('submit', saveEntry);
+$('dr-nouvelle').addEventListener('click', resetEntry);
 $('sa-controler').addEventListener('click', () => controlNow(false));
 $('sa-relu').addEventListener('click', () => controlNow(true));
 start().catch((e) => $('config').replaceChildren(el('p', e.message, 'erreur')));

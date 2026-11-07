@@ -188,6 +188,30 @@ fieldset label { display: flex; gap: 6px; align-items: center; margin: 0; color:
 .cite { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 .cite button.petit { margin: 0; }
 .cite select { font-size: 13px; padding: 1px 4px; }
-#essai-resultat th:first-child, #sa-resultat th:first-child { overflow-wrap: normal; }
+#essai-resultat th:first-child, #sa-resultat th:first-child, #il-controles th:first-child { overflow-wrap: normal; }
 .compteur { font-size: 12px; color: var(--doux); }
 .compteur.erreur { color: var(--erreur); font-weight: 600; }
+
+.depot { flex: none; display: block; padding: 8px 12px; text-align: center; color: var(--texte); border: 2px dashed var(--bord); border-radius: 8px; cursor: pointer; margin: 0; }
+.depot.survol { border-color: var(--action); }
+.depot input { padding: 0; border: 0; background: transparent; }
+#dr-message { flex: none; max-height: 72px; }
+#dr-commun, #dr-livre { min-height: 40px; }
+#dr-commun td, #dr-livre td { min-width: 0; }
+#dr-commun td:nth-child(2), #dr-livre td:nth-child(2), #dr-commun button, #dr-livre button { white-space: nowrap; }
+#dr-commun table, #dr-livre table { margin-top: 0; width: 100%; }
+#dr-form { min-height: 0; }
+#il-confirmation { flex: none; align-items: center; }
+#il-confirmation p { flex: 1 1 100%; }
+#il-message:empty { display: none; }
+#il-message { flex: none; max-height: 44px; overflow: auto; }
+#il-cadre { flex: 1 1 0; min-height: 0; display: grid; place-items: center; background: var(--fond); border: 1px solid var(--bord); }
+#il-vignette { position: relative; overflow: hidden; }
+#il-image { display: block; width: 100%; height: 100%; cursor: crosshair; }
+#il-visible { position: absolute; border: 2px solid #ffffff; outline: 1px solid #000000; box-shadow: 0 0 0 4000px rgba(0, 0, 0, 0.45); pointer-events: none; }
+#il-cadrage { flex: none; }
+#il-cadrage input[type="range"] { padding: 4px 0; }
+#il-infos, #il-controles { flex: none; }
+#il-controles { max-height: 34%; overflow: auto; }
+#il-droits label { display: flex; gap: 6px; align-items: baseline; margin: 0 0 2px; color: var(--texte); }
+#il-droits .titre-liste { margin-top: 4px; }

@@ -62,7 +62,7 @@ function parse<T extends z.ZodType>(schema: T, value: unknown): z.infer<T> {
   return body.data;
 }
 
-function reading(config: Config, dir: string): BookReading & { bookId: string } {
+export function reading(config: Config, dir: string): BookReading & { bookId: string } {
   const read = readBook(config.glbRoot, dir);
   if (read.errors.length > 0 || !read.bookId) throw new SubjectRefused(`Lecture de GLBInterpreter en erreur : ${read.errors.join(' ; ')}`);
   return { ...read, bookId: read.bookId };

@@ -29,6 +29,86 @@
       "license": "création maison",
       "credit": "Pictogrammes : Éditions Liger.",
       "commercialOk": "oui"
+    },
+    {
+      "id": "sdxl-base-1-0",
+      "kind": "modele-ia",
+      "name": "Stable Diffusion XL base 1.0",
+      "author": "Stability AI",
+      "license": "CreativeML Open RAIL++-M",
+      "url": "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0",
+      "credit": "Stable Diffusion XL base 1.0, Stability AI, licence CreativeML Open RAIL++-M.",
+      "commercialOk": "oui"
+    },
+    {
+      "id": "controlnet-union-promax",
+      "kind": "controlnet",
+      "name": "ControlNet union SDXL promax",
+      "author": "xinsir",
+      "license": "Apache-2.0",
+      "url": "https://huggingface.co/xinsir/controlnet-union-sdxl-1.0",
+      "credit": "ControlNet union SDXL promax, xinsir, licence Apache-2.0.",
+      "commercialOk": "oui"
+    },
+    {
+      "id": "ip-adapter-plus-sdxl-vit-h",
+      "kind": "modele-ia",
+      "name": "IP-Adapter Plus SDXL ViT-H",
+      "author": "h94",
+      "license": "Apache-2.0",
+      "url": "https://huggingface.co/h94/IP-Adapter",
+      "credit": "IP-Adapter Plus SDXL ViT-H, h94, licence Apache-2.0.",
+      "commercialOk": "oui"
+    },
+    {
+      "id": "clip-vit-h-14",
+      "kind": "modele-ia",
+      "name": "CLIP ViT-H/14 laion2B",
+      "author": "LAION",
+      "license": "MIT",
+      "url": "https://huggingface.co/laion/CLIP-ViT-H-14-laion2B-s32B-b79K",
+      "credit": "CLIP ViT-H/14 laion2B, LAION, licence MIT.",
+      "commercialOk": "oui"
+    },
+    {
+      "id": "realesrgan-x4plus",
+      "kind": "upscaler",
+      "name": "RealESRGAN_x4plus",
+      "author": "Xintao Wang",
+      "license": "BSD-3-Clause",
+      "url": "https://github.com/xinntao/Real-ESRGAN",
+      "credit": "RealESRGAN_x4plus, Xintao Wang, licence BSD-3-Clause.",
+      "commercialOk": "oui"
+    },
+    {
+      "id": "comfyui-ipadapter-plus",
+      "kind": "extension",
+      "name": "ComfyUI_IPAdapter_plus",
+      "author": "cubiq",
+      "license": "GPL-3.0",
+      "url": "https://github.com/cubiq/ComfyUI_IPAdapter_plus",
+      "credit": "ComfyUI_IPAdapter_plus, cubiq, licence GPL-3.0.",
+      "commercialOk": "oui"
+    },
+    {
+      "id": "comfyui-ultimate-sd-upscale",
+      "kind": "extension",
+      "name": "ComfyUI_UltimateSDUpscale",
+      "author": "ssitu",
+      "license": "GPL-3.0",
+      "url": "https://github.com/ssitu/ComfyUI_UltimateSDUpscale",
+      "credit": "ComfyUI_UltimateSDUpscale, ssitu, licence GPL-3.0.",
+      "commercialOk": "oui"
+    },
+    {
+      "id": "niedot294a",
+      "kind": "image-reference",
+      "name": "NIEdot294a.jpg",
+      "author": "à relever sur Wikimedia Commons",
+      "license": "domaine public, mention à relever (P-13)",
+      "url": "https://commons.wikimedia.org/wiki/File:NIEdot294a.jpg",
+      "credit": "Référence de style : NIEdot294a.jpg, Wikimedia Commons.",
+      "commercialOk": "a-verifier"
     }
   ],
   "illustrations": []

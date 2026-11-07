@@ -7,11 +7,12 @@ import path from 'node:path';
 import { chromium, type Page, type Route } from 'playwright';
 import { createPrintServer } from '../src/server/app';
 import { BOOK_ID, makeGlbi, put, tempDir } from './fixtures/make-glbi';
+import { makePng } from './fixtures/make-png';
 import { makeResearch } from './fixtures/recherche';
 import { check, finish } from './test-lib';
 
 const SIZES = [{ width: 1920, height: 950 }, { width: 1366, height: 650 }];
-const STEP_IDS = ['livre', 'prix', 'collection', 'essai', 'sujets'];
+const STEP_IDS = ['livre', 'prix', 'collection', 'essai', 'droits', 'sujets'];
 
 const glbRoot = makeGlbi();
 const parent = tempDir();
@@ -65,9 +66,9 @@ const statesText = async () => (await tabs()).map((t) => t.sign).join();
 await open();
 {
   const all = await tabs();
-  check('menu : cinq étapes numérotées, dans l’ordre', all.map((t) => t.id).join() === STEP_IDS.join() && all.every((t, i) => t.text.startsWith(String(i + 1))), all);
+  check('menu : six étapes numérotées, dans l’ordre', all.map((t) => t.id).join() === STEP_IDS.join() && all.every((t, i) => t.text.startsWith(String(i + 1))), all);
   check('ouverture : première étape non validée', (await current()) === 'livre');
-  check('départ : Livre à faire, le reste verrouillé', (await statesText()) === 'à faire,verrouillée,verrouillée,verrouillée,verrouillée', await statesText());
+  check('départ : Livre à faire, le reste verrouillé', (await statesText()) === 'à faire,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée', await statesText());
   check('étape verrouillée : motif lisible sur l’onglet', (await tab('essai')).text.includes('Valider d\'abord « Livre »'), await tab('essai'));
   await page.click('#etapes button[data-step="essai"]', { force: true });
   check('étape verrouillée : ne s’ouvre pas', (await current()) === 'livre' && await page.isHidden('#essai'));
@@ -131,7 +132,7 @@ await open();
   await page.click('#v-scenarios');
   await page.click('#prix-scenarios button:has-text("Ne plus retenir")');
   await untilTab('essai', 'verrouillée');
-  check('étape redevenue non validée : la suite se reverrouille', (await statesText()) === 'validée,à faire,verrouillée,verrouillée,verrouillée', await statesText());
+  check('étape redevenue non validée : la suite se reverrouille', (await statesText()) === 'validée,à faire,verrouillée,verrouillée,verrouillée,verrouillée', await statesText());
   check('reverrouillage : aucune donnée perdue', fs.existsSync(style) && fs.existsSync(path.join(dataRoot, BOOK_ID, 'export', 'essai-2A.pdf')));
   await page.reload();
   await until(`document.querySelector('#etapes li[data-state="a-faire"]') !== null`);
@@ -139,7 +140,7 @@ await open();
   await page.click('#v-scenarios');
   await page.click('#prix-scenarios button:has-text("Retenir")');
   await untilTab('essai', 'validée');
-  check('scénario de nouveau retenu : le parcours revient', (await statesText()) === 'validée,validée,validée,validée,à faire', await statesText());
+  check('scénario de nouveau retenu : le parcours revient', (await statesText()) === 'validée,validée,validée,validée,alerte,à faire', await statesText());
 }
 
 // Sujet réel, de la création à « relu »
@@ -339,6 +340,129 @@ const levels = () => page.evaluate(`[...document.querySelectorAll('#sa-resultat 
   check('second sujet : commence en page 8', (await text('#sujets-total')).includes('page 10'));
 }
 
+// Droits et illustrations, de bout en bout (MP4)
+const c = (id: string) => page.evaluate(`[...document.querySelectorAll('#il-controles tr')].slice(1).find((r) => r.cells[0].textContent === '${id}')?.cells[2].querySelector('.signe').getAttribute('aria-label')`) as Promise<string | undefined>;
+const untilCheck = (id: string, label: string) => until(`[...document.querySelectorAll('#il-controles tr')].slice(1).find((r) => r.cells[0].textContent === '${id}')?.cells[2].querySelector('.signe').getAttribute('aria-label') === '${label}'`);
+const setRange = (value: number) => page.evaluate(`(() => { const r = document.querySelector('#il-zoom'); r.value = '${value}'; r.dispatchEvent(new Event('input', { bubbles: true })); r.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+const deposit = (buffer: Buffer, name = 'image.png') => page.setInputFiles('#il-fichier', { name, mimeType: 'image/png', buffer });
+const framingOf = () => subjectFile().illustrations[0].framing;
+{
+  await page.setViewportSize(SIZES[0]!);
+  const common = path.join(dataRoot, 'collection', 'rights.json');
+  const saved = JSON.parse(fs.readFileSync(common, 'utf8'));
+  fs.writeFileSync(common, `${JSON.stringify({ ...saved, entries: saved.entries.slice(0, 3) }, null, 2)}\n`);
+  await open();
+  await untilTab('droits', 'à faire');
+  check('registre d’avant MP4 : Droits à faire, la page s’y ouvre', (await current()) === 'droits' && await page.isVisible('#dr-completer'));
+  await until(`document.querySelector('#dr-commun table') !== null`);
+  check('registre : trois entrées, huit à ajouter', (await page.locator('#dr-commun tr[data-entry]').count()) === 3 && (await text('#dr-note')).includes('8 entrées'), await text('#dr-note'));
+  await page.click('#dr-completer');
+  await untilTab('droits', 'alerte');
+  check('Ajouter ce qui manque : onze entrées', (await page.locator('#dr-commun tr[data-entry]').count()) === 11 && (await text('#dr-message')).includes('8 entrées ajoutées'));
+  const footprint = fs.readFileSync(common);
+  await page.click('#dr-completer');
+  await until(`document.querySelector('#dr-message').textContent.includes('Rien à ajouter')`);
+  check('second clic : fichier identique', fs.readFileSync(common).equals(footprint));
+  check('Droits : le motif nomme l’entrée à vérifier', (await text('#motifs')).includes('niedot294a'));
+
+  const credits = { entries: [{ asset: '', src_name: 'Forêt de synthèse', author: 'Auteur Fictif', license: 'C.C by 4.0', url: 'https://exemple.test/f', original: false }, { asset: '', src_name: 'Rocher de synthèse', author: 'Auteur Fictif', license: 'Free Standard', url: '', original: false }, { asset: '', src_name: 'Mon modèle', author: 'David', license: '', url: '', original: true }] };
+  const dropCredits = (content: string) => page.setInputFiles('#dr-fichier', { name: 'credits.json', mimeType: 'application/json', buffer: Buffer.from(content) });
+  await dropCredits('{');
+  await until(`document.querySelector('#dr-message .erreur')?.textContent.includes('credits.json') === true`);
+  check('credits.json invalide : message, rien d’ajouté', (await page.locator('#dr-livre tr[data-entry]').count()) === 0);
+  await dropCredits(JSON.stringify(credits));
+  await until(`document.querySelector('#dr-message').textContent.includes('2 entrée(s) créée(s)')`);
+  check('credits.json : deux entrées, licence relue', (await page.locator('#dr-livre tr[data-entry]').count()) === 2 && (await text('#dr-livre')).includes('CC BY 4.0') && (await text('#dr-livre')).includes('à vérifier'), await text('#dr-livre'));
+  await dropCredits(JSON.stringify(credits));
+  await until(`document.querySelector('#dr-message').textContent.includes('0 entrée(s) créée(s)')`);
+  check('credits.json : second dépôt, rien de plus', (await page.locator('#dr-livre tr[data-entry]').count()) === 2);
+
+  await page.fill('#dr-nom', 'Entrée à la main');
+  await page.fill('#dr-auteur', 'Auteur');
+  await page.fill('#dr-licence', 'CC BY 4.0');
+  await page.fill('#dr-credit', 'Crédit à la main');
+  await page.selectOption('#dr-commercial', 'oui');
+  await page.click('#dr-enregistrer');
+  await until(`document.querySelector('#dr-livre tr[data-entry="auteur-entree-a-la-main"]') !== null`);
+  check('entrée ajoutée, formulaire remis à zéro', (await page.inputValue('#dr-nom')) === '' && (await text('#dr-titre')) === 'Nouvelle entrée');
+  await page.click('#dr-livre tr[data-entry="auteur-entree-a-la-main"] button');
+  check('Modifier : formulaire rempli, registre figé', (await page.inputValue('#dr-nom')) === 'Entrée à la main' && (await text('#dr-titre')).includes('auteur-entree-a-la-main') && await page.isDisabled('#dr-registre'));
+  await page.selectOption('#dr-commercial', 'non');
+  await page.click('#dr-enregistrer');
+  await untilTab('droits', 'erreur');
+  check('commercialOk à non : Droits en erreur, Sujets reste ouvert', (await tab('sujets')).state !== 'verrouillee');
+  await page.click('#dr-livre tr[data-entry="auteur-entree-a-la-main"] button');
+  await page.selectOption('#dr-commercial', 'oui');
+  await page.click('#dr-enregistrer');
+  await untilTab('droits', 'alerte');
+
+  await go('sujets');
+  await page.click('#sujets-liste tr:has-text("alpha fr") button:has-text("Ouvrir")');
+  await until(`document.querySelector('#sous-etapes button[aria-current="step"]') !== null`);
+  const sub = await page.evaluate(`[...document.querySelectorAll('#sous-etapes button')].map((b) => b.dataset.step).join()`);
+  check('étapes du sujet : Illustrations entre Relecture et Aperçu', sub === 'sujet-recherche,sujet-relecture,sujet-illustrations,sujet-apercu', sub);
+  check('sujet relu sans image : s’ouvre sur Illustrations', await page.isVisible('#il-depot') && (await subTab('sujet-illustrations')) === 'à faire');
+  await until(`document.querySelector('#il-cible').textContent !== ''`);
+  check('taille cible affichée', (await text('#il-cible')).includes('1838 × 2775'));
+  check('sans image : cadrage désactivé, vignette masquée', await page.isDisabled('#il-zoom') && await page.isHidden('#il-vignette'));
+  await deposit(Buffer.from('pas un png'), 'faux.png');
+  await until(`document.querySelector('#il-message .erreur')?.textContent.includes('pas un PNG') === true`);
+  check('faux PNG : refusé, rien dans le sujet', subjectFile().illustrations.length === 0);
+
+  const png = makePng(1838, 2775, 4, (x, y) => [x % 251, y % 241, 120, 255]);
+  await deposit(png);
+  await until(`document.querySelector('#il-message .bien')?.textContent.includes('1838 × 2775') === true`);
+  await until(`document.querySelector('#il-image').complete && document.querySelector('#il-image').naturalWidth === 1838`);
+  check('dépôt : vignette servie sous la CSP de la page', await page.isVisible('#il-vignette'));
+  check('dépôt : résolution effective affichée', (await text('#il-infos')).includes('300 ppp'), await text('#il-infos'));
+  await untilSub('sujet-illustrations', 'erreur');
+  check('dépôt : C5 vert, C11 rouge sans droits', (await c('C5')) === 'contrôle réussi' && (await c('C11')) === 'erreur');
+  check('registre seul : ni police ni extension proposées', (await page.locator('#il-droits input').count()) === 9 && !(await text('#il-droits')).includes('Andika') && !(await text('#il-droits')).includes('ComfyUI_IPAdapter'), await text('#il-droits'));
+  check('dépôt : le sujet reste relu', subjectFile().status === 'relu');
+  await page.click('#il-droits input[value="sdxl-base-1-0"]');
+  await untilCheck('C11', 'alerte');
+  await page.click('#il-droits input[value="auteur-fictif-foret-de-synthese"]');
+  await untilCheck('C11', 'contrôle réussi');
+  await untilSub('sujet-illustrations', 'validée');
+  check('droits rattachés : étape validée', (await subTab('sujet-illustrations')) === 'validée' && await page.isChecked('#il-droits input[value="sdxl-base-1-0"]'));
+
+  await setRange(1.1);
+  await untilCheck('C5', 'erreur');
+  await untilSub('sujet-illustrations', 'erreur');
+  check('zoom 1,10 : C5 rouge, enregistré aussitôt', framingOf().zoom === 1.1 && (await text('#il-controles')).includes('272 ppp'), await text('#il-controles'));
+  const before = await page.evaluate(`document.querySelector('#il-visible').style.left`);
+  const box = (await page.locator('#il-image').boundingBox())!;
+  await page.mouse.click(box.x + box.width * 0.05, box.y + box.height * 0.5);
+  await until(`document.querySelector('#il-visible').style.left !== '${before}'`);
+  check('clic sur la vignette : point focal enregistré', Math.abs(framingOf().focusX - 0.05) < 0.02 && Math.abs(framingOf().focusY - 0.5) < 0.02, framingOf());
+  check('cadrage : le sujet reste relu', subjectFile().status === 'relu');
+  await page.fill('#il-x', '50');
+  await page.press('#il-x', 'Tab');
+  await until(`document.querySelector('#il-visible').style.left !== '0%'`);
+  await setRange(1);
+  await untilCheck('C5', 'contrôle réussi');
+  await untilSub('sujet-illustrations', 'validée');
+  check('retour à 1 : vert', framingOf().zoom === 1 && Math.abs(framingOf().focusX - 0.5) < 0.001, framingOf());
+
+  await deposit(png);
+  await until(`!document.querySelector('#il-confirmation').hidden`);
+  await page.click('#il-annuler');
+  check('second dépôt : confirmation, Annuler n’écrit rien', await page.isHidden('#il-confirmation'));
+  await setRange(1.05);
+  await untilCheck('C5', 'erreur');
+  await deposit(png);
+  await until(`!document.querySelector('#il-confirmation').hidden`);
+  await page.click('#il-remplacer');
+  await until(`document.querySelector('#il-message .bien') !== null`);
+  await untilCheck('C5', 'contrôle réussi');
+  check('remplacement : cadrage remis à zéro, droits gardés', framingOf().zoom === 1 && await page.isChecked('#il-droits input[value="sdxl-base-1-0"]'));
+  await goSub('sujet-apercu');
+  await until(`document.querySelector('#sa-page').src.includes('/apercu-sujet?')`);
+  const previewPage = await (await page.request.get((await page.getAttribute('#sa-page', 'src'))!.startsWith('http') ? (await page.getAttribute('#sa-page', 'src'))! : `${url}${(await page.getAttribute('#sa-page', 'src'))!.slice(1)}`)).text();
+  check('aperçu : l’image réelle remplace l’aplat', previewPage.includes('data:image/png;base64,'));
+  await page.click('#sujet-retour');
+}
+
 // Sans défilement. Chaque boîte qui ne porte pas une liste doit contenir ce qu'elle affiche, et chaque commande doit tenir dans la fenêtre.
 const FIT = `(() => {
   const root = document.documentElement;
@@ -399,6 +523,10 @@ async function everyStep(label: string): Promise<void> {
   const preview = await page.evaluate(previewFit('#apercu-cadre', '#apercu-echelle')) as { inside: boolean; width: number; height: number };
   check(`${label}, Essai : double page entière et lisible`, preview.inside && preview.height > 300 && Math.abs(preview.width / preview.height - 12.25 / 9.25) < 0.02, preview);
   check(`${label}, Essai : repères et export à côté de l’aperçu`, await page.isVisible('#r-fold') && await page.isVisible('#essai-exporter'));
+  await go('droits');
+  await until(`document.querySelector('#dr-commun table') !== null`);
+  await fits(`${label}, Droits`);
+  check(`${label}, Droits : les commandes restent visibles`, await page.isVisible('#dr-completer') && await page.isVisible('#dr-enregistrer') && await page.isVisible('#dr-credit'));
   await go('sujets');
   await until(`document.querySelector('#sujets-liste table') !== null`);
   await fits(`${label}, Sujets`);
@@ -412,6 +540,11 @@ async function everyStep(label: string): Promise<void> {
   await page.waitForSelector('[data-claim]');
   await fits(`${label}, Relecture`);
   check(`${label}, Relecture : les commandes du haut restent visibles`, await page.isVisible('#rl-urls') && await page.isVisible('#rl-titre'));
+  await goSub('sujet-illustrations');
+  await until(`document.querySelector('#il-vignette').style.height !== '' && document.querySelector('#il-controles table') !== null`);
+  await page.waitForTimeout(50);
+  await fits(`${label}, Illustrations`);
+  check(`${label}, Illustrations : vignette lisible, cadrage et droits visibles`, await page.evaluate(`document.querySelector('#il-vignette').getBoundingClientRect().height > 100`) as boolean && await page.isVisible('#il-zoom') && await page.isVisible('#il-droits'), await page.evaluate(`document.querySelector('#il-vignette').getBoundingClientRect().height`));
   await goSub('sujet-apercu');
   await until(`document.querySelector('#sa-echelle').style.transform !== ''`);
   await page.waitForTimeout(50);
@@ -478,6 +611,21 @@ await page.route('**/api/sujet/check', patchJson((r) => {
     c.details = many('Détail', 10);
   }
 }));
+const longRegistry = (view: Record<string, any>) => {
+  const [entry] = view.collection;
+  view.collection = Array.from({ length: 40 }, (_, i) => ({ ...entry, id: `commun-${i}`, name: `Entrée commune au nom assez long pour remplir sa colonne ${i}`, faults: i % 7 ? [] : ['licence manquante', 'crédit vide'] }));
+  view.book = Array.from({ length: 40 }, (_, i) => ({ ...entry, id: `livre-${i}`, name: `Modèle 3D du livre, au nom long ${i}` }));
+  view.missing = ['a', 'b'];
+};
+await page.route('**/api/droits/state', patchJson(longRegistry));
+await page.route('**/api/sujet/images', patchJson((view) => {
+  const [entry] = view.entries;
+  view.entries = Array.from({ length: 40 }, (_, i) => ({ ...entry, id: `m${i}`, kind: i < 30 ? 'modele-3d' : 'modele-ia', name: `Modèle au nom assez long ${i}`, commercialOk: i % 3 ? 'oui' : 'a-verifier' }));
+  for (const c of view.checks) {
+    c.level = 'erreur';
+    c.details = many('Détail', 10);
+  }
+}));
 await page.route('**/api/create', patchJson(({ result }) => {
   result.kept = many('Conservé', 30);
   result.alerts = many('Alerte', 20);
@@ -514,7 +662,7 @@ await page.unrouteAll({ behavior: 'ignoreErrors' });
   await open();
   await until(`document.querySelector('#etapes li[data-state="validee"]') !== null`);
   const labels = await page.evaluate(`[...document.querySelectorAll('#etapes .nom-signe')].map((e) => [e.getAttribute('role'), e.getAttribute('aria-label'), e.textContent])`) as string[][];
-  check('signes : image nommée, texte visible', labels.length === 5 && labels.every(([role, label, text]) => role === 'img' && !!label && !!text), labels);
+  check('signes : image nommée, texte visible', labels.length === 6 && labels.every(([role, label, text]) => role === 'img' && !!label && !!text), labels);
 }
 
 // Configuration invalide : le menu reste affiché et dit quoi corriger.

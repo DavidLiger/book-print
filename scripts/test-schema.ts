@@ -87,7 +87,7 @@ noSubject('1 page, gabarit 12A', (s) => ((s.pages = 1), (s.template = '12A')));
 noSubject('variante sans miroir', (s) => delete s.variant.mirror);
 noSubject('thème invalide', (s) => (s.variant.theme = 'Vert Clair'));
 noSubject('blocs non vides avant MP3', (s) => (s.blocks = [{}]));
-noSubject('illustrations non vides avant MP4', (s) => (s.illustrations = [{}]));
+noSubject('illustration sans zone', (s) => (s.illustrations = [{}]));
 noSubject('statut inconnu', (s) => (s.status = 'fini'));
 
 // gabarits (§3.4)
@@ -195,9 +195,27 @@ noStyle('numéro de page sous 7 pt', (s) => (s.folio.sizePt = 6));
 // registre commun
 const defaultRights = JSON.parse(fs.readFileSync(new URL('../src/templates/defaults/rights.json', import.meta.url), 'utf8'));
 check('droits par défaut valides', rightsFileSchema.safeParse(defaultRights).success);
-check('droits par défaut : polices OFL et pictogrammes maison', defaultRights.entries.map((e: Dict) => e.id).join() === 'andika,baloo-2,pictos-maison');
+check('droits par défaut : polices et pictogrammes d’abord', defaultRights.entries.slice(0, 3).map((e: Dict) => e.id).join() === 'andika,baloo-2,pictos-maison');
+{
+  const byId = new Map(defaultRights.entries.map((e: Dict) => [e.id, e]));
+  const kind = (id: string) => (byId.get(id) as Dict | undefined)?.kind;
+  check('droits par défaut : chaîne du §10.3', kind('sdxl-base-1-0') === 'modele-ia' && kind('controlnet-union-promax') === 'controlnet' && kind('ip-adapter-plus-sdxl-vit-h') === 'modele-ia' && kind('clip-vit-h-14') === 'modele-ia' && kind('realesrgan-x4plus') === 'upscaler');
+  check('droits par défaut : extensions GPL, type à part', kind('comfyui-ipadapter-plus') === 'extension' && kind('comfyui-ultimate-sd-upscale') === 'extension');
+  check('droits par défaut : 4x-UltraSharp écarté', !defaultRights.entries.some((e: Dict) => /ultrasharp/i.test(`${e.id} ${e.name}`)));
+  check('droits par défaut : référence de style à vérifier (P-13)', (byId.get('niedot294a') as Dict | undefined)?.commercialOk === 'a-verifier' && kind('niedot294a') === 'image-reference');
+  check('droits par défaut : toute entrée a sa licence et son crédit', defaultRights.entries.every((e: Dict) => e.license && e.credit));
+}
 check('droits : genre inconnu refusé', !rightsFileSchema.safeParse({ ...defaultRights, entries: [{ ...defaultRights.entries[0], kind: 'autre' }] }).success);
-check('droits : licence manquante refusée', !rightsFileSchema.safeParse({ ...defaultRights, entries: [{ ...defaultRights.entries[0], license: '' }] }).success);
+check('droits : licence vide lue, c’est C11 qui la refuse', rightsFileSchema.safeParse({ ...defaultRights, entries: [{ ...defaultRights.entries[0], license: '' }] }).success);
+check('droits : entrée en double refusée', !rightsFileSchema.safeParse({ ...defaultRights, entries: [defaultRights.entries[0], defaultRights.entries[0]] }).success);
+check('droits : sans nom refusé', !rightsFileSchema.safeParse({ ...defaultRights, entries: [{ ...defaultRights.entries[0], name: '' }] }).success);
+{
+  const image = { subject: 'alpha', zone: 'illustration', file: 'illustrations/alpha/illustration.png', rights: ['andika'], aiGenerated: true };
+  check('droits : illustration complète acceptée', rightsFileSchema.safeParse({ ...defaultRights, illustrations: [image] }).success);
+  check('droits : aiGenerated faux refusé', !rightsFileSchema.safeParse({ ...defaultRights, illustrations: [{ ...image, aiGenerated: false }] }).success);
+  check('droits : illustration en double refusée', !rightsFileSchema.safeParse({ ...defaultRights, illustrations: [image, image] }).success);
+  check('droits : droit cité deux fois refusé', !rightsFileSchema.safeParse({ ...defaultRights, illustrations: [{ ...image, rights: ['a', 'a'] }] }).success);
+}
 
 // Fiche par livre (P-30)
 {
@@ -272,7 +290,16 @@ check('sujet avec blocs et légende', subjectSchema.safeParse({ ...subject(), bl
 noSubject('bloc invalide', (s) => { s.blocks = [{ ...block(), state: 'x' }]; });
 noSubject('bloc en double', (s) => { s.blocks = [block(), block()]; });
 noSubject('légende vide', (s) => { s.qrLegend = { fr: ' ' }; });
-noSubject('illustrations encore refusées', (s) => { s.illustrations = [{}]; });
+{
+  const image = (over: Dict = {}) => ({ zone: 'illustration', file: `illustrations/${subject().id as string}/illustration.png`, width: 1838, height: 2775, framing: { focusX: 0.5, focusY: 0.5, zoom: 1 }, ...over });
+  check('illustration complète acceptée', subjectSchema.safeParse({ ...subject(), illustrations: [image()] }).success);
+  check('subject.json d’avant MP4, liste vide : toujours lisible', subjectSchema.safeParse({ ...subject(), illustrations: [] }).success);
+  noSubject('illustration : fichier hors de son dossier', (s) => { s.illustrations = [image({ file: '../autre.png' })]; });
+  noSubject('illustration : zone en double', (s) => { s.illustrations = [image(), image()]; });
+  noSubject('illustration : dimensions nulles', (s) => { s.illustrations = [image({ width: 0 })]; });
+  noSubject('illustration : zoom sous 1', (s) => { s.illustrations = [image({ framing: { focusX: 0.5, focusY: 0.5, zoom: 0.9 } })]; });
+  noSubject('illustration : point focal hors de l’image', (s) => { s.illustrations = [image({ framing: { focusX: 1.2, focusY: 0.5, zoom: 1 } })]; });
+}
 
 // Recherche
 const research = (): Dict => ({ schemaVersion: 1, subjectId: 'alpha', lang: 'fr', generatedAt: '2026-11-06', claims: [claim()], blocks: [{ zone: 'texte', type: 'texte', text: 'Texte.', claims: ['c1'] }] });

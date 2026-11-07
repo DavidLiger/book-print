@@ -8,18 +8,21 @@ import { createCollection } from '../src/data/collection';
 import { createBookFolder } from '../src/data/create-book';
 import { retainScenario, saveScenario } from '../src/data/pricing-file';
 import { createSubject, updateSubject } from '../src/data/subject-file';
+import { addMissingDefaults, ensureIllustrationRights, setIllustrationRights } from '../src/rights/registry';
 import { readFacts } from '../src/parcours/facts';
 import { computeParcours, isValidated, STEPS, type ParcoursFacts, type StepDef, type SubjectFacts } from '../src/parcours/steps';
 import type { ScenarioInput } from '../src/pricing/scenarios';
 import { bookSnapshot, ESSAI_CONTROL_FILE, readEssaiControl } from '../src/render/essai';
 import { createPrintServer } from '../src/server/app';
 import { BOOK_DIR, BOOK_ID, dirLink, makeGlbi, put, tempDir } from './fixtures/make-glbi';
+import { makePng } from './fixtures/make-png';
 import { check, finish } from './test-lib';
 
 const LONG_AGO = 1_000_000;
 const goodSubject = (over: Partial<SubjectFacts> = {}): SubjectFacts => ({
   id: 'alpha', title: 'Alpha', error: null, status: 'relu', pages: 2, template: '2A', theme: 'foret',
-  research: { state: 'ok', error: null }, blocks: { total: 7, valide: 7, aRelire: 0, aReprendre: 0 }, claims: { total: 3, propose: 0 }, ...over,
+  research: { state: 'ok', error: null }, blocks: { total: 7, valide: 7, aRelire: 0, aReprendre: 0 }, claims: { total: 3, propose: 0 },
+  illustrations: { error: null, zones: 1, missing: 0, errors: [], alerts: [] }, ...over,
 });
 const good = (): ParcoursFacts => ({
   configError: null,
@@ -28,6 +31,7 @@ const good = (): ParcoursFacts => ({
   pricing: { error: null, retained: true, retainedErrors: [], deviation: [], bookAlert: null },
   collection: { exists: true, error: null },
   essai: { renderError: null, control: { dateMs: 2 * LONG_AGO, errors: [], alerts: [] }, controlError: null, styleMs: LONG_AGO, printBookMs: LONG_AGO, bookChanged: null },
+  droits: { error: null, missing: 0, faults: [], toCheck: [] },
   subjects: [goodSubject()],
 });
 type Change = (f: ParcoursFacts) => void;
@@ -46,16 +50,18 @@ const expectStep = (name: string, id: string, change: Change, state: string, rea
 // Registre
 const bookSteps = STEPS.filter((s) => s.scope === 'livre');
 const subjectSteps = STEPS.filter((s) => s.scope === 'sujet');
-check('registre : Livre, Prix, Collection, Essai, Sujets, dans cet ordre', bookSteps.map((s) => s.id).join() === 'livre,prix,collection,essai,sujets');
+check('registre : Livre, Prix, Collection, Essai, Droits, Sujets, dans cet ordre', bookSteps.map((s) => s.id).join() === 'livre,prix,collection,essai,droits,sujets');
 check('registre : Prix, Collection et Essai dépendent de l’étape précédente', bookSteps.slice(0, 4).every((s, i) => s.requires.join() === (bookSteps[i - 1]?.id ?? '')));
 check('registre : Sujets exige Collection et non Essai', STEPS.find((s) => s.id === 'sujets')!.requires.join() === 'collection');
-check('registre : second niveau, Recherche, Relecture, Aperçu', subjectSteps.map((s) => s.label).join() === 'Recherche,Relecture,Aperçu');
-check('registre : Aperçu exige Recherche, pas Relecture', subjectSteps[2]!.requires.join() === 'sujet-recherche');
-check('numéros 1 à 5', run().steps.map((s) => s.number).join() === '1,2,3,4,5');
-check('second niveau : numéroté à part', run().subjects[0]!.steps.map((s) => s.number).join() === '1,2,3');
+check('registre : Droits exige Collection', STEPS.find((s) => s.id === 'droits')!.requires.join() === 'collection');
+check('registre : second niveau, Illustrations entre Relecture et Aperçu', subjectSteps.map((s) => s.label).join() === 'Recherche,Relecture,Illustrations,Aperçu');
+check('registre : Illustrations exige Recherche', subjectSteps[2]!.requires.join() === 'sujet-recherche');
+check('registre : Aperçu exige Recherche, pas Relecture', subjectSteps[3]!.requires.join() === 'sujet-recherche');
+check('numéros 1 à 6', run().steps.map((s) => s.number).join() === '1,2,3,4,5,6');
+check('second niveau : numéroté à part', run().subjects[0]!.steps.map((s) => s.number).join() === '1,2,3,4');
 
 // Tout au vert
-check('tout est validé', states() === 'validee,validee,validee,validee,validee', states());
+check('tout est validé', states() === 'validee,validee,validee,validee,validee,validee', states());
 check('tout validé : ouverture sur la dernière étape', run().open === 'sujets');
 check('tout validé : aucun motif', run().steps.every((s) => s.reasons.length === 0));
 
@@ -69,7 +75,7 @@ expectStep('Livre : print-book.json absent, à faire', 'livre', (f) => { f.folde
 expectStep('Livre : print-book.json invalide, erreur', 'livre', (f) => { f.folder.printBook = 'invalide'; f.folder.printBookError = 'pageBudget'; }, 'erreur', 'pageBudget');
 expectStep('Livre : dossier refusé, erreur', 'livre', (f) => { f.folder.error = 'pas un dossier réel'; }, 'erreur', 'dossier réel');
 expectStep('Livre : alerte de lecture', 'livre', (f) => { f.book!.alerts = ['a']; }, 'alerte', '1 alerte de lecture');
-check('Livre : une alerte ne verrouille pas la suite', states((f) => { f.book!.alerts = ['a']; }) === 'alerte,validee,validee,validee,validee');
+check('Livre : une alerte ne verrouille pas la suite', states((f) => { f.book!.alerts = ['a']; }) === 'alerte,validee,validee,validee,validee,validee');
 
 // Prix
 expectStep('Prix : aucun scénario retenu, à faire', 'prix', (f) => { f.pricing.retained = false; }, 'a-faire', 'Retenir un scénario');
@@ -77,7 +83,7 @@ expectStep('Prix : pricing.json invalide, erreur', 'prix', (f) => { f.pricing.er
 expectStep('Prix : scénario retenu en erreur', 'prix', (f) => { f.pricing.retainedErrors = ['Format absent']; }, 'erreur', 'Scénario retenu : Format absent');
 expectStep('Prix : écart avec print-book.json, alerte', 'prix', (f) => { f.pricing.deviation = ['Pages : 44 et 46']; }, 'alerte', 'Pages');
 expectStep('Prix : print-book.json illisible, alerte', 'prix', (f) => { f.pricing.bookAlert = 'écart non contrôlé'; }, 'alerte', 'écart non contrôlé');
-check('Prix : une alerte ne verrouille pas la suite', states((f) => { f.pricing.deviation = ['x']; }) === 'validee,alerte,validee,validee,validee');
+check('Prix : une alerte ne verrouille pas la suite', states((f) => { f.pricing.deviation = ['x']; }) === 'validee,alerte,validee,validee,validee,validee');
 
 // Collection
 expectStep('Collection : absente, à faire', 'collection', (f) => { f.collection.exists = false; }, 'a-faire', 'Créer la collection');
@@ -98,15 +104,39 @@ expectStep('Essai : format ou fiche changés depuis l’export, à refaire', 'es
 check('Essai : subjects seul a changé, reste validé malgré la date', step('essai', (f) => { f.essai.bookChanged = false; f.essai.printBookMs = 3 * LONG_AGO; }).state === 'validee');
 expectStep('Essai : les deux fichiers plus récents', 'essai', (f) => { f.essai.styleMs = 3 * LONG_AGO; f.essai.printBookMs = 3 * LONG_AGO; }, 'a-faire', 'collection/style.json et print-book.json', 'à refaire');
 
+// Droits (MP4)
+expectStep('Droits : registre illisible, erreur', 'droits', (f) => { f.droits.error = 'rights.json invalide'; }, 'erreur', 'rights.json invalide');
+expectStep('Droits : entrée invalide, erreur', 'droits', (f) => { f.droits.faults = ['alpha : licence manquante']; }, 'erreur', 'licence manquante');
+expectStep('Droits : entrée à commercialOk non, erreur', 'droits', (f) => { f.droits.faults = ['alpha : usage commercial refusé']; }, 'erreur', 'usage commercial refusé');
+expectStep('Droits : entrées par défaut absentes, à faire', 'droits', (f) => { f.droits.missing = 5; }, 'a-faire', '5 entrées par défaut');
+expectStep('Droits : à vérifier, alerte', 'droits', (f) => { f.droits.toCheck = ['alpha']; }, 'alerte', 'alpha');
+expectStep('Droits : verrouillé sans Collection', 'droits', (f) => { f.collection.exists = false; }, 'verrouillee', 'Collection', 'verrouillée');
+check('Droits : une erreur n’interdit pas Sujets', step('sujets', (f) => { f.droits.faults = ['x']; }).state === 'validee');
+check('Droits à faire : la page s’y ouvre', run((f) => { f.droits.missing = 1; }).open === 'droits');
+
+// Illustrations d'un sujet (MP4)
+const images = (change: Change = () => {}) => run(change).subjects[0]!.steps.find((s) => s.id === 'sujet-illustrations')!;
+const withImages = (over: Partial<SubjectFacts['illustrations']>): Change => (f) => { f.subjects[0]!.illustrations = { error: null, zones: 1, missing: 0, errors: [], alerts: [], ...over }; };
+check('Illustrations : toutes les zones ont leur image, validée', images().state === 'validee');
+check('Illustrations : une zone sans image, à faire', images(withImages({ missing: 1 })).state === 'a-faire' && images(withImages({ missing: 1 })).reasons[0] === '1 zone sans image.');
+check('Illustrations : C5 ou C11 en erreur, erreur', images(withImages({ errors: ['C5, illustration : 150 ppp'] })).state === 'erreur');
+check('Illustrations : une erreur passe avant une zone vide', images(withImages({ missing: 1, errors: ['C11, x'] })).state === 'erreur');
+check('Illustrations : alerte, validée quand même', images(withImages({ alerts: ['C11, y'] })).state === 'alerte' && isValidated(images(withImages({ alerts: ['C11, y'] })).state));
+check('Illustrations : sujet impossible à poser, erreur', images(withImages({ error: 'Thème inconnu' })).state === 'erreur');
+check('Illustrations : verrouillée sans Recherche', images((f) => { f.subjects[0]!.research.state = 'absent'; }).state === 'verrouillee');
+check('Illustrations : sujet relu sans image, s’ouvre sur elle', run(withImages({ missing: 1 })).subjects[0]!.open === 'sujet-illustrations');
+check('Illustrations : sans image, Aperçu reste ouvert et validé', run(withImages({ missing: 1 })).subjects[0]!.steps.find((s) => s.id === 'sujet-apercu')!.state === 'validee');
+check('Illustrations : sans image, Sujets reste validé', step('sujets', withImages({ missing: 1 })).state === 'validee');
+
 // Verrouillage et réouverture
 const noBook: Change = (f) => { f.book = null; };
-check('verrouillage : tout après Livre', states(noBook) === 'a-faire,verrouillee,verrouillee,verrouillee,verrouillee', states(noBook));
+check('verrouillage : tout après Livre', states(noBook) === 'a-faire,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee', states(noBook));
 check('verrouillage : le motif nomme la première étape à valider', step('essai', noBook).reasons[0] === 'Valider d\'abord « Livre ».' && step('prix', noBook).reasons[0] === 'Valider d\'abord « Livre ».');
 check('verrouillage : libellé', step('prix', noBook).stateLabel === 'verrouillée');
 const noScenario: Change = (f) => { f.pricing.retained = false; };
-check('étape redevenue non validée : les suivantes se reverrouillent', states(noScenario) === 'validee,a-faire,verrouillee,verrouillee,verrouillee', states(noScenario));
+check('étape redevenue non validée : les suivantes se reverrouillent', states(noScenario) === 'validee,a-faire,verrouillee,verrouillee,verrouillee,verrouillee', states(noScenario));
 check('reverrouillage : Essai renvoie à Prix', step('essai', noScenario).reasons[0] === 'Valider d\'abord « Prix ».');
-check('une erreur verrouille aussi la suite', states((f) => { f.pricing.error = 'x'; }) === 'validee,erreur,verrouillee,verrouillee,verrouillee');
+check('une erreur verrouille aussi la suite', states((f) => { f.pricing.error = 'x'; }) === 'validee,erreur,verrouillee,verrouillee,verrouillee,verrouillee');
 check('collection présente et prix non validé : Collection reste verrouillée', step('collection', noScenario).state === 'verrouillee');
 check('réouverture : première étape non validée, Livre', run(noBook).open === 'livre');
 check('réouverture : première étape non validée, Prix', run(noScenario).open === 'prix');
@@ -288,6 +318,54 @@ check('fichiers : aucun sujet, Sujets à faire', stateOf('sujets').state === 'a-
   fs.rmSync(research);
   updateSubject(dataRoot, BOOK_ID, 'alpha', (d) => ({ ...d, subject: { ...d.subject, status: 'relu' } }));
   check('sujet relu : Sujets validé', stateOf('sujets').state === 'validee');
+
+  // Droits et illustrations, lus sur les fichiers, sans écriture
+  const images = () => readFacts({ ok: true, config: { glbRoot, dataRoot } }, BOOK_DIR).subjects[0]!.illustrations;
+  const rights = path.join(dataRoot, BOOK_ID, 'rights.json');
+  const emptyRights = fs.readFileSync(rights, 'utf8');
+  const common = path.join(dataRoot, 'collection', 'rights.json');
+  const commonSaved = fs.readFileSync(common, 'utf8');
+  check('Droits : collection neuve, seule la référence reste à vérifier', stateOf('droits').state === 'alerte' && stateOf('droits').reasons[0]!.includes('niedot294a'), stateOf('droits'));
+  const commonFile = JSON.parse(commonSaved);
+  put(dataRoot, 'collection/rights.json', { ...commonFile, entries: commonFile.entries.slice(0, 3) });
+  check('Droits : registre créé avant MP4, à faire', stateOf('droits').state === 'a-faire' && stateOf('droits').reasons[0]!.includes('8 entrées'), stateOf('droits'));
+  addMissingDefaults(dataRoot);
+  check('Droits : après l’ajout, alerte seulement', stateOf('droits').state === 'alerte');
+  put(dataRoot, `${BOOK_ID}/rights.json`, { schemaVersion: 1, entries: [{ id: 'a', kind: 'modele-3d', name: 'A', author: 'B', license: 'CC BY 4.0', credit: '', commercialOk: 'oui' }], illustrations: [] });
+  check('Droits : entrée invalide, erreur', stateOf('droits').state === 'erreur' && stateOf('droits').reasons[0] === 'a : crédit vide', stateOf('droits'));
+  put(dataRoot, `${BOOK_ID}/rights.json`, { schemaVersion: 1, entries: [{ id: 'a', kind: 'modele-3d', name: 'A', author: 'B', license: 'X', credit: 'C', commercialOk: 'non' }], illustrations: [] });
+  check('Droits : commercialOk non, erreur', stateOf('droits').state === 'erreur' && stateOf('droits').reasons[0]!.includes('refusé'));
+  put(dataRoot, `${BOOK_ID}/rights.json`, { schemaVersion: 1, entries: [{ id: 'andika', kind: 'police', name: 'A', author: 'B', license: 'X', credit: 'C', commercialOk: 'oui' }], illustrations: [] });
+  check('Droits : même identifiant dans les deux registres, erreur', stateOf('droits').reasons[0]!.includes('deux registres'), stateOf('droits'));
+  put(dataRoot, `${BOOK_ID}/rights.json`, '{');
+  check('Droits : rights.json illisible, erreur', stateOf('droits').state === 'erreur' && stateOf('droits').reasons[0]!.includes('conservé tel quel'));
+  check('rights.json illisible : Illustrations le dit', images().error?.includes('conservé tel quel') === true, images());
+  fs.writeFileSync(rights, emptyRights);
+  check('Illustrations lues : une zone, sans image', images().zones === 1 && images().missing === 1 && images().errors.length === 0, images());
+  const place = (width: number, height: number, zoom = 1) => updateSubject(dataRoot, BOOK_ID, 'alpha', (d) => ({
+    ...d,
+    subject: { ...d.subject, illustrations: [{ zone: 'illustration', file: 'illustrations/alpha/illustration.png', width, height, framing: { focusX: 0.5, focusY: 0.5, zoom } }] },
+  }));
+  place(1838, 2775);
+  check('Illustrations lues : fichier absent du disque, erreur', images().errors.some((e) => e.includes('absent du disque')), images());
+  fs.mkdirSync(path.join(dataRoot, BOOK_ID, 'illustrations', 'alpha'), { recursive: true });
+  const png = path.join(dataRoot, BOOK_ID, 'illustrations', 'alpha', 'illustration.png');
+  fs.writeFileSync(png, makePng(1838, 2775, 3, () => [1, 2, 3]));
+  ensureIllustrationRights(dataRoot, BOOK_ID, 'alpha', 'illustration');
+  check('Illustrations lues : sans droits, C11 rouge', images().errors.some((e) => e.startsWith('C11')), images());
+  setIllustrationRights(dataRoot, BOOK_ID, 'alpha', 'illustration', ['sdxl-base-1-0']);
+  check('Illustrations lues : modèle d’IA seul, alerte', images().errors.length === 0 && images().alerts.some((e) => e.includes('modèle 3D')), images());
+  place(1838, 2775, 1.2);
+  check('Illustrations lues : zoom, C5 rouge', images().errors.some((e) => e.startsWith('C5')), images());
+  place(1838, 2775);
+  check('Illustrations lues : retour au vert', images().errors.length === 0);
+  fs.writeFileSync(png, makePng(600, 900, 3, () => [1, 2, 3]));
+  check('Illustrations lues : dimensions lues dans le fichier, pas dans subject.json', images().errors.some((e) => e.startsWith('C5')), images());
+  fs.rmSync(path.join(dataRoot, BOOK_ID, 'illustrations', 'alpha'), { recursive: true });
+  fs.writeFileSync(rights, emptyRights);
+  fs.writeFileSync(common, commonSaved);
+  updateSubject(dataRoot, BOOK_ID, 'alpha', (d) => ({ ...d, subject: { ...d.subject, illustrations: [] } }));
+
   const file = path.join(dataRoot, BOOK_ID, 'subjects', 'alpha', 'subject.json');
   const saved = fs.readFileSync(file, 'utf8');
   put(dataRoot, `${BOOK_ID}/subjects/alpha/subject.json`, '{');
@@ -340,7 +418,7 @@ const post = (body: unknown, h: Record<string, string> = headers) => request(por
 
 const reply = await post({ dir: BOOK_DIR });
 const view = JSON.parse(reply.body);
-check('route : étapes et ouverture', reply.status === 200 && view.steps.length === 5 && view.open === 'sujets' && view.steps[3].stateLabel === 'validée' && view.subjects.length === 1 && view.subjects[0].steps.length === 3, view);
+check('route : étapes et ouverture', reply.status === 200 && view.steps.length === 6 && view.open === 'sujets' && view.steps[3].stateLabel === 'validée' && view.subjects.length === 1 && view.subjects[0].steps.length === 4, view);
 check('route : livre non choisi', JSON.parse((await post({ dir: null })).body).open === 'livre');
 check('route : GET refusé', (await request(port, { method: 'GET', path: '/api/parcours', headers })).status === 405);
 const { 'x-book-print': _h, ...noHeader } = headers;
