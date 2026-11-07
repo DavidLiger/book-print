@@ -1732,7 +1732,8 @@ function generateChange(path, body) {
     showGenerate();
     if (reply.task) {
       $('ge-message').replaceChildren(el('p', `Dans la file : ${reply.task.label}.`, 'note'));
-      await pollComfy(false);
+      // Sans attendre : `pollComfy` peut relire la page par `enqueue`, et cette fonction tourne déjà dans la file d'écritures.
+      pollComfy(false);
     }
   }, $('ge-message'));
 }
