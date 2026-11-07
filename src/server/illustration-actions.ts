@@ -5,16 +5,15 @@ import fs from 'node:fs';
 import type http from 'node:http';
 import path from 'node:path';
 import { z } from 'zod';
-import { writeAtomic } from '../data/atomic';
-import { illustrationFile, illustrationFolder, illustrationName } from '../data/illustration-file';
+import { illustrationFile, illustrationName } from '../data/illustration-file';
+import { prepareIllustration, storeIllustration } from '../data/illustration-store';
 import { SubjectRefused, updateSubject } from '../data/subject-file';
 import { cleanPng, ImageRefused, MAX_UPLOAD_BYTES } from '../images/clean';
-import { DEFAULT_FRAMING } from '../images/crop';
 import { imageChecks, illustrationZones, subjectContext, type SubjectContext } from '../render/subject';
-import { allEntries, ensureIllustrationRights, readBookRights, setIllustrationRights } from '../rights/registry';
+import { allEntries, readBookRights, setIllustrationRights } from '../rights/registry';
 import { slugSchema } from '../schema/common';
 import { ILLUSTRATION_KINDS } from '../schema/rights';
-import { framingSchema, illustrationFileName, type Illustration } from '../schema/subject';
+import { framingSchema } from '../schema/subject';
 import type { Config } from './config';
 import { reading } from './subject-actions';
 
@@ -36,12 +35,12 @@ function parse<T extends z.ZodType>(schema: T, value: unknown): z.infer<T> {
   return body.data;
 }
 
-function context(config: Config, dir: string, subjectId: string): SubjectContext {
+export function context(config: Config, dir: string, subjectId: string): SubjectContext {
   const read = reading(config, dir);
   return subjectContext(config.dataRoot, read.bookId, subjectId, read.scenes);
 }
 
-function requireZone(ctx: SubjectContext, zone: string): void {
+export function requireZone(ctx: SubjectContext, zone: string): void {
   if (!illustrationZones(ctx).some((z) => z.id === zone)) throw new SubjectRefused(`Le gabarit ${ctx.template.id} n'a pas de zone d'illustration ${zone}.`);
 }
 
@@ -58,7 +57,7 @@ function view(config: Config, dir: string, subjectId: string): Json {
 }
 
 /** Le corps va en flux dans le temporaire : la limite joue sans le garder en mémoire. `destroyOnReturn` : la réponse 413 doit encore pouvoir partir. */
-async function receive(req: http.IncomingMessage, file: string): Promise<void> {
+export async function receive(req: http.IncomingMessage, file: string): Promise<void> {
   const fd = fs.openSync(file, 'wx');
   try {
     let size = 0;
@@ -69,16 +68,6 @@ async function receive(req: http.IncomingMessage, file: string): Promise<void> {
     }
   } finally {
     fs.closeSync(fd);
-  }
-}
-
-function writePng(folder: string, zone: string, png: Buffer): void {
-  try {
-    writeAtomic(folder, illustrationName(zone), png);
-  } catch (e) {
-    const code = (e as NodeJS.ErrnoException).code;
-    if (code === 'EPERM' || code === 'EBUSY' || code === 'EACCES') throw new ImageRefused(`${illustrationName(zone)} est ouvert dans un autre programme : le fermer, puis redéposer.`);
-    throw e;
   }
 }
 
@@ -95,21 +84,15 @@ export async function depositIllustration(query: URLSearchParams, req: http.Inco
     const ctx = context(config, dir, subject);
     requireZone(ctx, zone);
     const bookId = ctx.book.bookId;
-    const folder = illustrationFolder(config.dataRoot, bookId, subject, true);
-    if (!folder) throw new SubjectRefused(`Dossier du livre absent : ${bookId}/.`);
-    const target = fs.lstatSync(path.join(folder, illustrationName(zone)), { throwIfNoEntry: false });
-    if (target && !target.isFile()) throw new SubjectRefused(`${illustrationName(zone)} n'est pas un fichier réel : rien n'est écrit.`);
-    // Un registre illisible se voit avant d'écrire l'image, pas après.
-    readBookRights(config.dataRoot, bookId);
+    const folder = prepareIllustration(config.dataRoot, bookId, subject, zone);
     tmp = path.join(folder, `${zone}.${crypto.randomBytes(6).toString('hex')}.depot.tmp`);
     await receive(req, tmp);
     // Le nettoyage d'abord : un fichier refusé l'est tout de suite, sans passer par la confirmation.
-    const { png, width, height } = await cleanPng(fs.readFileSync(tmp));
-    if ((target || ctx.subject.illustrations.some((i) => i.zone === zone)) && !confirm) return { needsConfirm: true };
-    writePng(folder, zone, png);
-    ensureIllustrationRights(config.dataRoot, bookId, subject, zone);
-    const entry: Illustration = { zone, file: illustrationFileName(subject, zone), width, height, framing: DEFAULT_FRAMING };
-    updateSubject(config.dataRoot, bookId, subject, (data) => ({ ...data, subject: { ...data.subject, illustrations: [...data.subject.illustrations.filter((i) => i.zone !== zone), entry] } }));
+    const cleaned = await cleanPng(fs.readFileSync(tmp));
+    const exists = fs.lstatSync(path.join(folder, illustrationName(zone)), { throwIfNoEntry: false });
+    if ((exists || ctx.subject.illustrations.some((i) => i.zone === zone)) && !confirm) return { needsConfirm: true };
+    // Un dépôt manuel n'a pas de traçabilité : `generation` disparaît, les droits restent.
+    const { width, height } = storeIllustration(config.dataRoot, bookId, subject, zone, cleaned);
     return { deposited: true, width, height, ...view(config, dir, subject) };
   } finally {
     depositing = false;

@@ -1,5 +1,5 @@
 // src/ui/app.js — page locale de book-print : un menu d'étapes (UI1) et un panneau par étape : configuration, livre lu, dossier (MP1),
-// simulateur de prix (PX1), collection et essai du gabarit 2A (MP2), sujets et relecture (MP3), droits et illustrations (MP4). L'état des étapes vient du serveur (`/api/parcours`).
+// simulateur de prix (PX1), collection et essai du gabarit 2A (MP2), sujets et relecture (MP3), droits et illustrations (MP4), workflows et génération par ComfyUI (IC1). L'état des étapes vient du serveur (`/api/parcours`).
 // Les textes viennent de fichiers : ils passent toujours par textContent.
 
 async function action(path, body = {}) {
@@ -84,6 +84,7 @@ function showStep(id) {
   showReasons(id === 'sujets' && sujets.open ? undefined : shownSteps().find((s) => s.id === id));
   if (changed && id === 'sujets') loadSujets();
   if (changed && id === 'droits') loadDroits();
+  if (changed && id === 'workflows') loadWorkflows();
 }
 
 /** `reopen` : le livre vient d'être choisi, on repart de la première étape non validée. Sinon on reste là où on est, si l'étape reste ouverte. */
@@ -163,6 +164,7 @@ async function readSelected() {
   await refreshParcours({ reopen: true });
   if (parcours.current === 'sujets') await loadSujets();
   if (parcours.current === 'droits') await loadDroits();
+  if (parcours.current === 'workflows') await loadWorkflows();
 }
 
 async function createFolder() {
@@ -779,7 +781,10 @@ function showSubStep(id) {
   for (const step of facts?.steps ?? []) $(step.id).hidden = step.id !== id;
   showSubSteps();
   if (id === 'sujet-apercu') loadSubjectPreview();
-  if (id === 'sujet-illustrations') enqueue(loadImages, $('il-message'));
+  if (id === 'sujet-illustrations') {
+    enqueue(loadImages, $('il-message'));
+    if (images.mode === 'generer') showImageMode('generer');
+  }
 }
 
 async function loadSubject() {
@@ -797,6 +802,7 @@ async function openSubject(id) {
   $('r-confirmation').hidden = true;
   $('rl-message').replaceChildren();
   resetImages();
+  resetGenerate();
   sujets.open = id;
   $('motifs').hidden = true;
   $('sujets-accueil').hidden = true;
@@ -1125,7 +1131,7 @@ async function controlNow(mark) {
 const KIND_LABELS = { 'modele-3d': 'Modèles 3D', 'modele-ia': 'Modèles d\'IA', lora: 'LoRA', controlnet: 'ControlNet', 'image-reference': 'Style : image de référence', upscaler: 'Agrandissement', police: 'Polices', picto: 'Pictogrammes', extension: 'Extensions' };
 const COMMERCIAL_LABELS = { oui: 'oui', non: 'non', 'a-verifier': 'à vérifier' };
 const IMAGE_MAX = 64 * 1024 * 1024;
-const images = { view: null, stamp: Date.now(), pending: null };
+const images = { view: null, stamp: Date.now(), pending: null, mode: 'depot' };
 const imageZone = () => images.view?.zones.find((z) => z.zone === $('il-zone').value);
 const pct = (n) => Math.round(n * 1000) / 10;
 
@@ -1410,7 +1416,361 @@ async function importCredits(file) {
   });
 }
 
+// ComfyUI (IC1) : état, file d'attente dans le bandeau, étape Workflows, vue « Générer » de l'étape Illustrations. La file vit dans le serveur :
+// la page l'interroge toutes les 2 s tant qu'une tâche tourne ou attend, et seulement alors.
+
+const COMFY_POLL_MS = 2000;
+const OUTCOME_LABELS = { reussie: 'réussie', echouee: 'échouée', annulee: 'annulée' };
+const comfy = { queue: null, server: null, address: null, launcher: null, starting: false, timer: null, startTimer: null, lastDone: undefined };
+/** Après « Lancer ComfyUI » : une vérification toutes les 3 s, 3 minutes au plus. */
+const START_POLL_MS = 3000;
+const START_POLL_MAX = 60;
+
+function queueLine() {
+  const q = comfy.queue;
+  if (!q) return null;
+  const waiting = q.pending.length > 0 ? ` ; ${q.pending.length} en attente` : '';
+  if (q.current) return { text: `ComfyUI : ${q.current.label}, ${q.current.step}${waiting}`, error: false };
+  if (q.pending.length > 0) return { text: `ComfyUI : ${q.pending.length} tâche${q.pending.length > 1 ? 's' : ''} en attente`, error: false };
+  const [last] = q.recent;
+  if (last) return { text: `Dernière tâche : ${last.label}, ${OUTCOME_LABELS[last.outcome]}${last.outcome === 'echouee' ? ` : ${last.message}` : ''}`, error: last.outcome === 'echouee' };
+  return null;
+}
+
+function showQueueLine() {
+  const line = queueLine();
+  const box = $('file-comfy');
+  box.hidden = !line;
+  box.textContent = line?.text ?? '';
+  box.title = line?.text ?? '';
+  box.classList.toggle('erreur', !!line?.error);
+}
+
+function comfyText() {
+  if (comfy.address && !comfy.address.ok) return { text: comfy.address.error, className: 'erreur' };
+  if (!comfy.server) return { text: `ComfyUI : ${comfy.address?.url ?? ''}, état non vérifié.`, className: 'note' };
+  if (comfy.server.ok) return { text: `ComfyUI ${comfy.server.version} répond à ${comfy.address.url}.`, className: 'bien' };
+  if (comfy.starting) return { text: 'ComfyUI démarre dans sa fenêtre : la page vérifie toutes les 3 s.', className: 'note' };
+  if (comfy.launcher?.state === 'refuse') return { text: `${comfy.server.error} ${comfy.launcher.message}`, className: 'erreur' };
+  if (comfy.launcher?.state === 'absent') return { text: `${comfy.server.error} Pour un bouton de lancement : ajouter "comfyLauncher" dans config.local.json.`, className: 'erreur' };
+  return { text: comfy.server.error, className: 'erreur' };
+}
+
+function showComfyState() {
+  const { text, className } = comfyText();
+  for (const id of ['wf-comfy', 'ge-comfy']) {
+    $(id).textContent = text;
+    $(id).className = className;
+  }
+  const canLaunch = comfy.server?.ok === false && comfy.launcher?.state === 'ok' && comfy.address?.ok;
+  for (const id of ['wf-lancer', 'ge-lancer-comfy']) {
+    $(id).hidden = !canLaunch;
+    $(id).disabled = comfy.starting;
+  }
+}
+
+/** « Lancer ComfyUI » : le serveur ouvre le lanceur de config.local.json, la page attend que ComfyUI réponde. */
+async function launchComfy() {
+  try {
+    await action('/api/comfy/lancer', {});
+  } catch (e) {
+    for (const id of ['wf-comfy', 'ge-comfy']) {
+      $(id).textContent = e.message;
+      $(id).className = 'erreur';
+    }
+    return;
+  }
+  comfy.starting = true;
+  showComfyState();
+  let tries = 0;
+  clearTimeout(comfy.startTimer);
+  const wait = async () => {
+    await pollComfy(true);
+    if (comfy.server?.ok || ++tries >= START_POLL_MAX) {
+      comfy.starting = false;
+      showComfyState();
+      return;
+    }
+    comfy.startTimer = setTimeout(wait, START_POLL_MS);
+  };
+  comfy.startTimer = setTimeout(wait, START_POLL_MS);
+}
+
+/** Une tâche vient de finir : ce qu'elle a écrit se relit, et son résultat s'affiche dans la vue « Générer ». */
+async function taskDone(done) {
+  const box = $('ge-message');
+  const classes = { reussie: 'bien', echouee: 'erreur', annulee: 'note' };
+  const s = Math.round(done.seconds);
+  box.replaceChildren(el('p', `${done.label} : ${OUTCOME_LABELS[done.outcome]} en ${Math.floor(s / 60)} min ${String(s % 60).padStart(2, '0')} s. ${done.message}`, classes[done.outcome]));
+  if (done.kind === 'agrandissement') images.stamp = Date.now();
+  if (sujets.open && sujets.step === 'sujet-illustrations') {
+    await enqueue(loadImages, $('il-message'));
+    if (images.mode === 'generer') await enqueue(loadGenerate, $('ge-message'));
+  }
+  await refreshParcours();
+}
+
+/** `ping` : demande aussi `/system_stats` à ComfyUI. Sinon, seule la file du serveur est lue. */
+async function pollComfy(ping = false) {
+  clearTimeout(comfy.timer);
+  let state;
+  try {
+    state = await action('/api/comfy/state', { ping });
+  } catch {
+    // Configuration à corriger : l'étape Livre le dit déjà, la ligne de la file reste cachée.
+    $('file-comfy').hidden = true;
+    return;
+  }
+  comfy.queue = state.queue;
+  comfy.address = state.address;
+  comfy.launcher = state.launcher;
+  if (state.server) comfy.server = state.server;
+  const last = state.queue.recent[0]?.id ?? null;
+  const first = comfy.lastDone === undefined;
+  const finished = !first && last !== comfy.lastDone ? state.queue.recent[0] : null;
+  comfy.lastDone = last;
+  showQueueLine();
+  showComfyState();
+  if (images.mode === 'generer') showGenerate();
+  if (finished) await taskDone(finished);
+  if (state.queue.current || state.queue.pending.length > 0) comfy.timer = setTimeout(() => pollComfy(false), COMFY_POLL_MS);
+}
+
+// Étape Workflows
+
+const workflowsUi = { view: null };
+const WF_KINDS = ['generation', 'agrandissement'];
+
+function workflowInfo(kind, w, checked) {
+  if (w.state === 'absent') return [el('p', 'Aucun workflow déposé.', 'note')];
+  if (w.state === 'refuse') return [el('p', w.message, 'erreur')];
+  const out = [definitions([['Fichier', w.file], ['Déposé le', new Date(w.date).toLocaleString('fr-FR')], ['Empreinte', `${w.sha256.slice(0, 16)}…`], ['Nœuds contrôlés', checked[kind].join(', ')]])];
+  for (const f of w.rightsFaults) out.push(el('p', f, 'erreur'));
+  if (w.rights.length === 0) out.push(el('p', 'Cocher au moins un droit.', 'alerte'));
+  return out;
+}
+
+function workflowRights(kind, w, entries) {
+  const box = $(`wf-droits-${kind}`);
+  const top = box.scrollTop;
+  const frag = document.createDocumentFragment();
+  if (w.state !== 'ok') frag.append(el('p', 'Déposer d\'abord le workflow.', 'note'));
+  else {
+    for (const k of ['modele-ia', 'controlnet', 'upscaler', 'image-reference']) {
+      const group = entries.filter((e) => e.kind === k);
+      if (group.length === 0) continue;
+      frag.append(el('p', KIND_LABELS[k], 'titre-liste'));
+      for (const e of group) {
+        const label = el('label');
+        const tick = el('input');
+        tick.type = 'checkbox';
+        tick.value = e.id;
+        tick.checked = w.rights.includes(e.id);
+        tick.addEventListener('change', () => sendWorkflowRights(kind));
+        const warn = e.commercialOk === 'oui' ? '' : `, usage commercial : ${COMMERCIAL_LABELS[e.commercialOk]}`;
+        label.append(tick, el('span', `${e.name}, ${e.author || 'auteur inconnu'} (${e.license || 'licence manquante'}${warn})`));
+        frag.append(label);
+      }
+    }
+  }
+  box.replaceChildren(frag);
+  box.scrollTop = top;
+}
+
+function showWorkflows(view) {
+  workflowsUi.view = view;
+  for (const kind of WF_KINDS) {
+    $(`wf-info-${kind}`).replaceChildren(...workflowInfo(kind, view.kinds[kind], view.checked));
+    workflowRights(kind, view.kinds[kind], view.entries);
+  }
+}
+
+async function workflowsAction(path, body, done) {
+  const box = $('wf-message');
+  box.replaceChildren();
+  try {
+    const reply = await action(path, { dir: dirOf(), ...body });
+    showWorkflows(reply);
+    done?.(reply, box);
+  } catch (e) {
+    box.replaceChildren(el('p', e.message, 'erreur'));
+  } finally {
+    await refreshParcours();
+  }
+}
+
+async function loadWorkflows() {
+  if (!dirOf()) return;
+  $('wf-message').replaceChildren();
+  try {
+    showWorkflows(await action('/api/workflows/state', { dir: dirOf() }));
+  } catch (e) {
+    $('wf-message').replaceChildren(el('p', e.message, 'erreur'));
+  }
+  await pollComfy(true);
+}
+
+function sendWorkflowRights(kind) {
+  const rights = [...document.querySelectorAll(`#wf-droits-${kind} input:checked`)].map((b) => b.value);
+  return workflowsAction('/api/workflows/droits', { kind, rights });
+}
+
+async function depositWorkflow(kind, file) {
+  if (file.size > IMPORT_MAX) {
+    $('wf-message').replaceChildren(el('p', 'Fichier trop gros : 2 Mio au plus.', 'erreur'));
+    return;
+  }
+  await workflowsAction('/api/workflows/depot', { kind, content: await file.text() }, ({ deposited }, box) => {
+    box.append(el('p', `Workflow de ${deposited.label} rangé : ${deposited.entry.file}${deposited.previous ? `, à la place de ${deposited.previous}, gardé` : ''}.`, 'bien'));
+  });
+}
+
+// Vue « Générer » de l'étape Illustrations
+
+const gen = { view: null, confirmSeed: null };
+const genZone = () => gen.view?.zones.find((z) => z.zone === $('il-zone').value);
+
+function resetGenerate() {
+  gen.view = null;
+  gen.confirmSeed = null;
+  $('ge-message').replaceChildren();
+  $('ge-confirmation').hidden = true;
+  $('ge-candidats').replaceChildren();
+}
+
+function showImageMode(mode) {
+  images.mode = mode;
+  $('il-vue-depot').hidden = mode !== 'depot';
+  $('il-vue-generer').hidden = mode !== 'generer';
+  $('v-depot').setAttribute('aria-pressed', String(mode === 'depot'));
+  $('v-generer').setAttribute('aria-pressed', String(mode === 'generer'));
+  if (mode === 'generer') {
+    enqueue(loadGenerate, $('ge-message'));
+    pollComfy(true);
+  } else fitThumb();
+}
+
+async function loadGenerate() {
+  gen.view = await action('/api/generer/state', { dir: dirOf(), subjectId: sujets.open });
+  showGenerate();
+}
+
+function inputState(input) {
+  if (input.state === 'ok') return [`✓ ${input.size.width} × ${input.size.height} px`, 'bien'];
+  if (input.state === 'absent') return ['à déposer', 'note'];
+  return [input.message, 'erreur'];
+}
+
+/** Tâches de la zone ouverte : `zoneKey` vaut `<bookId>/<sujetId>/<zone>`. */
+function zoneTasks(zone) {
+  const all = comfy.queue ? [...(comfy.queue.current ? [{ ...comfy.queue.current, running: true }] : []), ...comfy.queue.pending] : [];
+  return all.filter((t) => t.zoneKey.endsWith(`/${sujets.open}/${zone.zone}`));
+}
+
+function showTasks(zone) {
+  const box = $('ge-file');
+  box.replaceChildren(...zoneTasks(zone).map((t) => {
+    const p = el('p');
+    p.append(el('span', t.running ? `En cours : ${t.label}, ${t.step}` : `En attente : ${t.label}`));
+    if (!t.sent) p.append(smallButton('Annuler', () => cancelTask(t.id)));
+    return p;
+  }));
+}
+
+function candidateCard(zone, seed, ready) {
+  const card = el('div', undefined, 'candidat');
+  card.dataset.seed = String(seed);
+  const img = el('img');
+  img.alt = `Candidat de graine ${seed}, couleurs corrigées`;
+  img.src = `/candidat?${new URLSearchParams({ dir: dirOf(), subject: sujets.open, zone: zone.zone, seed: String(seed), t: zone.candidates.date })}`;
+  const go = el('button', 'Agrandir');
+  go.type = 'button';
+  go.disabled = !ready || zone.busy.includes('agrandissement');
+  go.addEventListener('click', () => askUpscale(seed, false));
+  card.append(img, el('p', `Graine ${seed}`), go);
+  return card;
+}
+
+function showGenerate() {
+  const zone = genZone();
+  if (!gen.view || !zone) return;
+  const motifs = [...(gen.view.workflows.ready ? [] : gen.view.workflows.reasons.map((r) => [r, 'alerte'])), ...(zone.reason ? [[zone.reason, 'erreur']] : [])];
+  $('ge-motifs').replaceChildren(...motifs.map(([r, c]) => el('p', r, c)));
+  $('ge-attendu').textContent = zone.render
+    ? `Rendu et passe Mist en ${zone.render.width} × ${zone.render.height} px (${zone.kindLabel}), gardés sous ${zone.inputs.rendu.name} et ${zone.inputs.mist.name}. L'animal doit faire au moins 300 px de haut : l'outil ne peut pas le vérifier. Image finale : ${zone.output.width} × ${zone.output.height} px.`
+    : '';
+  for (const k of ['rendu', 'mist']) {
+    const [text, className] = inputState(zone.inputs[k]);
+    $(`ge-etat-${k}`).textContent = text;
+    $(`ge-etat-${k}`).className = className;
+  }
+  if (document.activeElement !== $('ge-prompt')) $('ge-prompt').value = zone.prompt;
+  $('ge-couleurs').textContent = zone.colors.length > 0 ? `Couleur nommée dans le prompt : ${zone.colors.join(', ')}. Les couleurs viennent du rendu 3D (§13.2).` : '';
+  const ready = gen.view.workflows.ready && !zone.reason;
+  $('ge-lancer').disabled = !ready || zone.inputs.rendu.state !== 'ok' || zone.inputs.mist.state !== 'ok' || zone.busy.includes('generation');
+  for (const id of ['ge-fichier-rendu', 'ge-fichier-mist']) $(id).disabled = !!zone.reason || zone.busy.includes('generation');
+  const seeds = zone.candidates?.seeds ?? [];
+  $('ge-t-candidats').textContent = seeds.length > 0 ? `Candidats, couleurs corrigées (${new Date(zone.candidates.date).toLocaleString('fr-FR')})` : 'Candidats : aucun pour l\'instant.';
+  const shown = [...$('ge-candidats').children].map((c) => `${c.dataset.seed}:${c.querySelector('button').disabled}`).join();
+  const wanted = seeds.map((s) => `${s}:${!ready || zone.busy.includes('agrandissement')}`).join();
+  if (shown !== wanted) $('ge-candidats').replaceChildren(...seeds.map((s) => candidateCard(zone, s, ready)));
+  showTasks(zone);
+}
+
+function generateChange(path, body) {
+  const id = sujets.open;
+  $('ge-message').replaceChildren();
+  return enqueue(async () => {
+    const reply = await action(path, { dir: dirOf(), subjectId: id, zone: $('il-zone').value, ...body });
+    if (sujets.open !== id) return;
+    if (reply.needsConfirm) {
+      $('ge-confirmation').hidden = false;
+      return;
+    }
+    gen.view = reply;
+    $('ge-confirmation').hidden = true;
+    showGenerate();
+    if (reply.task) {
+      $('ge-message').replaceChildren(el('p', `Dans la file : ${reply.task.label}.`, 'note'));
+      await pollComfy(false);
+    }
+  }, $('ge-message'));
+}
+
+function askUpscale(seed, confirm) {
+  gen.confirmSeed = seed;
+  return generateChange('/api/generer/agrandir', { seed, ...(confirm ? { confirm: true } : {}) });
+}
+
+async function cancelTask(id) {
+  try {
+    await action('/api/comfy/annuler', { id });
+  } catch (e) {
+    $('ge-message').replaceChildren(el('p', e.message, 'erreur'));
+  }
+  await pollComfy(false);
+}
+
+async function uploadEntry(kind, file) {
+  const message = $('ge-message');
+  if (file.size > IMAGE_MAX) {
+    message.replaceChildren(el('p', 'Fichier trop gros : 64 Mio au plus.', 'erreur'));
+    return;
+  }
+  const id = sujets.open;
+  const query = new URLSearchParams({ dir: dirOf(), subject: id, zone: $('il-zone').value, kind });
+  message.replaceChildren(el('p', 'Dépôt en cours…', 'note'));
+  const res = await fetch(`/api/sujet/entree?${query}`, { method: 'POST', headers: { 'Content-Type': 'image/png', 'x-book-print': '1' }, body: file });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error ?? `erreur ${res.status}`);
+  if (sujets.open !== id) return;
+  gen.view = data;
+  showGenerate();
+  message.replaceChildren(el('p', `${kind === 'rendu' ? 'Rendu' : 'Passe Mist'} gardé : ${data.deposited.size.width} × ${data.deposited.size.height} px.`, 'bien'));
+}
+
 async function start() {
+  pollComfy(false);
   const { config, books } = await action('/api/state');
   showConfig(config);
   if (!config.ok) return refreshParcours({ reopen: true });
@@ -1497,7 +1857,24 @@ $('sa-recharger').addEventListener('click', async () => {
   await enqueue(loadSubject, $('sa-resultat'));
   loadSubjectPreview();
 });
-$('il-zone').addEventListener('change', showImages);
+$('il-zone').addEventListener('change', () => {
+  showImages();
+  showGenerate();
+});
+$('v-depot').addEventListener('click', () => showImageMode('depot'));
+$('v-generer').addEventListener('click', () => showImageMode('generer'));
+$('ge-lancer').addEventListener('click', () => generateChange('/api/generer/lancer', {}));
+$('ge-prompt').addEventListener('change', () => generateChange('/api/generer/prompt', { text: $('ge-prompt').value }));
+$('ge-remplacer').addEventListener('click', () => askUpscale(gen.confirmSeed, true));
+$('ge-annuler').addEventListener('click', () => {
+  $('ge-confirmation').hidden = true;
+  gen.confirmSeed = null;
+});
+for (const kind of ['rendu', 'mist']) dropZone($(`ge-depot-${kind}`), $(`ge-fichier-${kind}`), (file) => enqueue(() => uploadEntry(kind, file), $('ge-message')));
+for (const kind of WF_KINDS) dropZone($(`wf-depot-${kind}`), $(`wf-fichier-${kind}`), (file) => depositWorkflow(kind, file));
+$('wf-verifier').addEventListener('click', () => pollComfy(true));
+$('wf-lancer').addEventListener('click', launchComfy);
+$('ge-lancer-comfy').addEventListener('click', launchComfy);
 dropZone($('il-depot'), $('il-fichier'), (file) => depositImage(file));
 $('il-remplacer').addEventListener('click', () => {
   $('il-confirmation').hidden = true;

@@ -21,6 +21,10 @@ import { RightsRefused } from '../rights/registry';
 import { GeometryRefused } from '../templates/geometry';
 import { loadConfig, type ConfigState } from './config';
 import { BadEssaiRequest, ESSAI_ACTIONS, previewHtml, PREVIEW_CSP } from './essai-actions';
+import { ComfyError } from '../comfy/client';
+import { QueueRefused } from '../comfy/queue';
+import { WorkflowRefused } from '../comfy/workflow';
+import { BadComfyRequest, candidateBytes, comfyActions, createComfyRuntime, depositEntry, ENTRY_ROUTE, WORKFLOW_MAX_BYTES, type ComfyRuntime } from './comfy-actions';
 import { BadImageRequest, depositIllustration, DEPOSIT_ROUTE, ILLUSTRATION_ACTIONS, illustrationBytes, UploadTooLarge } from './illustration-actions';
 import { BadPricingRequest, PRICING_ACTIONS } from './pricing-actions';
 import { BadRightsRequest, RIGHTS_ACTIONS } from './rights-actions';
@@ -37,7 +41,7 @@ const STATIC: Record<string, { file: string; type: string }> = {
 };
 const MAX_BODY = 64 * 1024;
 /** Limites propres à une route : toutes les autres restent à `MAX_BODY`. */
-const BODY_LIMITS: Record<string, number> = { '/api/sujet/import': IMPORT_MAX_BYTES, '/api/droits/credits': IMPORT_MAX_BYTES };
+const BODY_LIMITS: Record<string, number> = { '/api/sujet/import': IMPORT_MAX_BYTES, '/api/droits/credits': IMPORT_MAX_BYTES, '/api/workflows/depot': WORKFLOW_MAX_BYTES };
 const dirBody = z.strictObject({ dir: z.string() });
 const parcoursBody = z.strictObject({ dir: z.string().nullable() });
 
@@ -120,12 +124,12 @@ const ACTIONS: Record<string, (body: unknown, configPath: string) => Json | Prom
   ...Object.fromEntries(Object.entries({ ...SUBJECT_ACTIONS, ...ILLUSTRATION_ACTIONS, ...RIGHTS_ACTIONS }).map(([route, run]) => [route, (body: unknown, configPath: string) => run(body, configured(loadConfig(configPath)))])),
 };
 
-async function handle(req: http.IncomingMessage, res: http.ServerResponse, port: number, configPath: string): Promise<void> {
+async function handle(req: http.IncomingMessage, res: http.ServerResponse, port: number, configPath: string, comfy: ComfyRuntime, comfyRoutes: ReturnType<typeof comfyActions>): Promise<void> {
   if (!hostAllowed(req.headers.host, req.headers.origin, port)) return sendJson(res, 403, { error: 'Host ou Origin refusé' });
   const url = (req.url ?? '/').split('?')[0];
 
-  // Dépôt d'une illustration : seule route à corps binaire. Le corps n'est pas gardé en mémoire : il va en flux dans un temporaire.
-  if (url === DEPOSIT_ROUTE) {
+  // Dépôts à corps binaire : une illustration (MP4), un rendu ou une passe Mist (IC1). Le corps va en flux dans un temporaire.
+  if (url === DEPOSIT_ROUTE || url === ENTRY_ROUTE) {
     if (req.method !== 'POST') return sendJson(res, 405, { error: 'action : POST attendu' }, { Allow: 'POST' });
     const allowed = uploadAllowed(
       { method: req.method, contentType: req.headers['content-type'], actionHeader: req.headers[ACTION_HEADER], origin: req.headers.origin, host: req.headers.host },
@@ -133,10 +137,12 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, port:
     );
     if (!allowed) return sendJson(res, 403, { error: `dépôt refusé : POST image/png avec ${ACTION_HEADER}: 1 attendu` });
     const query = new URL(req.url ?? '/', 'http://local').searchParams;
-    return sendJson(res, 200, await depositIllustration(query, req, configured(loadConfig(configPath))));
+    const config = configured(loadConfig(configPath));
+    return sendJson(res, 200, url === ENTRY_ROUTE ? await depositEntry(query, req, config, comfy) : await depositIllustration(query, req, config));
   }
 
-  const action = Object.hasOwn(ACTIONS, url) ? ACTIONS[url] : undefined;
+  const comfyAction = Object.hasOwn(comfyRoutes, url) ? comfyRoutes[url] : undefined;
+  const action = Object.hasOwn(ACTIONS, url) ? ACTIONS[url] : comfyAction && ((body: unknown, path: string) => comfyAction(body, configured(loadConfig(path))));
   if (action) {
     if (req.method !== 'POST') return sendJson(res, 405, { error: 'action : POST attendu' }, { Allow: 'POST' });
     const allowed = actionAllowed(
@@ -171,6 +177,13 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, port:
     return send(res, 200, illustrationBytes(query, configured(loadConfig(configPath))), 'image/png');
   }
 
+  // Une image corrigée de la vue « Générer », lue dans le cache. Lecture seule, mêmes refus que la vignette.
+  if (url === '/candidat') {
+    if (req.method !== 'GET') return sendJson(res, 405, { error: 'GET attendu' }, { Allow: 'GET' });
+    const query = new URL(req.url ?? '/', 'http://local').searchParams;
+    return send(res, 200, candidateBytes(query, configured(loadConfig(configPath))), 'image/png');
+  }
+
   // L'icône est binaire : lue en tampon, jamais en texte. Absente, 404 comme tout fichier hors liste.
   if (url === '/favicon.ico') {
     if (req.method !== 'GET') return sendJson(res, 405, { error: 'GET attendu' }, { Allow: 'GET' });
@@ -184,11 +197,12 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, port:
   send(res, 200, fs.readFileSync(`${UI_DIR}${page.file}`, 'utf8'), page.type);
 }
 
-/** Le port vient du serveur lui-même, pour que les tests puissent écouter sur un port libre. */
-export function createPrintServer(configPath: string): http.Server {
+/** Le port vient du serveur lui-même, pour que les tests puissent écouter sur un port libre. La file de ComfyUI vit avec le serveur. */
+export function createPrintServer(configPath: string, comfy: ComfyRuntime = createComfyRuntime()): http.Server {
+  const comfyRoutes = comfyActions(comfy);
   const server = http.createServer((req, res) => {
     const { port } = server.address() as AddressInfo;
-    handle(req, res, port, configPath).catch((e: unknown) => {
+    handle(req, res, port, configPath, comfy, comfyRoutes).catch((e: unknown) => {
       if (res.headersSent) return res.destroy();
       if (e instanceof HttpError) return sendJson(res, e.status, { error: e.message });
       // Le reste du corps n'est pas lu : la connexion se ferme après la réponse.
@@ -196,8 +210,8 @@ export function createPrintServer(configPath: string): http.Server {
         res.once('finish', () => req.destroy());
         return sendJson(res, 413, { error: e.message }, { Connection: 'close' });
       }
-      if (e instanceof BadPricingRequest || e instanceof BadEssaiRequest || e instanceof BadSubjectRequest || e instanceof BadImageRequest || e instanceof BadRightsRequest) return sendJson(res, 400, { error: e.message });
-      if (e instanceof CreateRefused || e instanceof PricingRefused || e instanceof CollectionRefused || e instanceof RenderRefused || e instanceof GeometryRefused || e instanceof SubjectRefused || e instanceof ResearchRefused || e instanceof RightsRefused || e instanceof CreditsRefused || e instanceof ImageRefused) {
+      if (e instanceof BadPricingRequest || e instanceof BadEssaiRequest || e instanceof BadSubjectRequest || e instanceof BadImageRequest || e instanceof BadRightsRequest || e instanceof BadComfyRequest) return sendJson(res, 400, { error: e.message });
+      if (e instanceof CreateRefused || e instanceof PricingRefused || e instanceof CollectionRefused || e instanceof RenderRefused || e instanceof GeometryRefused || e instanceof SubjectRefused || e instanceof ResearchRefused || e instanceof RightsRefused || e instanceof CreditsRefused || e instanceof ImageRefused || e instanceof WorkflowRefused || e instanceof QueueRefused || e instanceof ComfyError) {
         return sendJson(res, 409, { error: e.message });
       }
       console.error('book-print :', e);

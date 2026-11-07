@@ -59,6 +59,15 @@ export interface ParcoursFacts {
     /** Entrées à `a-verifier`. */
     toCheck: string[];
   };
+  /** Workflows de ComfyUI (IC1), communs à la collection. */
+  workflows: {
+    /** Dossier ou `workflows.json` illisible. */
+    error: string | null;
+    /** Travail à faire : workflow à déposer, droits à cocher. */
+    todo: string[];
+    /** Workflow refusé, droit inconnu ou d'un autre type. */
+    faults: string[];
+  };
   subjects: SubjectFacts[];
 }
 
@@ -160,6 +169,13 @@ function droits({ droits: d }: ParcoursFacts): StepVerdict {
   return { state: 'validee', reasons: [] };
 }
 
+function workflows({ workflows: w }: ParcoursFacts): StepVerdict {
+  if (w.error) return { state: 'erreur', reasons: [w.error] };
+  if (w.faults.length > 0) return { state: 'erreur', reasons: w.faults };
+  if (w.todo.length > 0) return { state: 'a-faire', reasons: w.todo };
+  return { state: 'validee', reasons: [] };
+}
+
 const isRelu = (s: SubjectFacts) => s.status === 'relu' || s.status === 'prêt';
 
 function sujets({ subjects }: ParcoursFacts): StepVerdict {
@@ -207,6 +223,7 @@ function sujetApercu(_f: ParcoursFacts, s?: SubjectFacts): StepVerdict {
 /**
  * Sujets exige Collection et non Essai : une couleur modifiée ne reverrouille pas tout le contenu. Essai reste jusqu'à MP5.
  * Droits exige Collection : le registre commun y vit. Sujets ne l'exige pas : une licence à revoir ne reverrouille pas le contenu.
+ * Workflows exige Droits : ses cases viennent du registre. Sujets ne l'exige pas : le dépôt manuel d'une image reste possible sans ComfyUI.
  * Illustrations exige Recherche et ne touche pas `relu`, qui porte sur le texte.
  * Aperçu exige Recherche et non Relecture : un bloc allongé repasse à relire, et c'est justement dans l'aperçu que se voit son débordement.
  */
@@ -216,6 +233,7 @@ export const STEPS: StepDef[] = [
   { id: 'collection', label: 'Collection', scope: 'livre', requires: ['prix'], evaluate: collection },
   { id: 'essai', label: 'Essai', scope: 'livre', requires: ['collection'], evaluate: essai },
   { id: 'droits', label: 'Droits', scope: 'livre', requires: ['collection'], evaluate: droits },
+  { id: 'workflows', label: 'Workflows', scope: 'livre', requires: ['droits'], evaluate: workflows },
   { id: 'sujets', label: 'Sujets', scope: 'livre', requires: ['collection'], evaluate: sujets },
   { id: 'sujet-recherche', label: 'Recherche', scope: 'sujet', requires: [], evaluate: sujetRecherche },
   { id: 'sujet-relecture', label: 'Relecture', scope: 'sujet', requires: ['sujet-recherche'], evaluate: sujetRelecture },

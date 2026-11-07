@@ -18,6 +18,8 @@ import { missingDefaults, readBookRights, readCollectionRights, RightsRefused } 
 import type { PrintBook } from '../schema/print-book';
 import type { ConfigState } from '../server/config';
 import { GeometryRefused } from '../templates/geometry';
+import { readWorkflows } from '../comfy/workflow-file';
+import { WORKFLOW_KINDS, WORKFLOW_LABELS, WorkflowRefused } from '../comfy/workflow';
 import type { ParcoursFacts, SubjectFacts } from './steps';
 
 const mtime = (file: string) => fs.lstatSync(file, { throwIfNoEntry: false })?.mtimeMs ?? null;
@@ -95,6 +97,26 @@ function droitsFacts(dataRoot: string, bookId: string): ParcoursFacts['droits'] 
   }
 }
 
+function workflowFacts(dataRoot: string, bookId: string): ParcoursFacts['workflows'] {
+  try {
+    const w = readWorkflows(dataRoot, bookId);
+    const todo: string[] = [];
+    const faults: string[] = [];
+    for (const kind of WORKFLOW_KINDS) {
+      const s = w[kind];
+      const label = WORKFLOW_LABELS[kind];
+      if (s.state === 'absent') todo.push(`Déposer le workflow de ${label}.`);
+      else if (s.state === 'refuse') faults.push(s.message);
+      else if (s.rightsFaults.length > 0) faults.push(`Workflow de ${label} : ${s.rightsFaults.join(' ; ')}.`);
+      else if (s.entry.rights.length === 0) todo.push(`Cocher les droits du workflow de ${label}.`);
+    }
+    return { error: null, todo, faults };
+  } catch (e) {
+    if (e instanceof WorkflowRefused || e instanceof RightsRefused || e instanceof CollectionRefused) return { error: e.message, todo: [], faults: [] };
+    throw e;
+  }
+}
+
 function illustrationFacts(dataRoot: string, bookId: string, id: string, scenes: SceneReading[]): SubjectFacts['illustrations'] {
   try {
     const { zones, checks } = imageChecks(subjectContext(dataRoot, bookId, id, scenes));
@@ -149,6 +171,7 @@ export function readFacts(state: ConfigState, dir: string | null): ParcoursFacts
     collection: { exists: false, error: null },
     essai: { renderError: null, control: null, controlError: null, styleMs: null, printBookMs: null, bookChanged: null },
     droits: { error: null, missing: 0, faults: [], toCheck: [] },
+    workflows: { error: null, todo: [], faults: [] },
     subjects: [],
   };
   if (!state.ok || dir === null) return facts;
@@ -176,6 +199,7 @@ export function readFacts(state: ConfigState, dir: string | null): ParcoursFacts
   if (facts.collection.exists && !facts.collection.error) {
     facts.essai = essaiFacts(dataRoot, book, folder);
     facts.droits = droitsFacts(dataRoot, bookId);
+    facts.workflows = workflowFacts(dataRoot, bookId);
   }
   facts.subjects = book.subjects.map((id) => subjectFacts(dataRoot, book, id, reading.scenes));
   return facts;

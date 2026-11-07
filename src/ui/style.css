@@ -39,9 +39,12 @@ body {
 
 #bandeau { display: flex; align-items: center; gap: 20px; padding: 8px 16px; background: var(--carte); border-bottom: 1px solid var(--bord); }
 h1 { font-size: 17px; margin: 0; white-space: nowrap; }
-.choix-livre { display: flex; align-items: center; gap: 8px; flex: none; }
+.choix-livre { display: grid; grid-template-columns: auto 210px; align-items: center; gap: 0 8px; flex: none; }
 .choix-livre label { margin: 0; }
 .choix-livre select { width: 210px; }
+/* File de ComfyUI (IC1) : une ligne sous le choix du livre, pour ne rien prendre aux onglets. */
+.file { grid-column: 1 / -1; max-width: 260px; font-size: 12px; line-height: 1.25; color: var(--doux); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.file.erreur { color: var(--erreur); }
 
 nav { flex: 1; min-width: 0; }
 .etapes { list-style: none; margin: 0; padding: 0; display: flex; }
@@ -215,3 +218,26 @@ fieldset label { display: flex; gap: 6px; align-items: center; margin: 0; color:
 #il-controles { max-height: 34%; overflow: auto; }
 #il-droits label { display: flex; gap: 6px; align-items: baseline; margin: 0 0 2px; color: var(--texte); }
 #il-droits .titre-liste { margin-top: 4px; }
+
+/* Étape Workflows et vue « Générer » (IC1) */
+#wf-message { flex: none; max-height: 72px; }
+#wf-droits-generation, #wf-droits-agrandissement { min-height: 40px; }
+#wf-droits-generation label, #wf-droits-agrandissement label { display: flex; gap: 6px; align-items: baseline; margin: 0 0 2px; color: var(--texte); }
+#wf-info-generation, #wf-info-agrandissement { flex: none; }
+#il-vue-generer .depot { padding: 6px 8px; font-size: 13px; }
+#ge-motifs { flex: none; max-height: 64px; }
+#ge-motifs:empty { display: none; }
+#ge-couleurs:empty { display: none; }
+#ge-prompt { flex: none; }
+#ge-message { flex: none; max-height: 64px; }
+.candidats { flex: 1 1 0; min-height: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.candidat { min-height: 0; min-width: 0; display: flex; flex-direction: column; gap: 4px; padding: 4px; border: 1px solid var(--bord); border-radius: 6px; }
+.candidat img { flex: 1 1 0; min-height: 0; width: 100%; object-fit: contain; background: var(--fond); }
+.candidat p { font-size: 12px; color: var(--doux); }
+.candidats:empty { display: none; }
+#ge-file { flex: none; max-height: 72px; }
+#ge-file p { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
+#ge-confirmation { flex: none; align-items: center; }
+#ge-confirmation p { flex: 1 1 100%; }
+.ligne-comfy { flex: none; align-items: center; }
+.ligne-comfy p { flex: 1 1 0; min-width: 0; }

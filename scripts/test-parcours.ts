@@ -32,6 +32,7 @@ const good = (): ParcoursFacts => ({
   collection: { exists: true, error: null },
   essai: { renderError: null, control: { dateMs: 2 * LONG_AGO, errors: [], alerts: [] }, controlError: null, styleMs: LONG_AGO, printBookMs: LONG_AGO, bookChanged: null },
   droits: { error: null, missing: 0, faults: [], toCheck: [] },
+  workflows: { error: null, todo: [], faults: [] },
   subjects: [goodSubject()],
 });
 type Change = (f: ParcoursFacts) => void;
@@ -50,18 +51,19 @@ const expectStep = (name: string, id: string, change: Change, state: string, rea
 // Registre
 const bookSteps = STEPS.filter((s) => s.scope === 'livre');
 const subjectSteps = STEPS.filter((s) => s.scope === 'sujet');
-check('registre : Livre, Prix, Collection, Essai, Droits, Sujets, dans cet ordre', bookSteps.map((s) => s.id).join() === 'livre,prix,collection,essai,droits,sujets');
+check('registre : Livre, Prix, Collection, Essai, Droits, Workflows, Sujets, dans cet ordre', bookSteps.map((s) => s.id).join() === 'livre,prix,collection,essai,droits,workflows,sujets');
+check('registre : Workflows exige Droits', STEPS.find((s) => s.id === 'workflows')!.requires.join() === 'droits');
 check('registre : Prix, Collection et Essai dépendent de l’étape précédente', bookSteps.slice(0, 4).every((s, i) => s.requires.join() === (bookSteps[i - 1]?.id ?? '')));
 check('registre : Sujets exige Collection et non Essai', STEPS.find((s) => s.id === 'sujets')!.requires.join() === 'collection');
 check('registre : Droits exige Collection', STEPS.find((s) => s.id === 'droits')!.requires.join() === 'collection');
 check('registre : second niveau, Illustrations entre Relecture et Aperçu', subjectSteps.map((s) => s.label).join() === 'Recherche,Relecture,Illustrations,Aperçu');
 check('registre : Illustrations exige Recherche', subjectSteps[2]!.requires.join() === 'sujet-recherche');
 check('registre : Aperçu exige Recherche, pas Relecture', subjectSteps[3]!.requires.join() === 'sujet-recherche');
-check('numéros 1 à 6', run().steps.map((s) => s.number).join() === '1,2,3,4,5,6');
+check('numéros 1 à 7', run().steps.map((s) => s.number).join() === '1,2,3,4,5,6,7');
 check('second niveau : numéroté à part', run().subjects[0]!.steps.map((s) => s.number).join() === '1,2,3,4');
 
 // Tout au vert
-check('tout est validé', states() === 'validee,validee,validee,validee,validee,validee', states());
+check('tout est validé', states() === 'validee,validee,validee,validee,validee,validee,validee', states());
 check('tout validé : ouverture sur la dernière étape', run().open === 'sujets');
 check('tout validé : aucun motif', run().steps.every((s) => s.reasons.length === 0));
 
@@ -75,7 +77,7 @@ expectStep('Livre : print-book.json absent, à faire', 'livre', (f) => { f.folde
 expectStep('Livre : print-book.json invalide, erreur', 'livre', (f) => { f.folder.printBook = 'invalide'; f.folder.printBookError = 'pageBudget'; }, 'erreur', 'pageBudget');
 expectStep('Livre : dossier refusé, erreur', 'livre', (f) => { f.folder.error = 'pas un dossier réel'; }, 'erreur', 'dossier réel');
 expectStep('Livre : alerte de lecture', 'livre', (f) => { f.book!.alerts = ['a']; }, 'alerte', '1 alerte de lecture');
-check('Livre : une alerte ne verrouille pas la suite', states((f) => { f.book!.alerts = ['a']; }) === 'alerte,validee,validee,validee,validee,validee');
+check('Livre : une alerte ne verrouille pas la suite', states((f) => { f.book!.alerts = ['a']; }) === 'alerte,validee,validee,validee,validee,validee,validee');
 
 // Prix
 expectStep('Prix : aucun scénario retenu, à faire', 'prix', (f) => { f.pricing.retained = false; }, 'a-faire', 'Retenir un scénario');
@@ -83,7 +85,7 @@ expectStep('Prix : pricing.json invalide, erreur', 'prix', (f) => { f.pricing.er
 expectStep('Prix : scénario retenu en erreur', 'prix', (f) => { f.pricing.retainedErrors = ['Format absent']; }, 'erreur', 'Scénario retenu : Format absent');
 expectStep('Prix : écart avec print-book.json, alerte', 'prix', (f) => { f.pricing.deviation = ['Pages : 44 et 46']; }, 'alerte', 'Pages');
 expectStep('Prix : print-book.json illisible, alerte', 'prix', (f) => { f.pricing.bookAlert = 'écart non contrôlé'; }, 'alerte', 'écart non contrôlé');
-check('Prix : une alerte ne verrouille pas la suite', states((f) => { f.pricing.deviation = ['x']; }) === 'validee,alerte,validee,validee,validee,validee');
+check('Prix : une alerte ne verrouille pas la suite', states((f) => { f.pricing.deviation = ['x']; }) === 'validee,alerte,validee,validee,validee,validee,validee');
 
 // Collection
 expectStep('Collection : absente, à faire', 'collection', (f) => { f.collection.exists = false; }, 'a-faire', 'Créer la collection');
@@ -114,6 +116,16 @@ expectStep('Droits : verrouillé sans Collection', 'droits', (f) => { f.collecti
 check('Droits : une erreur n’interdit pas Sujets', step('sujets', (f) => { f.droits.faults = ['x']; }).state === 'validee');
 check('Droits à faire : la page s’y ouvre', run((f) => { f.droits.missing = 1; }).open === 'droits');
 
+// Workflows (IC1)
+expectStep('Workflows : workflows.json illisible, erreur', 'workflows', (f) => { f.workflows.error = 'workflows.json invalide'; }, 'erreur', 'workflows.json invalide');
+expectStep('Workflows : workflow refusé, erreur', 'workflows', (f) => { f.workflows.faults = ['nœud 34 (ImageScale, taille finale) absent']; }, 'erreur', 'nœud 34');
+expectStep('Workflows : à déposer, à faire', 'workflows', (f) => { f.workflows.todo = ['Déposer le workflow de génération.']; }, 'a-faire', 'Déposer le workflow');
+check('Workflows : une erreur passe avant le travail à faire', step('workflows', (f) => { f.workflows.todo = ['a']; f.workflows.faults = ['b']; }).state === 'erreur');
+expectStep('Workflows : verrouillé par Droits en erreur', 'workflows', (f) => { f.droits.faults = ['x']; }, 'verrouillee', 'Droits', 'verrouillée');
+check('Workflows : une alerte de Droits ne le verrouille pas', step('workflows', (f) => { f.droits.toCheck = ['niedot294a']; }).state === 'validee');
+check('Workflows à faire : Sujets reste ouvert, sans dépendre de lui', step('sujets', (f) => { f.workflows.todo = ['a']; }).state === 'validee');
+check('Workflows à faire : la page s’y ouvre', run((f) => { f.workflows.todo = ['a']; }).open === 'workflows');
+
 // Illustrations d'un sujet (MP4)
 const images = (change: Change = () => {}) => run(change).subjects[0]!.steps.find((s) => s.id === 'sujet-illustrations')!;
 const withImages = (over: Partial<SubjectFacts['illustrations']>): Change => (f) => { f.subjects[0]!.illustrations = { error: null, zones: 1, missing: 0, errors: [], alerts: [], ...over }; };
@@ -130,13 +142,13 @@ check('Illustrations : sans image, Sujets reste validé', step('sujets', withIma
 
 // Verrouillage et réouverture
 const noBook: Change = (f) => { f.book = null; };
-check('verrouillage : tout après Livre', states(noBook) === 'a-faire,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee', states(noBook));
+check('verrouillage : tout après Livre', states(noBook) === 'a-faire,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee', states(noBook));
 check('verrouillage : le motif nomme la première étape à valider', step('essai', noBook).reasons[0] === 'Valider d\'abord « Livre ».' && step('prix', noBook).reasons[0] === 'Valider d\'abord « Livre ».');
 check('verrouillage : libellé', step('prix', noBook).stateLabel === 'verrouillée');
 const noScenario: Change = (f) => { f.pricing.retained = false; };
-check('étape redevenue non validée : les suivantes se reverrouillent', states(noScenario) === 'validee,a-faire,verrouillee,verrouillee,verrouillee,verrouillee', states(noScenario));
+check('étape redevenue non validée : les suivantes se reverrouillent', states(noScenario) === 'validee,a-faire,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee', states(noScenario));
 check('reverrouillage : Essai renvoie à Prix', step('essai', noScenario).reasons[0] === 'Valider d\'abord « Prix ».');
-check('une erreur verrouille aussi la suite', states((f) => { f.pricing.error = 'x'; }) === 'validee,erreur,verrouillee,verrouillee,verrouillee,verrouillee');
+check('une erreur verrouille aussi la suite', states((f) => { f.pricing.error = 'x'; }) === 'validee,erreur,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee');
 check('collection présente et prix non validé : Collection reste verrouillée', step('collection', noScenario).state === 'verrouillee');
 check('réouverture : première étape non validée, Livre', run(noBook).open === 'livre');
 check('réouverture : première étape non validée, Prix', run(noScenario).open === 'prix');
@@ -418,7 +430,7 @@ const post = (body: unknown, h: Record<string, string> = headers) => request(por
 
 const reply = await post({ dir: BOOK_DIR });
 const view = JSON.parse(reply.body);
-check('route : étapes et ouverture', reply.status === 200 && view.steps.length === 6 && view.open === 'sujets' && view.steps[3].stateLabel === 'validée' && view.subjects.length === 1 && view.subjects[0].steps.length === 4, view);
+check('route : étapes et ouverture', reply.status === 200 && view.steps.length === 7 && view.open === 'workflows' && view.steps[5].reasons.join().includes('Déposer le workflow de génération') && view.steps[3].stateLabel === 'validée' && view.subjects.length === 1 && view.subjects[0].steps.length === 4, view);
 check('route : livre non choisi', JSON.parse((await post({ dir: null })).body).open === 'livre');
 check('route : GET refusé', (await request(port, { method: 'GET', path: '/api/parcours', headers })).status === 405);
 const { 'x-book-print': _h, ...noHeader } = headers;

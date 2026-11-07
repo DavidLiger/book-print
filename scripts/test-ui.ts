@@ -2,6 +2,7 @@
 // étape et aux deux tailles retenues. La page n'a aucun `overflow: hidden` à la racine : un contenu trop grand se voit ici. Les listes
 // très longues sont injectées dans les réponses du serveur, pour ne pas fabriquer un livre défectueux.
 import fs from 'node:fs';
+import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { chromium, type Page, type Route } from 'playwright';
@@ -9,17 +10,23 @@ import { createPrintServer } from '../src/server/app';
 import { BOOK_ID, makeGlbi, put, tempDir } from './fixtures/make-glbi';
 import { makePng } from './fixtures/make-png';
 import { makeResearch } from './fixtures/recherche';
+import { startFakeComfy } from './fixtures/fake-comfy';
+import { generationGraph, upscaleGraph } from './fixtures/workflows';
+import { createComfyRuntime } from '../src/server/comfy-actions';
 import { check, finish } from './test-lib';
 
 const SIZES = [{ width: 1920, height: 950 }, { width: 1366, height: 650 }];
-const STEP_IDS = ['livre', 'prix', 'collection', 'essai', 'droits', 'sujets'];
+const STEP_IDS = ['livre', 'prix', 'collection', 'essai', 'droits', 'workflows', 'sujets'];
 
 const glbRoot = makeGlbi();
 const parent = tempDir();
 const dataRoot = path.join(parent, 'donnees');
 fs.mkdirSync(dataRoot);
-put(parent, 'config.local.json', { glbRoot, dataRoot });
-const server = createPrintServer(path.join(parent, 'config.local.json'));
+const fake = await startFakeComfy();
+put(parent, 'config.local.json', { glbRoot, dataRoot, comfyUrl: fake.url });
+let seedAt = 0;
+const comfyRuntime = createComfyRuntime({ historyPollMs: 5, busyPollMs: 5 }, () => [11, 22, 33][seedAt++ % 3]!);
+const server = createPrintServer(path.join(parent, 'config.local.json'), comfyRuntime);
 await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
 const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
 const browser = await chromium.launch();
@@ -66,9 +73,9 @@ const statesText = async () => (await tabs()).map((t) => t.sign).join();
 await open();
 {
   const all = await tabs();
-  check('menu : six étapes numérotées, dans l’ordre', all.map((t) => t.id).join() === STEP_IDS.join() && all.every((t, i) => t.text.startsWith(String(i + 1))), all);
+  check('menu : sept étapes numérotées, dans l’ordre', all.map((t) => t.id).join() === STEP_IDS.join() && all.every((t, i) => t.text.startsWith(String(i + 1))), all);
   check('ouverture : première étape non validée', (await current()) === 'livre');
-  check('départ : Livre à faire, le reste verrouillé', (await statesText()) === 'à faire,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée', await statesText());
+  check('départ : Livre à faire, le reste verrouillé', (await statesText()) === 'à faire,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée', await statesText());
   check('étape verrouillée : motif lisible sur l’onglet', (await tab('essai')).text.includes('Valider d\'abord « Livre »'), await tab('essai'));
   await page.click('#etapes button[data-step="essai"]', { force: true });
   check('étape verrouillée : ne s’ouvre pas', (await current()) === 'livre' && await page.isHidden('#essai'));
@@ -123,6 +130,53 @@ await open();
   await page.selectOption('#essai-theme', 'ocean');
   check('thème : l’aperçu suit', ((await page.getAttribute('#apercu', 'src')) ?? '').includes('theme=ocean'));
 
+  // Workflows (IC1) : déposés une fois pour la collection
+  await page.reload();
+  await page.waitForSelector('#etapes li');
+  await until(`document.querySelector('#etapes li[data-state="validee"]') !== null`);
+  check('Essai validé, workflows absents : ouverture sur Workflows', (await current()) === 'workflows' && (await text('#motifs')).includes('Déposer le workflow de génération'));
+  await until(`document.querySelector('#wf-comfy').textContent.includes('0.43.0')`);
+  check('Workflows : ComfyUI vérifié, version affichée', (await text('#wf-comfy')).includes(fake.url));
+  check('Workflows : ComfyUI répond, pas de bouton Lancer', await page.isHidden('#wf-lancer'));
+  const launched: string[] = [];
+  comfyRuntime.launch = (f) => { launched.push(f); };
+  const bat = path.join(parent, 'lanceur-essai.bat');
+  fs.writeFileSync(bat, '@echo off\r\n');
+  const closed = http.createServer();
+  await new Promise<void>((r) => closed.listen(0, '127.0.0.1', r));
+  const closedUrl = `http://127.0.0.1:${(closed.address() as AddressInfo).port}`;
+  await new Promise((r) => closed.close(r));
+  put(parent, 'config.local.json', { glbRoot, dataRoot, comfyUrl: closedUrl, comfyLauncher: bat });
+  await page.click('#wf-verifier');
+  await until(`!document.querySelector('#wf-lancer').hidden`);
+  check('Workflows : ComfyUI arrêté, message et bouton Lancer', (await text('#wf-comfy')).includes('ne répond pas'), await text('#wf-comfy'));
+  await page.click('#wf-lancer');
+  await until(`document.querySelector('#wf-comfy').textContent.includes('démarre')`);
+  check('Lancer : le lanceur de la configuration, bouton désactivé pendant le démarrage', launched.join() === bat && await page.isDisabled('#wf-lancer'));
+  put(parent, 'config.local.json', { glbRoot, dataRoot, comfyUrl: fake.url });
+  await until(`document.querySelector('#wf-comfy').textContent.includes('0.43.0')`);
+  check('Lancer : ComfyUI répond, le bouton disparaît', await page.isHidden('#wf-lancer'));
+  const dropWorkflow = (kind: string, value: unknown) => page.setInputFiles(`#wf-fichier-${kind}`, { name: `${kind}.json`, mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(value)) });
+  const no34 = upscaleGraph();
+  delete (no34 as Record<string, unknown>)['34'];
+  await dropWorkflow('agrandissement', no34);
+  await until(`document.querySelector('#wf-message .erreur')?.textContent.includes('nœud 34') === true`);
+  check('Workflows : nœud 34 retiré, refus nommé, rien de rangé', !fs.existsSync(path.join(dataRoot, 'collection', 'workflows', 'workflows.json')));
+  await dropWorkflow('generation', generationGraph());
+  await until(`document.querySelector('#wf-message .bien') !== null`);
+  check('Workflows : génération rangée, droits proposés cochés', await page.isChecked('#wf-droits-generation input[value="niedot294a"]') && (await text('#wf-info-generation')).includes('generation.'));
+  await dropWorkflow('agrandissement', upscaleGraph());
+  await untilTab('workflows', 'validée');
+  check('Workflows : les deux déposés, étape validée', (await tab('workflows')).state === 'validee' && await page.isChecked('#wf-droits-agrandissement input[value="realesrgan-x4plus"]'));
+  check('Workflows : extensions et polices jamais proposées', !(await text('#wf-droits-generation')).includes('ComfyUI_IPAdapter') && !(await text('#wf-droits-generation')).includes('Andika'));
+  await page.uncheck('#wf-droits-agrandissement input[value="realesrgan-x4plus"]');
+  await page.uncheck('#wf-droits-agrandissement input[value="sdxl-base-1-0"]');
+  await untilTab('workflows', 'à faire');
+  check('Workflows : aucun droit coché, à faire', (await text('#motifs')).includes('Cocher les droits'));
+  await page.check('#wf-droits-agrandissement input[value="realesrgan-x4plus"]');
+  await page.check('#wf-droits-agrandissement input[value="sdxl-base-1-0"]');
+  await untilTab('workflows', 'validée');
+
   await page.reload();
   await page.waitForSelector('#etapes li');
   await until(`document.querySelector('#etapes li[data-state="validee"]') !== null`);
@@ -132,7 +186,7 @@ await open();
   await page.click('#v-scenarios');
   await page.click('#prix-scenarios button:has-text("Ne plus retenir")');
   await untilTab('essai', 'verrouillée');
-  check('étape redevenue non validée : la suite se reverrouille', (await statesText()) === 'validée,à faire,verrouillée,verrouillée,verrouillée,verrouillée', await statesText());
+  check('étape redevenue non validée : la suite se reverrouille', (await statesText()) === 'validée,à faire,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée', await statesText());
   check('reverrouillage : aucune donnée perdue', fs.existsSync(style) && fs.existsSync(path.join(dataRoot, BOOK_ID, 'export', 'essai-2A.pdf')));
   await page.reload();
   await until(`document.querySelector('#etapes li[data-state="a-faire"]') !== null`);
@@ -140,7 +194,7 @@ await open();
   await page.click('#v-scenarios');
   await page.click('#prix-scenarios button:has-text("Retenir")');
   await untilTab('essai', 'validée');
-  check('scénario de nouveau retenu : le parcours revient', (await statesText()) === 'validée,validée,validée,validée,alerte,à faire', await statesText());
+  check('scénario de nouveau retenu : le parcours revient', (await statesText()) === 'validée,validée,validée,validée,alerte,validée,à faire', await statesText());
 }
 
 // Sujet réel, de la création à « relu »
@@ -456,6 +510,48 @@ const framingOf = () => subjectFile().illustrations[0].framing;
   await until(`document.querySelector('#il-message .bien') !== null`);
   await untilCheck('C5', 'contrôle réussi');
   check('remplacement : cadrage remis à zéro, droits gardés', framingOf().zoom === 1 && await page.isChecked('#il-droits input[value="sdxl-base-1-0"]'));
+
+  // Vue « Générer » (IC1), contre le faux ComfyUI
+  await page.click('#v-generer');
+  await until(`document.querySelector('#ge-attendu').textContent.includes('832 × 1216')`);
+  check('Générer : tailles et noms attendus, règle des 300 px rappelée', (await text('#ge-attendu')).includes('illustration.rendu.png') && (await text('#ge-attendu')).includes('300 px') && (await text('#ge-attendu')).includes('2114 × 3192'), await text('#ge-attendu'));
+  await until(`document.querySelector('#ge-comfy').textContent.includes('0.43.0')`);
+  check('Générer : état de ComfyUI affiché', (await text('#ge-comfy')).includes('répond'));
+  check('Générer : sans entrées, bouton désactivé', await page.isDisabled('#ge-lancer') && (await text('#ge-etat-rendu')) === 'à déposer');
+  await page.setInputFiles('#ge-fichier-rendu', { name: 'rendu.png', mimeType: 'image/png', buffer: makePng(896, 1152, 3, () => [1, 2, 3]) });
+  await until(`document.querySelector('#ge-message .erreur')?.textContent.includes('832 × 1216 px attendus') === true`);
+  check('Générer : rendu à une autre taille, refusé avec la taille attendue', (await text('#ge-etat-rendu')) === 'à déposer');
+  await page.setInputFiles('#ge-fichier-rendu', { name: 'rendu.png', mimeType: 'image/png', buffer: makePng(832, 1216, 3, (x, y) => [x % 256, y % 256, 80]) });
+  await until(`document.querySelector('#ge-etat-rendu').textContent.startsWith('✓')`);
+  await page.setInputFiles('#ge-fichier-mist', { name: 'mist.png', mimeType: 'image/png', buffer: makePng(832, 1216, 3, (_x, y) => [y % 256, y % 256, y % 256]) });
+  await until(`document.querySelector('#ge-etat-mist').textContent.startsWith('✓')`);
+  check('Générer : prompt prérempli depuis le workflow', (await page.inputValue('#ge-prompt')) === generationGraph()['6']!.inputs.text);
+  await page.fill('#ge-prompt', 'an imaginary blue animal');
+  await page.press('#ge-prompt', 'Tab');
+  await until(`document.querySelector('#ge-couleurs').textContent.includes('blue')`);
+  check('Générer : couleur du prompt signalée, prompt gardé dans le sujet', subjectFile().generationPrompts.illustration === 'an imaginary blue animal');
+  await page.fill('#ge-prompt', 'an imaginary animal');
+  await page.press('#ge-prompt', 'Tab');
+  await until(`document.querySelector('#ge-couleurs').textContent === ''`);
+  fake.busy = 1;
+  await page.click('#ge-lancer');
+  await until(`!document.querySelector('#file-comfy').hidden && document.querySelector('#file-comfy').textContent.includes('ComfyUI occupé')`);
+  check('file : une ligne dans le bandeau, la tâche attend que ComfyUI soit libre', (await text('#file-comfy')).includes('génération alpha/illustration'), await text('#file-comfy'));
+  check('file : la tâche en attente de ComfyUI s’annule', await page.isVisible('#ge-file button:has-text("Annuler")'));
+  fake.busy = 0;
+  await until(`document.querySelectorAll('#ge-candidats .candidat img').length === 3 && [...document.querySelectorAll('#ge-candidats img')].every((i) => i.complete && i.naturalWidth === 832)`);
+  check('Générer : trois images corrigées côte à côte', (await text('#ge-candidats')).includes('Graine 11') && (await text('#ge-candidats')).includes('Graine 33'));
+  check('file : fin de la tâche dite dans le bandeau', (await text('#file-comfy')).includes('réussie'), await text('#file-comfy'));
+  await page.click('#ge-candidats .candidat[data-seed="22"] button');
+  await until(`!document.querySelector('#ge-confirmation').hidden`);
+  check('Agrandir sur une zone remplie : confirmation d’abord', comfyRuntime.queue.snapshot().current === null && comfyRuntime.queue.snapshot().pending.length === 0);
+  await page.click('#ge-remplacer');
+  await until(`document.querySelector('#ge-message .bien')?.textContent.includes('agrandissement') === true`);
+  check('Agrandir : image finale rangée, traçabilité', subjectFile().illustrations[0].width === 2114 && subjectFile().illustrations[0].generation.seed === 22);
+  await page.click('#v-depot');
+  await until(`document.querySelector('#il-image').complete && document.querySelector('#il-image').naturalWidth === 2114`);
+  await untilCheck('C5', 'contrôle réussi');
+  check('Dépôt : l’image agrandie, C5 vert', (await text('#il-infos')).includes('2114 × 3192'), await text('#il-infos'));
   await goSub('sujet-apercu');
   await until(`document.querySelector('#sa-page').src.includes('/apercu-sujet?')`);
   const previewPage = await (await page.request.get((await page.getAttribute('#sa-page', 'src'))!.startsWith('http') ? (await page.getAttribute('#sa-page', 'src'))! : `${url}${(await page.getAttribute('#sa-page', 'src'))!.slice(1)}`)).text();
@@ -475,12 +571,13 @@ const FIT = `(() => {
     if (r.top < -0.5 || r.left < -0.5 || r.bottom > innerHeight + 0.5 || r.right > innerWidth + 0.5) off.push(e.id || e.tagName + ' ' + e.textContent.slice(0, 24));
   }
   const clipped = [];
-  for (const e of document.querySelectorAll('.panneau, .colonne, .sous-panneau, #prix-form, .zone-apercu')) {
+  for (const e of document.querySelectorAll('.panneau, .colonne, .sous-panneau, #prix-form, .zone-apercu, .candidat')) {
     if (seen(e) && (e.scrollHeight > e.clientHeight + 1 || e.scrollWidth > e.clientWidth + 1)) clipped.push(e.id || e.className);
   }
   const small = [];
   for (const e of document.querySelectorAll(frames)) {
-    if (seen(e) && e.textContent !== '' && e.id !== 'motifs' && e.clientHeight < 40) small.push(e.id + ' ' + e.clientHeight);
+    // Les motifs d'une étape, du livre ou du sujet, tiennent souvent en une ligne : leur cadre est fait pour.
+    if (seen(e) && e.textContent !== '' && e.id !== 'motifs' && e.id !== 'sujet-motifs' && e.clientHeight < 40) small.push(e.id + ' ' + e.clientHeight);
   }
   return { sh: root.scrollHeight, h: innerHeight, sw: root.scrollWidth, w: innerWidth, off, clipped, small };
 })()`;
@@ -527,6 +624,10 @@ async function everyStep(label: string): Promise<void> {
   await until(`document.querySelector('#dr-commun table') !== null`);
   await fits(`${label}, Droits`);
   check(`${label}, Droits : les commandes restent visibles`, await page.isVisible('#dr-completer') && await page.isVisible('#dr-enregistrer') && await page.isVisible('#dr-credit'));
+  await go('workflows');
+  await until(`document.querySelector('#wf-info-generation dl') !== null`);
+  await fits(`${label}, Workflows`);
+  check(`${label}, Workflows : dépôts et droits visibles`, await page.isVisible('#wf-depot-agrandissement') && await page.isVisible('#wf-droits-agrandissement'));
   await go('sujets');
   await until(`document.querySelector('#sujets-liste table') !== null`);
   await fits(`${label}, Sujets`);
@@ -544,6 +645,13 @@ async function everyStep(label: string): Promise<void> {
   await until(`document.querySelector('#il-vignette').style.height !== '' && document.querySelector('#il-controles table') !== null`);
   await page.waitForTimeout(50);
   await fits(`${label}, Illustrations`);
+  await page.click('#v-generer');
+  await until(`document.querySelectorAll('#ge-candidats .candidat img').length === 3 && [...document.querySelectorAll('#ge-candidats img')].every((i) => i.complete)`);
+  await page.waitForTimeout(50);
+  await fits(`${label}, Générer`);
+  check(`${label}, Générer : candidats lisibles, prompt et bouton visibles`, await page.evaluate(`[...document.querySelectorAll('#ge-candidats img')].every((i) => i.getBoundingClientRect().height > 120)`) as boolean && await page.isVisible('#ge-lancer') && await page.isVisible('#ge-prompt'), await page.evaluate(`[...document.querySelectorAll('#ge-candidats img')].map((i) => i.getBoundingClientRect().height)`));
+  await page.click('#v-depot');
+  await until(`document.querySelector('#il-vignette').style.height !== ''`);
   check(`${label}, Illustrations : vignette lisible, cadrage et droits visibles`, await page.evaluate(`document.querySelector('#il-vignette').getBoundingClientRect().height > 100`) as boolean && await page.isVisible('#il-zoom') && await page.isVisible('#il-droits'), await page.evaluate(`document.querySelector('#il-vignette').getBoundingClientRect().height`));
   await goSub('sujet-apercu');
   await until(`document.querySelector('#sa-echelle').style.transform !== ''`);
@@ -626,6 +734,15 @@ await page.route('**/api/sujet/images', patchJson((view) => {
     c.details = many('Détail', 10);
   }
 }));
+await page.route('**/api/generer/state', patchJson((view) => {
+  view.workflows = { ready: false, reasons: many('Motif', 8) };
+  for (const z of view.zones) z.colors = ['red', 'blue', 'green', 'vert', 'rouge'];
+}));
+await page.route('**/api/workflows/state', patchJson((view) => {
+  const [entry] = view.entries;
+  view.entries = Array.from({ length: 30 }, (_, i) => ({ ...entry, id: `ia-${i}`, name: `Modèle d'IA au nom assez long ${i}` }));
+  view.kinds.generation.rightsFaults = many('Droit', 3);
+}));
 await page.route('**/api/create', patchJson(({ result }) => {
   result.kept = many('Conservé', 30);
   result.alerts = many('Alerte', 20);
@@ -662,7 +779,7 @@ await page.unrouteAll({ behavior: 'ignoreErrors' });
   await open();
   await until(`document.querySelector('#etapes li[data-state="validee"]') !== null`);
   const labels = await page.evaluate(`[...document.querySelectorAll('#etapes .nom-signe')].map((e) => [e.getAttribute('role'), e.getAttribute('aria-label'), e.textContent])`) as string[][];
-  check('signes : image nommée, texte visible', labels.length === 6 && labels.every(([role, label, text]) => role === 'img' && !!label && !!text), labels);
+  check('signes : image nommée, texte visible', labels.length === 7 && labels.every(([role, label, text]) => role === 'img' && !!label && !!text), labels);
 }
 
 // Configuration invalide : le menu reste affiché et dit quoi corriger.
@@ -676,5 +793,6 @@ await page.unrouteAll({ behavior: 'ignoreErrors' });
 
 check('aucune erreur dans la console de la page', pageErrors.filter((e) => !e.includes('409')).length === 0, pageErrors);
 await browser.close();
+await fake.close();
 await new Promise((resolve) => server.close(resolve));
 finish('page');

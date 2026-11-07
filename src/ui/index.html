@@ -13,6 +13,7 @@
     <div class="choix-livre">
       <label for="choix">Livre</label>
       <select id="choix" disabled></select>
+      <p id="file-comfy" class="file" aria-live="polite" hidden></p>
     </div>
     <nav aria-label="Étapes du parcours"><ol id="etapes" class="etapes"></ol></nav>
   </header>
@@ -177,6 +178,33 @@
       </div>
     </section>
 
+    <section id="workflows" class="panneau" aria-labelledby="t-workflows" hidden>
+      <div class="tete">
+        <h2 id="t-workflows">Workflows de ComfyUI</h2>
+        <button id="wf-verifier" type="button" class="secondaire">Vérifier ComfyUI</button>
+        <button id="wf-lancer" type="button" hidden>Lancer ComfyUI</button>
+        <p id="wf-comfy" class="note"></p>
+      </div>
+      <p class="note">Les deux graphes au format API, déposés une fois pour la collection. Ils sont rangés dans <code>collection/workflows/</code>, datés, jamais réécrits : à commiter dans le repo privé.</p>
+      <div id="wf-message" class="liste"></div>
+      <div class="colonnes">
+        <div class="colonne">
+          <h3>Génération</h3>
+          <label id="wf-depot-generation" class="depot" for="wf-fichier-generation">Déposer le JSON de génération ici, ou le choisir <input id="wf-fichier-generation" type="file" accept=".json,application/json"></label>
+          <div id="wf-info-generation"></div>
+          <h3>Droits utilisés par ce workflow</h3>
+          <div id="wf-droits-generation" class="liste"></div>
+        </div>
+        <div class="colonne">
+          <h3>Agrandissement</h3>
+          <label id="wf-depot-agrandissement" class="depot" for="wf-fichier-agrandissement">Déposer le JSON d'agrandissement ici, ou le choisir <input id="wf-fichier-agrandissement" type="file" accept=".json,application/json"></label>
+          <div id="wf-info-agrandissement"></div>
+          <h3>Droits utilisés par ce workflow</h3>
+          <div id="wf-droits-agrandissement" class="liste"></div>
+        </div>
+      </div>
+    </section>
+
     <section id="sujets" class="panneau" aria-labelledby="t-sujets" hidden>
       <div id="sujets-accueil" class="colonnes">
         <div class="colonne">
@@ -254,36 +282,67 @@
           </div>
         </div>
 
-        <div id="sujet-illustrations" class="sous-panneau colonnes" hidden>
-          <div class="colonne">
-            <div class="tete">
-              <div class="champ"><label for="il-zone">Zone</label><select id="il-zone"></select></div>
-              <p id="il-cible" class="note"></p>
+        <div id="sujet-illustrations" class="sous-panneau" hidden>
+          <div class="tete">
+            <div class="champ"><label for="il-zone">Zone</label><select id="il-zone"></select></div>
+            <div class="vues" role="group" aria-label="Vue des illustrations">
+              <button id="v-depot" type="button" class="secondaire" aria-pressed="true">Dépôt</button>
+              <button id="v-generer" type="button" class="secondaire" aria-pressed="false">Générer</button>
             </div>
-            <label id="il-depot" class="depot" for="il-fichier">Déposer le PNG ici, ou le choisir <input id="il-fichier" type="file" accept=".png,image/png"></label>
-            <div id="il-confirmation" class="boutons" hidden>
-              <p>Cette zone a déjà une image. L'ancien fichier n'est pas gardé, le cadrage repart de zéro, les droits restent.</p>
-              <button id="il-remplacer" type="button">Remplacer</button>
-              <button id="il-annuler" type="button" class="secondaire">Annuler</button>
-            </div>
-            <div id="il-message"></div>
-            <div id="il-cadre">
-              <div id="il-vignette" hidden>
-                <img id="il-image" alt="Image entière : cliquer choisit le point à garder au centre">
-                <div id="il-visible"></div>
+            <p id="il-cible" class="note"></p>
+          </div>
+          <div id="il-vue-depot" class="colonnes">
+            <div class="colonne">
+              <label id="il-depot" class="depot" for="il-fichier">Déposer le PNG ici, ou le choisir <input id="il-fichier" type="file" accept=".png,image/png"></label>
+              <div id="il-confirmation" class="boutons" hidden>
+                <p>Cette zone a déjà une image. L'ancien fichier n'est pas gardé, le cadrage repart de zéro, les droits restent.</p>
+                <button id="il-remplacer" type="button">Remplacer</button>
+                <button id="il-annuler" type="button" class="secondaire">Annuler</button>
+              </div>
+              <div id="il-message"></div>
+              <div id="il-cadre">
+                <div id="il-vignette" hidden>
+                  <img id="il-image" alt="Image entière : cliquer choisit le point à garder au centre">
+                  <div id="il-visible"></div>
+                </div>
+              </div>
+              <div id="il-cadrage" class="grille">
+                <div class="champ"><label for="il-zoom">Zoom : <span id="il-zoom-valeur"></span></label><input id="il-zoom" type="range" min="1" max="4" step="0.01"></div>
+                <div class="champ"><label for="il-x">Point focal, % en largeur</label><input id="il-x" type="number" min="0" max="100" step="1"></div>
+                <div class="champ"><label for="il-y">Point focal, % en hauteur</label><input id="il-y" type="number" min="0" max="100" step="1"></div>
               </div>
             </div>
-            <div id="il-cadrage" class="grille">
-              <div class="champ"><label for="il-zoom">Zoom : <span id="il-zoom-valeur"></span></label><input id="il-zoom" type="range" min="1" max="4" step="0.01"></div>
-              <div class="champ"><label for="il-x">Point focal, % en largeur</label><input id="il-x" type="number" min="0" max="100" step="1"></div>
-              <div class="champ"><label for="il-y">Point focal, % en hauteur</label><input id="il-y" type="number" min="0" max="100" step="1"></div>
+            <div class="colonne">
+              <div id="il-infos"></div>
+              <div id="il-controles"></div>
+              <h3>Droits utilisés</h3>
+              <div id="il-droits" class="liste"></div>
             </div>
           </div>
-          <div class="colonne">
-            <div id="il-infos"></div>
-            <div id="il-controles"></div>
-            <h3>Droits utilisés</h3>
-            <div id="il-droits" class="liste"></div>
+          <div id="il-vue-generer" class="colonnes" hidden>
+            <div class="colonne">
+              <div class="boutons ligne-comfy"><p id="ge-comfy" class="note"></p><button id="ge-lancer-comfy" type="button" hidden>Lancer ComfyUI</button></div>
+              <div id="ge-motifs" class="liste"></div>
+              <p id="ge-attendu" class="note"></p>
+              <div class="grille deux">
+                <label id="ge-depot-rendu" class="depot" for="ge-fichier-rendu">Rendu : <span id="ge-etat-rendu"></span> <input id="ge-fichier-rendu" type="file" accept=".png,image/png"></label>
+                <label id="ge-depot-mist" class="depot" for="ge-fichier-mist">Passe Mist : <span id="ge-etat-mist"></span> <input id="ge-fichier-mist" type="file" accept=".png,image/png"></label>
+              </div>
+              <div class="champ"><label for="ge-prompt">Prompt positif, sans couleur</label><textarea id="ge-prompt" rows="3"></textarea></div>
+              <p id="ge-couleurs" class="alerte"></p>
+              <div class="boutons"><button id="ge-lancer" type="button">Générer</button></div>
+              <div id="ge-message" class="liste"></div>
+            </div>
+            <div class="colonne">
+              <h3 id="ge-t-candidats">Candidats</h3>
+              <div id="ge-confirmation" class="boutons" hidden>
+                <p>Cette zone a déjà une image : l'image agrandie la remplacera, le cadrage repartira de zéro.</p>
+                <button id="ge-remplacer" type="button">Agrandir et remplacer</button>
+                <button id="ge-annuler" type="button" class="secondaire">Annuler</button>
+              </div>
+              <div id="ge-candidats" class="candidats"></div>
+              <div id="ge-file" class="liste"></div>
+            </div>
           </div>
         </div>
 

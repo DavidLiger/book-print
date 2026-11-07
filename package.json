@@ -16,7 +16,8 @@
     "test:research": "tsx scripts/test-research.ts",
     "schema:research": "tsx scripts/gen-research-schema.ts",
     "test:images": "tsx scripts/test-images.ts",
-    "test:rights": "tsx scripts/test-rights.ts"
+    "test:rights": "tsx scripts/test-rights.ts",
+    "test:comfy": "tsx scripts/test-comfy.ts"
   },
   "keywords": [],
   "author": "",
