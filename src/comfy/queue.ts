@@ -2,7 +2,10 @@
 // mémoire vidéo est au bord de la limite (P-14). Les générations passent avant les agrandissements, parce que chaque alternance recharge les
 // modèles (255 s, §11.1). Une tâche en attente s'annule ; une tâche envoyée à ComfyUI va à son terme. Un redémarrage de l'outil perd la file.
 
-export type TaskKind = 'generation' | 'agrandissement';
+export type TaskKind = 'generation' | 'agrandissement' | 'apercu';
+/** Ordre de passage (IC2) : générations, puis agrandissements, puis aperçus de style, qui n'attendent personne. */
+const RANK: Record<TaskKind, number> = { generation: 0, agrandissement: 1, apercu: 2 };
+const KIND_TEXT: Record<TaskKind, string> = { generation: 'Une génération', agrandissement: 'Un agrandissement', apercu: 'Un aperçu' };
 
 export class QueueRefused extends Error {}
 export class TaskCancelled extends Error {}
@@ -18,7 +21,7 @@ export interface TaskContext {
 
 export interface TaskSpec {
   kind: TaskKind;
-  /** `<bookId>/<sujetId>/<zone>` : une tâche de chaque type par zone à la fois. */
+  /** `<bookId>/<sujetId>/<zone>`, ou `styles/<styleId>` pour un aperçu : une tâche de chaque type par clé à la fois. */
   zoneKey: string;
   label: string;
   /** Rend le résumé affiché à la fin. */
@@ -71,10 +74,10 @@ export class TaskQueue {
 
   add(spec: TaskSpec): TaskView {
     const busy = [this.current, ...this.pending].find((e) => e && e.spec.zoneKey === spec.zoneKey && e.spec.kind === spec.kind);
-    if (busy) throw new QueueRefused(`${spec.kind === 'generation' ? 'Une génération' : 'Un agrandissement'} de cette zone est déjà dans la file.`);
+    if (busy) throw new QueueRefused(`${KIND_TEXT[spec.kind]} ${spec.kind === 'apercu' ? 'de ce style' : 'de cette zone'} est déjà dans la file.`);
     const entry: Entry = { view: { id: this.nextId++, kind: spec.kind, zoneKey: spec.zoneKey, label: spec.label, step: 'en attente', startedAt: null, sent: false }, spec, cancelled: false };
-    // Les générations avant les agrandissements : une génération ajoutée passe devant le premier agrandissement en attente.
-    const at = spec.kind === 'generation' ? this.pending.findIndex((e) => e.spec.kind === 'agrandissement') : -1;
+    // Les générations avant les agrandissements, les aperçus en dernier : une tâche passe devant la première en attente d'un rang plus loin.
+    const at = this.pending.findIndex((e) => RANK[e.spec.kind] > RANK[spec.kind]);
     if (at < 0) this.pending.push(entry);
     else this.pending.splice(at, 0, entry);
     this.pump();

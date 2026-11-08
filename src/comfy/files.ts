@@ -74,7 +74,15 @@ export const candidatesSchema = z.strictObject({
   prompt: z.string(),
   dosage: z.number(),
   workflow: z.strictObject({ file: z.string(), date: z.iso.datetime(), sha256: sha }),
-  inputs: z.strictObject({ rendu: sha, mist: sha, reference: z.strictObject({ name: z.string(), sha256: sha }) }),
+  /** Le style de la génération, tel qu'il était (IC2) : l'agrandissement reprend ses prompts et ses droits, même si le style change ensuite. */
+  style: z.strictObject({
+    id: z.string(),
+    sha256: sha,
+    upscale: z.strictObject({ prompt: z.string(), negative: z.string() }),
+    /** Droit de la référence du style, `null` sans référence. */
+    rights: z.string().nullable(),
+  }),
+  inputs: z.strictObject({ rendu: sha, mist: sha, reference: z.strictObject({ name: z.string(), sha256: sha }).nullable() }),
   size: z.strictObject({ width: z.number().int().positive(), height: z.number().int().positive() }),
   /** `seconds` : génération et correction ; `correctionSeconds` : la correction seule, faite par l'outil. */
   candidates: z.array(z.strictObject({ seed: z.number().int().nonnegative(), generated: sha, corrected: sha, fields: fieldsSchema, seconds: z.number(), correctionSeconds: z.number() })),

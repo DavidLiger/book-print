@@ -129,3 +129,14 @@ export function setIllustrationRights(dataRoot: string, bookId: string, subject:
     return { ...file, illustrations: file.illustrations.map((i) => (i.subject === subject && i.zone === zone ? { ...i, rights } : i)) };
   });
 }
+
+/**
+ * Entrée créée pour un dessin de David (IC2, question 5) : ajoutée au registre commun si son `id` n'est dans aucun des deux registres.
+ * Une entrée existante n'est jamais modifiée. Rend `true` si l'entrée a été ajoutée.
+ */
+export function ensureCollectionEntry(dataRoot: string, bookId: string, entry: RightsEntry): boolean {
+  const checked = parseEntry(entry);
+  if (allEntries(readCollectionRights(dataRoot), readBookRights(dataRoot, bookId)).has(checked.id)) return false;
+  rewrite(requireCollection(dataRoot), COLLECTION_LABEL, (file) => ({ ...file, entries: [...file.entries, checked] }));
+  return true;
+}

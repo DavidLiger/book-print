@@ -68,6 +68,18 @@ export interface ParcoursFacts {
     /** Workflow refusé, droit inconnu ou d'un autre type. */
     faults: string[];
   };
+  /** Bibliothèque de styles (IC2), commune à la collection ; style par défaut et cohérence du livre. */
+  styles: {
+    /** `collection/styles/` ou un registre illisible. */
+    error: string | null;
+    count: number;
+    /** Style invalide, référence absente, droit inconnu ou refusé, style par défaut ou de zone inconnu. */
+    faults: string[];
+    /** Style par défaut à choisir. */
+    todo: string[];
+    /** Mélange de styles, version antérieure, référence à vérifier. */
+    alerts: string[];
+  };
   subjects: SubjectFacts[];
 }
 
@@ -176,6 +188,15 @@ function workflows({ workflows: w }: ParcoursFacts): StepVerdict {
   return { state: 'validee', reasons: [] };
 }
 
+function styles({ styles: s }: ParcoursFacts): StepVerdict {
+  if (s.error) return { state: 'erreur', reasons: [s.error] };
+  if (s.faults.length > 0) return { state: 'erreur', reasons: s.faults };
+  if (s.count === 0) return { state: 'a-faire', reasons: ['Créer un premier style : « Créer le style de base depuis les workflows ».'] };
+  if (s.todo.length > 0) return { state: 'a-faire', reasons: s.todo };
+  if (s.alerts.length > 0) return { state: 'alerte', reasons: s.alerts };
+  return { state: 'validee', reasons: [] };
+}
+
 const isRelu = (s: SubjectFacts) => s.status === 'relu' || s.status === 'prêt';
 
 function sujets({ subjects }: ParcoursFacts): StepVerdict {
@@ -224,6 +245,7 @@ function sujetApercu(_f: ParcoursFacts, s?: SubjectFacts): StepVerdict {
  * Sujets exige Collection et non Essai : une couleur modifiée ne reverrouille pas tout le contenu. Essai reste jusqu'à MP5.
  * Droits exige Collection : le registre commun y vit. Sujets ne l'exige pas : une licence à revoir ne reverrouille pas le contenu.
  * Workflows exige Droits : ses cases viennent du registre. Sujets ne l'exige pas : le dépôt manuel d'une image reste possible sans ComfyUI.
+ * Styles exige Workflows : le style de base en vient, et un aperçu passe par eux. Sujets ne l'exige pas non plus.
  * Illustrations exige Recherche et ne touche pas `relu`, qui porte sur le texte.
  * Aperçu exige Recherche et non Relecture : un bloc allongé repasse à relire, et c'est justement dans l'aperçu que se voit son débordement.
  */
@@ -234,6 +256,7 @@ export const STEPS: StepDef[] = [
   { id: 'essai', label: 'Essai', scope: 'livre', requires: ['collection'], evaluate: essai },
   { id: 'droits', label: 'Droits', scope: 'livre', requires: ['collection'], evaluate: droits },
   { id: 'workflows', label: 'Workflows', scope: 'livre', requires: ['droits'], evaluate: workflows },
+  { id: 'styles', label: 'Styles', scope: 'livre', requires: ['workflows'], evaluate: styles },
   { id: 'sujets', label: 'Sujets', scope: 'livre', requires: ['collection'], evaluate: sujets },
   { id: 'sujet-recherche', label: 'Recherche', scope: 'sujet', requires: [], evaluate: sujetRecherche },
   { id: 'sujet-relecture', label: 'Relecture', scope: 'sujet', requires: ['sujet-recherche'], evaluate: sujetRelecture },

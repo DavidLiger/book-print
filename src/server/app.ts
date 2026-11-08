@@ -30,6 +30,8 @@ import { BadPricingRequest, PRICING_ACTIONS } from './pricing-actions';
 import { BadRightsRequest, RIGHTS_ACTIONS } from './rights-actions';
 import { ACTION_HEADER, actionAllowed, hostAllowed, uploadAllowed } from './rules';
 import { BadSubjectRequest, IMPORT_MAX_BYTES, SUBJECT_ACTIONS, subjectPreviewHtml } from './subject-actions';
+import { StyleRefused } from '../styles/read';
+import { BadStyleRequest, depositEssai, depositReference, ESSAI_ROUTE, previewBytes, REFERENCE_ROUTE, styleActions } from './style-actions';
 
 const UI_DIR = fileURLToPath(new URL('../ui/', import.meta.url));
 /** L'icône de l'onglet : `print.ico`, à la racine du repo, à côté de `print.cmd`. */
@@ -125,19 +127,25 @@ const ACTIONS: Record<string, (body: unknown, configPath: string) => Json | Prom
 };
 
 async function handle(req: http.IncomingMessage, res: http.ServerResponse, port: number, configPath: string, comfy: ComfyRuntime, comfyRoutes: ReturnType<typeof comfyActions>): Promise<void> {
+  // `comfyRoutes` porte aussi les routes de l'étape Styles (IC2), qui partagent la file de ComfyUI.
   if (!hostAllowed(req.headers.host, req.headers.origin, port)) return sendJson(res, 403, { error: 'Host ou Origin refusé' });
   const url = (req.url ?? '/').split('?')[0];
 
-  // Dépôts à corps binaire : une illustration (MP4), un rendu ou une passe Mist (IC1). Le corps va en flux dans un temporaire.
-  if (url === DEPOSIT_ROUTE || url === ENTRY_ROUTE) {
+  // Dépôts à corps binaire : une illustration (MP4), un rendu ou une passe Mist (IC1), une référence de style ou le rendu d'essai (IC2).
+  // Le corps va en flux dans un temporaire. Seule la référence d'un style peut être un JPEG.
+  if (url === DEPOSIT_ROUTE || url === ENTRY_ROUTE || url === REFERENCE_ROUTE || url === ESSAI_ROUTE) {
     if (req.method !== 'POST') return sendJson(res, 405, { error: 'action : POST attendu' }, { Allow: 'POST' });
+    const jpeg = url === REFERENCE_ROUTE;
     const allowed = uploadAllowed(
       { method: req.method, contentType: req.headers['content-type'], actionHeader: req.headers[ACTION_HEADER], origin: req.headers.origin, host: req.headers.host },
       port,
+      jpeg,
     );
-    if (!allowed) return sendJson(res, 403, { error: `dépôt refusé : POST image/png avec ${ACTION_HEADER}: 1 attendu` });
+    if (!allowed) return sendJson(res, 403, { error: `dépôt refusé : POST ${jpeg ? 'image/png ou image/jpeg' : 'image/png'} avec ${ACTION_HEADER}: 1 attendu` });
     const query = new URL(req.url ?? '/', 'http://local').searchParams;
     const config = configured(loadConfig(configPath));
+    if (url === REFERENCE_ROUTE) return sendJson(res, 200, await depositReference(query, req, config, comfy));
+    if (url === ESSAI_ROUTE) return sendJson(res, 200, await depositEssai(query, req, config, comfy));
     return sendJson(res, 200, url === ENTRY_ROUTE ? await depositEntry(query, req, config, comfy) : await depositIllustration(query, req, config));
   }
 
@@ -184,6 +192,13 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, port:
     return send(res, 200, candidateBytes(query, configured(loadConfig(configPath))), 'image/png');
   }
 
+  // Aperçu d'un style (IC2), lu dans `collection/.cache/styles/`. Lecture seule.
+  if (url === '/apercu-style') {
+    if (req.method !== 'GET') return sendJson(res, 405, { error: 'GET attendu' }, { Allow: 'GET' });
+    const query = new URL(req.url ?? '/', 'http://local').searchParams;
+    return send(res, 200, previewBytes(query, configured(loadConfig(configPath))), 'image/png');
+  }
+
   // L'icône est binaire : lue en tampon, jamais en texte. Absente, 404 comme tout fichier hors liste.
   if (url === '/favicon.ico') {
     if (req.method !== 'GET') return sendJson(res, 405, { error: 'GET attendu' }, { Allow: 'GET' });
@@ -199,7 +214,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, port:
 
 /** Le port vient du serveur lui-même, pour que les tests puissent écouter sur un port libre. La file de ComfyUI vit avec le serveur. */
 export function createPrintServer(configPath: string, comfy: ComfyRuntime = createComfyRuntime()): http.Server {
-  const comfyRoutes = comfyActions(comfy);
+  const comfyRoutes = { ...comfyActions(comfy), ...styleActions(comfy) };
   const server = http.createServer((req, res) => {
     const { port } = server.address() as AddressInfo;
     handle(req, res, port, configPath, comfy, comfyRoutes).catch((e: unknown) => {
@@ -210,8 +225,8 @@ export function createPrintServer(configPath: string, comfy: ComfyRuntime = crea
         res.once('finish', () => req.destroy());
         return sendJson(res, 413, { error: e.message }, { Connection: 'close' });
       }
-      if (e instanceof BadPricingRequest || e instanceof BadEssaiRequest || e instanceof BadSubjectRequest || e instanceof BadImageRequest || e instanceof BadRightsRequest || e instanceof BadComfyRequest) return sendJson(res, 400, { error: e.message });
-      if (e instanceof CreateRefused || e instanceof PricingRefused || e instanceof CollectionRefused || e instanceof RenderRefused || e instanceof GeometryRefused || e instanceof SubjectRefused || e instanceof ResearchRefused || e instanceof RightsRefused || e instanceof CreditsRefused || e instanceof ImageRefused || e instanceof WorkflowRefused || e instanceof QueueRefused || e instanceof ComfyError) {
+      if (e instanceof BadPricingRequest || e instanceof BadEssaiRequest || e instanceof BadSubjectRequest || e instanceof BadImageRequest || e instanceof BadRightsRequest || e instanceof BadComfyRequest || e instanceof BadStyleRequest) return sendJson(res, 400, { error: e.message });
+      if (e instanceof CreateRefused || e instanceof PricingRefused || e instanceof CollectionRefused || e instanceof RenderRefused || e instanceof GeometryRefused || e instanceof SubjectRefused || e instanceof ResearchRefused || e instanceof RightsRefused || e instanceof CreditsRefused || e instanceof ImageRefused || e instanceof WorkflowRefused || e instanceof QueueRefused || e instanceof ComfyError || e instanceof StyleRefused) {
         return sendJson(res, 409, { error: e.message });
       }
       console.error('book-print :', e);

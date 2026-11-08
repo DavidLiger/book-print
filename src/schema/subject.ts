@@ -17,6 +17,8 @@ export const framingSchema = z.strictObject({
 const sha256Schema = z.string().regex(/^[0-9a-f]{64}$/, 'empreinte SHA-256 attendue');
 const workflowTraceSchema = z.strictObject({ file: z.string(), date: z.iso.datetime(), sha256: sha256Schema });
 const fieldsTraceSchema = z.record(z.string(), z.record(z.string(), z.union([z.string(), z.number()])));
+/** Style de l'image (IC2) : son identifiant et l'empreinte de son `style.json` au moment de la génération. Absent d'une image d'IC1. */
+const styleTraceSchema = z.strictObject({ id: slugSchema, sha256: sha256Schema });
 
 /** Traçabilité d'une image produite par l'outil (IC1, question 7) : de quoi la refaire. Un dépôt manuel l'efface. */
 export const generationSchema = z.strictObject({
@@ -25,13 +27,15 @@ export const generationSchema = z.strictObject({
   seed: z.number().int().nonnegative(),
   prompt: z.string(),
   dosage: z.number().min(0).max(1),
+  style: styleTraceSchema.optional(),
   workflows: z.strictObject({ generation: workflowTraceSchema, agrandissement: workflowTraceSchema }),
   /** Chaque champ écrit par l'outil, par graphe, nœud et champ. */
   fields: z.strictObject({ generation: fieldsTraceSchema, agrandissement: fieldsTraceSchema }),
   inputs: z.strictObject({
     rendu: sha256Schema,
     mist: sha256Schema,
-    reference: z.strictObject({ name: z.string(), sha256: sha256Schema }),
+    /** Référence envoyée à ComfyUI (la copie en gris, si le style le demande) ; `null` pour un style sans référence (IC2). */
+    reference: z.strictObject({ name: z.string(), sha256: sha256Schema }).nullable(),
     /** Image générée, puis corrigée, déposée pour l'agrandissement. */
     generated: sha256Schema,
     corrected: sha256Schema,
@@ -72,6 +76,8 @@ export const subjectSchema = z
     illustrations: z.array(illustrationSchema),
     /** Prompt positif de la génération, par zone (IC1) : sans lui, celui du workflow. Le changer ne touche pas `status`. */
     generationPrompts: z.record(slugSchema, z.string().max(GENERATION_PROMPT_MAX, `prompt : ${GENERATION_PROMPT_MAX} caractères au plus`)).optional(),
+    /** Style de la génération, par zone (IC2) : sans lui, le style par défaut du livre. Le changer ne touche pas `status`. */
+    generationStyles: z.record(slugSchema, slugSchema).optional(),
     status: z.enum(SUBJECT_STATUS),
   })
   .superRefine((s, ctx) => {

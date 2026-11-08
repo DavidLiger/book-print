@@ -37,14 +37,18 @@ body {
   font: 14px/1.4 system-ui, sans-serif;
 }
 
-#bandeau { display: flex; align-items: center; gap: 20px; padding: 8px 16px; background: var(--carte); border-bottom: 1px solid var(--bord); }
+#bandeau { display: flex; align-items: center; gap: 14px; padding: 8px 16px; background: var(--carte); border-bottom: 1px solid var(--bord); }
 h1 { font-size: 17px; margin: 0; white-space: nowrap; }
-.choix-livre { display: grid; grid-template-columns: auto 210px; align-items: center; gap: 0 8px; flex: none; }
+.choix-livre { display: grid; grid-template-columns: auto 180px; align-items: center; gap: 0 8px; flex: none; }
 .choix-livre label { margin: 0; }
-.choix-livre select { width: 210px; }
+.choix-livre select { width: 180px; }
 /* File de ComfyUI (IC1) : une ligne sous le choix du livre, pour ne rien prendre aux onglets. */
-.file { grid-column: 1 / -1; max-width: 260px; font-size: 12px; line-height: 1.25; color: var(--doux); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* État de ComfyUI et file, sous le choix du livre, sur toutes les étapes (correctif IC2) */
+.ligne-bandeau { grid-column: 1 / -1; display: flex; gap: 6px; align-items: center; min-width: 0; max-width: 260px; }
+.ligne-bandeau button.petit { flex: none; margin: 0; padding: 0 6px; font-size: 12px; }
+.file { flex: 1 1 auto; min-width: 0; font-size: 12px; line-height: 1.25; color: var(--doux); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .file.erreur { color: var(--erreur); }
+.file.bien { color: var(--bien); }
 
 nav { flex: 1; min-width: 0; }
 .etapes { list-style: none; margin: 0; padding: 0; display: flex; }
@@ -54,10 +58,11 @@ nav { flex: 1; min-width: 0; }
   width: calc(100% - 8px);
   margin-left: 8px;
   display: grid;
-  grid-template-columns: auto auto 1fr;
-  column-gap: 8px;
+  /* Huit étapes depuis IC2 : le signe passe sur la seconde ligne, devant le détail, pour laisser la largeur au nom. */
+  grid-template-columns: auto auto minmax(0, 1fr);
+  column-gap: 6px;
   align-items: center;
-  padding: 3px 10px 3px 6px;
+  padding: 3px 6px 3px 4px;
   text-align: left;
   color: var(--texte);
   background: transparent;
@@ -75,8 +80,8 @@ nav { flex: 1; min-width: 0; }
 .etapes li[data-state="verrouillee"] { --etat: var(--doux); }
 .numero {
   grid-row: span 2;
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   border: 2px solid var(--etat);
   color: var(--etat);
@@ -85,10 +90,10 @@ nav { flex: 1; min-width: 0; }
   font-weight: 700;
 }
 li[data-state="validee"] .numero { background: var(--etat); color: var(--carte); }
-.nom { font-weight: 600; white-space: nowrap; }
+.nom { grid-column: 2 / -1; min-width: 0; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 li[data-state="verrouillee"] .nom { color: var(--doux); font-weight: 500; }
-.nom-signe { color: var(--etat); }
-.detail { grid-column: 2 / -1; color: var(--doux); font-size: 12px; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nom-signe { grid-row: 2; grid-column: 2; color: var(--etat); font-size: 13px; }
+.detail { grid-row: 2; grid-column: 3 / -1; min-width: 0; color: var(--doux); font-size: 12px; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 main { min-height: 0; min-width: 0; display: flex; flex-direction: column; gap: 8px; padding: 10px 16px 12px; }
 #motifs { flex: none; max-height: 56px; padding: 4px 12px; background: var(--carte); border: 1px solid var(--bord); border-left-width: 4px; border-radius: 6px; }
@@ -241,3 +246,47 @@ fieldset label { display: flex; gap: 6px; align-items: center; margin: 0; color:
 #ge-confirmation p { flex: 1 1 100%; }
 .ligne-comfy { flex: none; align-items: center; }
 .ligne-comfy p { flex: 1 1 0; min-width: 0; }
+
+/* Étape Styles et choix du style dans « Générer » (IC2) */
+.champ.ligne { display: flex; align-items: center; gap: 8px; }
+.champ.ligne label { margin: 0; white-space: nowrap; }
+.champ.ligne select { width: 220px; }
+#st-message { flex: none; max-height: 64px; }
+#st-liste { min-height: 40px; }
+#st-liste td { min-width: 0; }
+#st-liste table { margin-top: 0; width: 100%; }
+#st-liste tr[aria-current="true"] td { font-weight: 600; }
+#st-liste td:last-child, #st-liste td:nth-child(3) { white-space: nowrap; }
+.nouveau-style { flex: none; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: end; }
+.cadre-style { flex: 1 1 0; min-height: 0; display: grid; place-items: center; background: var(--fond); border: 1px solid var(--bord); border-radius: 6px; }
+.cadre-style img { max-width: 100%; max-height: 100%; min-height: 0; object-fit: contain; }
+#st-form { min-height: 0; }
+#st-champs { min-height: 60px; }
+#st-champs .grille { align-items: start; }
+#st-couleurs:empty, #st-ref-etat:empty { display: none; }
+label.case { display: flex; gap: 6px; align-items: center; margin: 18px 0 0; color: var(--texte); }
+.grille.essai-style { flex: none; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.2fr) auto; }
+.planche { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; align-content: start; }
+.carte-style { display: flex; flex-direction: column; gap: 4px; padding: 4px; border: 1px solid var(--bord); border-radius: 6px; }
+.carte-style .vignette { aspect-ratio: 832 / 1216; display: grid; place-items: center; background: var(--fond); }
+.carte-style img { width: 100%; height: 100%; object-fit: contain; }
+.carte-style p { font-size: 12px; color: var(--doux); overflow-wrap: anywhere; }
+.carte-style p.nom-style { color: var(--texte); font-weight: 600; }
+.grille.style-zone { flex: none; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto; }
+
+/* Loupe des candidats (correctif IC2) : l'image entière, puis 100 % au point cliqué */
+.candidat .vue-candidat { position: relative; flex: 1 1 0; min-height: 0; display: flex; }
+.candidat .vue-candidat img { flex: 1 1 0; min-height: 0; width: 100%; object-fit: contain; background: var(--fond); cursor: zoom-in; }
+.candidat .ouvrir-loupe { position: absolute; top: 4px; right: 4px; padding: 2px 8px; font-size: 16px; line-height: 1.2; }
+.candidat .boutons-candidat { display: flex; gap: 6px; align-items: center; justify-content: space-between; }
+dialog.loupe { width: calc(100vw - 32px); height: calc(100vh - 32px); max-width: none; max-height: none; padding: 8px; border: 1px solid var(--bord); border-radius: 8px; background: var(--carte); color: var(--texte); }
+dialog.loupe[open] { display: flex; flex-direction: column; gap: 8px; }
+dialog.loupe::backdrop { background: rgba(0, 0, 0, 0.7); }
+.loupe-tete { flex: none; display: flex; gap: 12px; align-items: center; }
+.loupe-tete h3 { margin: 0; white-space: nowrap; }
+.loupe-tete .note { flex: 1 1 auto; min-width: 0; }
+.loupe-cadre { flex: 1 1 0; min-height: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; background: var(--fond); cursor: zoom-in; user-select: none; }
+.loupe-cadre img { max-width: 100%; max-height: 100%; min-width: 0; min-height: 0; object-fit: contain; -webkit-user-drag: none; }
+.loupe-cadre.zoom { display: block; overflow: auto; cursor: grab; }
+.loupe-cadre.zoom.glisse { cursor: grabbing; }
+.loupe-cadre.zoom img { display: block; max-width: none; max-height: none; margin: 0 auto; }

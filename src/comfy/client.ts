@@ -102,10 +102,10 @@ export class ComfyClient {
     return { running: q.queue_running.length, pending: q.queue_pending.length, ids: [...q.queue_running, ...q.queue_pending].flatMap(idOf) };
   }
 
-  /** Dépôt dans le dossier d'entrée de ComfyUI, à plat. Rend le nom à citer dans le graphe. */
-  async upload(name: string, png: Buffer): Promise<string> {
+  /** Dépôt dans le dossier d'entrée de ComfyUI, à plat. Rend le nom à citer dans le graphe. Une référence de style peut être un JPEG (IC2). */
+  async upload(name: string, bytes: Buffer, type: 'image/png' | 'image/jpeg' = 'image/png'): Promise<string> {
     const form = new FormData();
-    form.append('image', new Blob([new Uint8Array(png)], { type: 'image/png' }), name);
+    form.append('image', new Blob([new Uint8Array(bytes)], { type }), name);
     form.append('overwrite', 'true');
     form.append('type', 'input');
     const r = await this.json('/upload/image', { method: 'POST', body: form }, this.timeouts.long, uploadSchema);
@@ -125,16 +125,36 @@ export class ComfyClient {
     return h[promptId] ?? null;
   }
 
-  /** Un PNG de ComfyUI, borné comme un dépôt de MP4 : taille du fichier, signature, nombre de pixels. */
-  async view(ref: ImageRef): Promise<ImageFile> {
+  /** Les octets d'une image de ComfyUI, bornés comme un dépôt de MP4. La signature est contrôlée par l'appelant. */
+  async viewBytes(ref: ImageRef): Promise<Buffer> {
     const query = new URLSearchParams({ filename: ref.filename, subfolder: ref.subfolder, type: ref.type });
     const { status, body } = await this.request(`/view?${query}`, {}, this.timeouts.long, MAX_UPLOAD_BYTES);
     if (status !== 200) throw new ComfyError(`ComfyUI ne donne pas l'image ${ref.filename} (${status}).`);
+    return body;
+  }
+
+  /** Un PNG de ComfyUI, borné comme un dépôt de MP4 : taille du fichier, signature, nombre de pixels. */
+  async view(ref: ImageRef): Promise<ImageFile> {
+    const body = await this.viewBytes(ref);
     const header = readPngHeader(body);
     if (!header) throw new ComfyError(`ComfyUI a rendu autre chose qu'un PNG pour ${ref.filename}.`);
     if (header.width * header.height > MAX_INPUT_PIXELS) throw new ComfyError(`Image de ComfyUI trop grande : ${header.width} × ${header.height} px.`);
     return { png: body, width: header.width, height: header.height };
   }
+}
+
+/** Une image du dossier d'entrée de ComfyUI, octet pour octet : PNG ou JPEG (IC2, la référence d'IL1 pour le style de base). */
+export async function viewInput(client: ComfyClient, name: string): Promise<{ bytes: Buffer; kind: 'png' | 'jpg' }> {
+  const at = name.lastIndexOf('/');
+  const ref = { filename: name.slice(at + 1), subfolder: at < 0 ? '' : name.slice(0, at), type: 'input' as const };
+  const bytes = await client.viewBytes(ref);
+  const header = readPngHeader(bytes);
+  if (header) {
+    if (header.width * header.height > MAX_INPUT_PIXELS) throw new ComfyError(`Image de ComfyUI trop grande : ${header.width} × ${header.height} px.`);
+    return { bytes, kind: 'png' };
+  }
+  if (bytes.length > 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return { bytes, kind: 'jpg' };
+  throw new ComfyError(`ComfyUI a rendu autre chose qu'un PNG ou un JPEG pour ${name}.`);
 }
 
 /** Message de refus de ComfyUI : `/prompt` répond 400 avec `error.message` et `node_errors`. */

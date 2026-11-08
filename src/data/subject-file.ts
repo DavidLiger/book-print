@@ -192,3 +192,12 @@ export function keepDatedCopies(dataRoot: string, bookId: string, id: string, no
   }
   return kept;
 }
+
+/** Style par défaut du livre (IC2, question 7), dans `print-book.json`. `null` le retire. Rien à changer : aucune écriture. */
+export function setDefaultStyle(dataRoot: string, bookId: string, styleId: string | null): PrintBook {
+  const { dir, book } = requirePrintBook(dataRoot, bookId);
+  const { defaultStyle: _old, ...rest } = book;
+  const next = printBookSchema.parse(styleId === null ? rest : { ...rest, defaultStyle: styleId });
+  if (JSON.stringify(next) !== JSON.stringify(book)) writeAtomic(dir, 'print-book.json', json(next));
+  return next;
+}

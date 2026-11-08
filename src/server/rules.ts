@@ -27,5 +27,5 @@ const ownPost = (h: ActionHeaders, port: number) => h.method === 'POST' && h.act
 /** Action admise : corps JSON. */
 export const actionAllowed = (h: ActionHeaders, port: number): boolean => ownPost(h, port) && /^application\/json\b/i.test(h.contentType ?? '');
 
-/** Dépôt d'une image : mêmes protections, corps binaire. La signature est contrôlée ensuite, sur le fichier lui-même. */
-export const uploadAllowed = (h: ActionHeaders, port: number): boolean => ownPost(h, port) && /^image\/png$/i.test(h.contentType ?? '');
+/** Dépôt d'une image : mêmes protections, corps binaire. La signature est contrôlée ensuite, sur le fichier lui-même. `jpeg` : la référence d'un style (IC2). */
+export const uploadAllowed = (h: ActionHeaders, port: number, jpeg = false): boolean => ownPost(h, port) && (jpeg ? /^image\/(png|jpeg)$/i : /^image\/png$/i).test(h.contentType ?? '');

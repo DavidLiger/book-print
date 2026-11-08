@@ -20,6 +20,11 @@ import type { ConfigState } from '../server/config';
 import { GeometryRefused } from '../templates/geometry';
 import { readWorkflows } from '../comfy/workflow-file';
 import { WORKFLOW_KINDS, WORKFLOW_LABELS, WorkflowRefused } from '../comfy/workflow';
+import { allEntries } from '../rights/registry';
+import { coherenceAlerts, imageStyles, referenceToCheck, styleFaults } from '../styles/library';
+import { okStyle, readStyles, StyleRefused } from '../styles/read';
+import type { Subject } from '../schema/subject';
+import { effectiveRights } from '../comfy/workflow-file';
 import type { ParcoursFacts, SubjectFacts } from './steps';
 
 const mtime = (file: string) => fs.lstatSync(file, { throwIfNoEntry: false })?.mtimeMs ?? null;
@@ -108,11 +113,41 @@ function workflowFacts(dataRoot: string, bookId: string): ParcoursFacts['workflo
       if (s.state === 'absent') todo.push(`Déposer le workflow de ${label}.`);
       else if (s.state === 'refuse') faults.push(s.message);
       else if (s.rightsFaults.length > 0) faults.push(`Workflow de ${label} : ${s.rightsFaults.join(' ; ')}.`);
-      else if (s.entry.rights.length === 0) todo.push(`Cocher les droits du workflow de ${label}.`);
+      else if (effectiveRights(s).length === 0) todo.push(`Cocher les droits du workflow de ${label}.`);
     }
     return { error: null, todo, faults };
   } catch (e) {
     if (e instanceof WorkflowRefused || e instanceof RightsRefused || e instanceof CollectionRefused) return { error: e.message, todo: [], faults: [] };
+    throw e;
+  }
+}
+
+/** Étape Styles (IC2) : la bibliothèque, le style par défaut du livre, le style des zones, et la cohérence des images déjà produites. */
+function styleFacts(dataRoot: string, book: PrintBook): ParcoursFacts['styles'] {
+  const empty = { error: null, count: 0, faults: [], todo: [], alerts: [] };
+  try {
+    const styles = readStyles(dataRoot);
+    const registry = allEntries(readCollectionRights(dataRoot), readBookRights(dataRoot, book.bookId));
+    const known = new Set(styles.map((s) => s.id));
+    const faults = styles.flatMap((s) => styleFaults(s, registry));
+    const subjects: Subject[] = book.subjects.flatMap((id) => {
+      try {
+        return [readSubject(dataRoot, book.bookId, id)];
+      } catch (e) {
+        if (e instanceof SubjectRefused) return [];
+        throw e;
+      }
+    });
+    if (book.defaultStyle !== undefined && !known.has(book.defaultStyle)) faults.push(`Style par défaut inconnu de la bibliothèque : ${book.defaultStyle}.`);
+    for (const s of subjects) for (const [zone, id] of Object.entries(s.generationStyles ?? {})) if (!known.has(id)) faults.push(`${s.id}/${zone} : style inconnu de la bibliothèque (${id}).`);
+    const todo = styles.length > 0 && book.defaultStyle === undefined ? ['Choisir le style par défaut du livre.'] : [];
+    const toCheck = styles.flatMap((s) => {
+      const ok = okStyle(s);
+      return ok && referenceToCheck(ok.style, registry) && ok.style.reference.type !== 'aucune' ? [`Référence à vérifier : ${ok.style.reference.rights} (${ok.style.name}).`] : [];
+    });
+    return { error: null, count: styles.length, faults, todo, alerts: [...coherenceAlerts(imageStyles(subjects), styles), ...toCheck] };
+  } catch (e) {
+    if (e instanceof StyleRefused || e instanceof RightsRefused || e instanceof CollectionRefused) return { ...empty, error: e.message };
     throw e;
   }
 }
@@ -172,6 +207,7 @@ export function readFacts(state: ConfigState, dir: string | null): ParcoursFacts
     essai: { renderError: null, control: null, controlError: null, styleMs: null, printBookMs: null, bookChanged: null },
     droits: { error: null, missing: 0, faults: [], toCheck: [] },
     workflows: { error: null, todo: [], faults: [] },
+    styles: { error: null, count: 0, faults: [], todo: [], alerts: [] },
     subjects: [],
   };
   if (!state.ok || dir === null) return facts;
@@ -200,6 +236,7 @@ export function readFacts(state: ConfigState, dir: string | null): ParcoursFacts
     facts.essai = essaiFacts(dataRoot, book, folder);
     facts.droits = droitsFacts(dataRoot, bookId);
     facts.workflows = workflowFacts(dataRoot, bookId);
+    facts.styles = styleFacts(dataRoot, book);
   }
   facts.subjects = book.subjects.map((id) => subjectFacts(dataRoot, book, id, reading.scenes));
   return facts;

@@ -1,5 +1,6 @@
 // src/ui/app.js — page locale de book-print : un menu d'étapes (UI1) et un panneau par étape : configuration, livre lu, dossier (MP1),
-// simulateur de prix (PX1), collection et essai du gabarit 2A (MP2), sujets et relecture (MP3), droits et illustrations (MP4), workflows et génération par ComfyUI (IC1). L'état des étapes vient du serveur (`/api/parcours`).
+// simulateur de prix (PX1), collection et essai du gabarit 2A (MP2), sujets et relecture (MP3), droits et illustrations (MP4), workflows et génération par ComfyUI (IC1),
+// bibliothèque de styles (IC2). L'état des étapes vient du serveur (`/api/parcours`).
 // Les textes viennent de fichiers : ils passent toujours par textContent.
 
 async function action(path, body = {}) {
@@ -85,6 +86,9 @@ function showStep(id) {
   if (changed && id === 'sujets') loadSujets();
   if (changed && id === 'droits') loadDroits();
   if (changed && id === 'workflows') loadWorkflows();
+  if (changed && id === 'styles') loadStyles();
+  // L'état de ComfyUI du bandeau se revérifie à chaque changement d'étape : il peut avoir été fermé entre-temps.
+  if (changed && !['workflows', 'styles'].includes(id)) pollComfy(true);
 }
 
 /** `reopen` : le livre vient d'être choisi, on repart de la première étape non validée. Sinon on reste là où on est, si l'étape reste ouverte. */
@@ -165,6 +169,7 @@ async function readSelected() {
   if (parcours.current === 'sujets') await loadSujets();
   if (parcours.current === 'droits') await loadDroits();
   if (parcours.current === 'workflows') await loadWorkflows();
+  if (parcours.current === 'styles') await loadStyles();
 }
 
 async function createFolder() {
@@ -1437,13 +1442,29 @@ function queueLine() {
   return null;
 }
 
+/** État court de ComfyUI pour le bandeau, quand aucune tâche n'est à dire. Le texte complet est dans l'infobulle. */
+function comfyShort() {
+  if (comfy.address && !comfy.address.ok) return { text: 'ComfyUI : adresse refusée', className: 'erreur' };
+  if (comfy.starting) return { text: 'ComfyUI démarre…', className: '' };
+  if (!comfy.server) return { text: 'ComfyUI : état non vérifié', className: '' };
+  if (comfy.server.ok) return { text: `ComfyUI ${comfy.server.version} : prêt`, className: 'bien' };
+  return { text: 'ComfyUI arrêté', className: 'erreur' };
+}
+
+/** Bandeau : une tâche en cours ou en attente d'abord ; sinon ComfyUI arrêté ; sinon la dernière tâche ; sinon ComfyUI prêt. */
 function showQueueLine() {
-  const line = queueLine();
+  const q = comfy.queue;
+  const active = !!q && (!!q.current || q.pending.length > 0);
+  const short = comfyShort();
+  const down = short.className === 'erreur' || comfy.starting;
+  const line = active || !down ? queueLine() : null;
   const box = $('file-comfy');
-  box.hidden = !line;
-  box.textContent = line?.text ?? '';
-  box.title = line?.text ?? '';
-  box.classList.toggle('erreur', !!line?.error);
+  const state = line ? { text: line.text, className: line.error ? 'erreur' : '' } : short;
+  box.hidden = false;
+  box.textContent = state.text;
+  box.title = line ? line.text : comfyText().text;
+  box.classList.toggle('erreur', state.className === 'erreur');
+  box.classList.toggle('bien', state.className === 'bien');
 }
 
 function comfyText() {
@@ -1458,15 +1479,16 @@ function comfyText() {
 
 function showComfyState() {
   const { text, className } = comfyText();
-  for (const id of ['wf-comfy', 'ge-comfy']) {
+  for (const id of ['wf-comfy', 'ge-comfy', 'st-comfy']) {
     $(id).textContent = text;
     $(id).className = className;
   }
   const canLaunch = comfy.server?.ok === false && comfy.launcher?.state === 'ok' && comfy.address?.ok;
-  for (const id of ['wf-lancer', 'ge-lancer-comfy']) {
+  for (const id of ['wf-lancer', 'ge-lancer-comfy', 'bandeau-lancer']) {
     $(id).hidden = !canLaunch;
     $(id).disabled = comfy.starting;
   }
+  showQueueLine();
 }
 
 /** « Lancer ComfyUI » : le serveur ouvre le lanceur de config.local.json, la page attend que ComfyUI réponde. */
@@ -1474,7 +1496,9 @@ async function launchComfy() {
   try {
     await action('/api/comfy/lancer', {});
   } catch (e) {
-    for (const id of ['wf-comfy', 'ge-comfy']) {
+    $('file-comfy').textContent = e.message;
+    $('file-comfy').title = e.message;
+    for (const id of ['wf-comfy', 'ge-comfy', 'st-comfy']) {
       $(id).textContent = e.message;
       $(id).className = 'erreur';
     }
@@ -1503,6 +1527,11 @@ async function taskDone(done) {
   const s = Math.round(done.seconds);
   box.replaceChildren(el('p', `${done.label} : ${OUTCOME_LABELS[done.outcome]} en ${Math.floor(s / 60)} min ${String(s % 60).padStart(2, '0')} s. ${done.message}`, classes[done.outcome]));
   if (done.kind === 'agrandissement') images.stamp = Date.now();
+  if (done.kind === 'apercu') {
+    if (parcours.current === 'styles') await loadStyles(false);
+    await refreshParcours();
+    return;
+  }
   if (sujets.open && sujets.step === 'sujet-illustrations') {
     await enqueue(loadImages, $('il-message'));
     if (images.mode === 'generer') await enqueue(loadGenerate, $('ge-message'));
@@ -1532,6 +1561,7 @@ async function pollComfy(ping = false) {
   showQueueLine();
   showComfyState();
   if (images.mode === 'generer') showGenerate();
+  if (parcours.current === 'styles') showPlancheState();
   if (finished) await taskDone(finished);
   if (state.queue.current || state.queue.pending.length > 0) comfy.timer = setTimeout(() => pollComfy(false), COMFY_POLL_MS);
 }
@@ -1546,6 +1576,7 @@ function workflowInfo(kind, w, checked) {
   if (w.state === 'refuse') return [el('p', w.message, 'erreur')];
   const out = [definitions([['Fichier', w.file], ['Déposé le', new Date(w.date).toLocaleString('fr-FR')], ['Empreinte', `${w.sha256.slice(0, 16)}…`], ['Nœuds contrôlés', checked[kind].join(', ')]])];
   for (const f of w.rightsFaults) out.push(el('p', f, 'erreur'));
+  for (const id of w.ignored ?? []) out.push(el('p', `${id} est ignoré : la référence vient désormais du style (étape Styles). workflows.json n'est pas réécrit ; il le sera au prochain changement de case.`, 'note'));
   if (w.rights.length === 0) out.push(el('p', 'Cocher au moins un droit.', 'alerte'));
   return out;
 }
@@ -1556,7 +1587,7 @@ function workflowRights(kind, w, entries) {
   const frag = document.createDocumentFragment();
   if (w.state !== 'ok') frag.append(el('p', 'Déposer d\'abord le workflow.', 'note'));
   else {
-    for (const k of ['modele-ia', 'controlnet', 'upscaler', 'image-reference']) {
+    for (const k of ['modele-ia', 'controlnet', 'upscaler']) {
       const group = entries.filter((e) => e.kind === k);
       if (group.length === 0) continue;
       frag.append(el('p', KIND_LABELS[k], 'titre-liste'));
@@ -1683,18 +1714,56 @@ function candidateCard(zone, seed, ready) {
   const img = el('img');
   img.alt = `Candidat de graine ${seed}, couleurs corrigées`;
   img.src = `/candidat?${new URLSearchParams({ dir: dirOf(), subject: sujets.open, zone: zone.zone, seed: String(seed), t: zone.candidates.date })}`;
-  const go = el('button', 'Agrandir');
+  img.addEventListener('click', () => openLoupe(img.src, seed, go.disabled));
+  const view = el('div', undefined, 'vue-candidat');
+  const loupe = el('button', '🔍', 'secondaire ouvrir-loupe');
+  loupe.type = 'button';
+  loupe.title = `Voir la graine ${seed} en grand`;
+  loupe.setAttribute('aria-label', `Voir la graine ${seed} en grand`);
+  loupe.addEventListener('click', () => openLoupe(img.src, seed, go.disabled));
+  view.append(img, loupe);
+  const go = el('button', 'Agrandir', 'agrandir');
   go.type = 'button';
   go.disabled = !ready || zone.busy.includes('agrandissement');
   go.addEventListener('click', () => askUpscale(seed, false));
-  card.append(img, el('p', `Graine ${seed}`), go);
+  const row = el('div', undefined, 'boutons-candidat');
+  row.append(el('p', `Graine ${seed}`), go);
+  card.append(view, row);
   return card;
+}
+
+// Loupe (correctif IC2) : l'image corrigée en entier, un clic zoome à 100 % sur le point cliqué, glisser déplace, Échap ferme.
+const loupe = { seed: null, drag: null, moved: false };
+
+function openLoupe(src, seed, upscaleDisabled) {
+  loupe.seed = seed;
+  $('ge-loupe-titre').textContent = `Graine ${seed}`;
+  $('ge-loupe-image').alt = `Candidat de graine ${seed}, couleurs corrigées, en grand`;
+  $('ge-loupe-image').src = src;
+  $('ge-loupe-agrandir').disabled = upscaleDisabled;
+  $('ge-loupe-cadre').classList.remove('zoom');
+  $('ge-loupe').showModal();
+}
+
+function toggleLoupeZoom(event) {
+  const frame = $('ge-loupe-cadre');
+  const img = $('ge-loupe-image');
+  if (frame.classList.contains('zoom')) {
+    frame.classList.remove('zoom');
+    return;
+  }
+  const box = img.getBoundingClientRect();
+  const fx = Math.min(1, Math.max(0, (event.clientX - box.left) / box.width));
+  const fy = Math.min(1, Math.max(0, (event.clientY - box.top) / box.height));
+  frame.classList.add('zoom');
+  frame.scrollLeft = fx * img.naturalWidth - frame.clientWidth / 2;
+  frame.scrollTop = fy * img.naturalHeight - frame.clientHeight / 2;
 }
 
 function showGenerate() {
   const zone = genZone();
   if (!gen.view || !zone) return;
-  const motifs = [...(gen.view.workflows.ready ? [] : gen.view.workflows.reasons.map((r) => [r, 'alerte'])), ...(zone.reason ? [[zone.reason, 'erreur']] : [])];
+  const motifs = [...(gen.view.workflows.ready ? [] : gen.view.workflows.reasons.map((r) => [r, 'alerte'])), ...(zone.reason ? [[zone.reason, 'erreur']] : []), ...(zone.style.reason ? [[zone.style.reason, 'erreur']] : [])];
   $('ge-motifs').replaceChildren(...motifs.map(([r, c]) => el('p', r, c)));
   $('ge-attendu').textContent = zone.render
     ? `Rendu et passe Mist en ${zone.render.width} × ${zone.render.height} px (${zone.kindLabel}), gardés sous ${zone.inputs.rendu.name} et ${zone.inputs.mist.name}. L'animal doit faire au moins 300 px de haut : l'outil ne peut pas le vérifier. Image finale : ${zone.output.width} × ${zone.output.height} px.`
@@ -1705,13 +1774,18 @@ function showGenerate() {
     $(`ge-etat-${k}`).className = className;
   }
   if (document.activeElement !== $('ge-prompt')) $('ge-prompt').value = zone.prompt;
-  $('ge-couleurs').textContent = zone.colors.length > 0 ? `Couleur nommée dans le prompt : ${zone.colors.join(', ')}. Les couleurs viennent du rendu 3D (§13.2).` : '';
-  const ready = gen.view.workflows.ready && !zone.reason;
+  const colors = [...zone.colors, ...(zone.styleColors ?? []).map((c) => `${c} (prompt du style)`)];
+  $('ge-couleurs').textContent = colors.length > 0 ? `Couleur nommée dans le prompt : ${colors.join(', ')}. Les couleurs viennent du rendu 3D (§13.2).` : '';
+  showZoneStyle(zone);
+  const seed = $('ge-graine').value.trim();
+  $('ge-lancer').textContent = seed === '' ? 'Lancer la génération (3 graines)' : `Lancer la génération (graine ${seed})`;
+  const ready = gen.view.workflows.ready && !zone.reason && !zone.style.reason;
   $('ge-lancer').disabled = !ready || zone.inputs.rendu.state !== 'ok' || zone.inputs.mist.state !== 'ok' || zone.busy.includes('generation');
   for (const id of ['ge-fichier-rendu', 'ge-fichier-mist']) $(id).disabled = !!zone.reason || zone.busy.includes('generation');
   const seeds = zone.candidates?.seeds ?? [];
-  $('ge-t-candidats').textContent = seeds.length > 0 ? `Candidats, couleurs corrigées (${new Date(zone.candidates.date).toLocaleString('fr-FR')})` : 'Candidats : aucun pour l\'instant.';
-  const shown = [...$('ge-candidats').children].map((c) => `${c.dataset.seed}:${c.querySelector('button').disabled}`).join();
+  const candidateStyle = zone.candidates && (gen.view.styles.find((x) => x.id === zone.candidates.style)?.name ?? zone.candidates.style);
+  $('ge-t-candidats').textContent = seeds.length > 0 ? `Candidats, style ${candidateStyle}, couleurs corrigées (${new Date(zone.candidates.date).toLocaleString('fr-FR')})` : 'Candidats : aucun pour l\'instant.';
+  const shown = [...$('ge-candidats').children].map((c) => `${c.dataset.seed}:${c.querySelector('button.agrandir').disabled}`).join();
   const wanted = seeds.map((s) => `${s}:${!ready || zone.busy.includes('agrandissement')}`).join();
   if (shown !== wanted) $('ge-candidats').replaceChildren(...seeds.map((s) => candidateCard(zone, s, ready)));
   showTasks(zone);
@@ -1770,8 +1844,354 @@ async function uploadEntry(kind, file) {
   message.replaceChildren(el('p', `${kind === 'rendu' ? 'Rendu' : 'Passe Mist'} gardé : ${data.deposited.size.width} × ${data.deposited.size.height} px.`, 'bien'));
 }
 
+/** Style de la zone (IC2) : le choix propre de la zone, ou le style par défaut du livre, présélectionné. */
+function showZoneStyle(zone) {
+  const select = $('ge-style');
+  const def = gen.view.styles.find((x) => x.id === gen.view.defaultStyle);
+  const options = [['', def ? `Défaut : ${def.name}` : 'Défaut : aucun'], ...gen.view.styles.map((x) => [x.id, x.faults.length > 0 ? `${x.name} (à corriger)` : x.name])];
+  const wanted = options.map(([v, t]) => `${v}:${t}`).join('|');
+  if (select.dataset.options !== wanted) {
+    select.replaceChildren(...options.map(([v, t]) => {
+      const o = el('option', t);
+      o.value = v;
+      return o;
+    }));
+    select.dataset.options = wanted;
+  }
+  select.value = zone.style.chosen ? zone.style.id : '';
+  select.disabled = zone.busy.includes('generation');
+}
+
+// Étape Styles (IC2) : bibliothèque, style de base, référence, rendu d'essai, planche.
+
+const stylesUi = { view: null, open: null, view_mode: 'bibliotheque', plancheStart: null, stamp: Date.now() };
+const STYLE_REF_LABELS = { aucune: 'aucune', dessin: 'dessin de David', externe: 'image externe' };
+const openStyle = () => stylesUi.view?.styles.find((x) => x.id === stylesUi.open);
+
+function styleStateText(x) {
+  if (x.state !== 'ok') return ['✗ refusé', 'erreur'];
+  if (x.faults.length > 0) return ['✗ à corriger', 'erreur'];
+  if (x.toCheck) return ['⚠ référence à vérifier', 'alerte'];
+  return ['✓ prêt', 'bien'];
+}
+
+function previewText(x) {
+  if (x.busy) return 'aperçu dans la file';
+  if (!x.preview) return 'aperçu : déposer le rendu d\'essai (Planche)';
+  return x.preview.cached ? 'aperçu en cache' : 'aperçu à faire';
+}
+
+function stylesTable(view) {
+  const table = el('table');
+  const head = el('tr');
+  for (const h of ['Style', 'Référence', 'État', '']) head.append(el('th', h));
+  table.append(head);
+  for (const x of view.styles) {
+    const tr = el('tr');
+    if (x.id === stylesUi.open) tr.setAttribute('aria-current', 'true');
+    tr.dataset.style = x.id;
+    const name = el('td');
+    name.append(el('span', x.state === 'ok' ? x.style.name : x.id), el('br'), el('span', `${x.id}${x.id === view.defaultStyle ? ', par défaut' : ''}`, 'note'));
+    const [state, cls] = styleStateText(x);
+    const stateCell = el('td');
+    stateCell.append(el('span', state, cls));
+    if (x.state === 'ok') stateCell.append(el('br'), el('span', previewText(x), 'note'));
+    const go = el('td');
+    go.append(smallButton('Ouvrir', () => openStyleForm(x.id)));
+    tr.append(name, el('td', x.state === 'ok' ? STYLE_REF_LABELS[x.style.reference.type] : '—'), stateCell, go);
+    table.append(tr);
+  }
+  return table;
+}
+
+function fillDefaultSelect(view) {
+  const options = [['', 'aucun'], ...view.styles.map((x) => [x.id, x.state === 'ok' ? x.style.name : x.id])];
+  const select = $('st-defaut');
+  select.replaceChildren(...options.map(([v, t]) => {
+    const o = el('option', t);
+    o.value = v;
+    return o;
+  }));
+  select.value = view.defaultStyle ?? '';
+}
+
+function fillReferenceSelect(view, selected) {
+  const select = $('st-ref-droit');
+  const options = view.references.map((e) => {
+    const o = el('option', `${e.name}${e.commercialOk === 'oui' ? '' : ` (usage commercial : ${COMMERCIAL_LABELS[e.commercialOk]})`}`);
+    o.value = e.id;
+    o.disabled = e.commercialOk === 'non';
+    return o;
+  });
+  select.replaceChildren(...options);
+  if (selected) select.value = selected;
+}
+
+const STYLE_FIELDS = ['st-nom', 'st-description', 'st-prompt', 'st-negatif', 'st-denoise', 'st-poids', 'st-dosage', 'st-profondeur', 'st-canny', 'st-tile', 'st-tile-debut', 'st-tile-fin', 'st-ref-type', 'st-ref-droit', 'st-gris', 'st-ag-prompt', 'st-ag-negatif'];
+
+function writeStyleForm(x) {
+  const st = x?.state === 'ok' ? x.style : null;
+  for (const id of [...STYLE_FIELDS, 'st-enregistrer', 'st-apercu', 'st-fichier-reference']) $(id).disabled = !st;
+  $('st-titre').textContent = x ? (st ? `${st.name} (${x.id})` : `${x.id} : style refusé`) : 'Aucun style ouvert';
+  if (!st) {
+    if (x) $('st-ref-etat').textContent = x.message;
+    return;
+  }
+  $('st-nom').value = st.name;
+  $('st-description').value = st.description;
+  $('st-prompt').value = st.prompt;
+  $('st-negatif').value = st.negative;
+  $('st-denoise').value = String(st.denoise);
+  $('st-poids').value = String(st.ipAdapterWeight);
+  $('st-dosage').value = String(st.colorDosage);
+  $('st-profondeur').value = String(st.controlnet.depth.strength);
+  $('st-canny').value = String(st.controlnet.canny.strength);
+  $('st-tile').value = String(st.controlnet.tile.strength);
+  $('st-tile-debut').value = String(st.controlnet.tile.start);
+  $('st-tile-fin').value = String(st.controlnet.tile.end);
+  $('st-ref-type').value = st.reference.type;
+  fillReferenceSelect(stylesUi.view, st.reference.type === 'externe' ? st.reference.rights : undefined);
+  $('st-gris').checked = st.reference.type !== 'aucune' && st.reference.grayscale;
+  $('st-ag-prompt').value = st.upscale.prompt;
+  $('st-ag-negatif').value = st.upscale.negative;
+  showReferenceFields(x);
+}
+
+function showReferenceFields(x) {
+  const type = $('st-ref-type').value;
+  $('st-ref-droit').disabled = type !== 'externe';
+  $('st-gris').disabled = type === 'aucune';
+  $('st-fichier-reference').disabled = type === 'aucune';
+  $('st-depot-reference').hidden = type === 'aucune';
+  const ref = x?.state === 'ok' ? x.style.reference : null;
+  const parts = [];
+  if (type === 'aucune') parts.push('Style par le prompt seul : l\'IP-Adapter ne tourne pas (nœuds 22 à 24 contournés).');
+  else if (type === 'dessin') parts.push(`Droit rattaché : dessin-${x?.id ?? '…'}, créé au registre commun à l'enregistrement s'il n'existe pas.`);
+  if (type !== 'aucune') parts.push(ref?.type === type && x.reference ? `Référence rangée : ${x.reference.file}, empreinte ${x.reference.sha256.slice(0, 12)}…` : 'Référence à déposer après l\'enregistrement.');
+  for (const f of x?.faults ?? []) parts.push(f);
+  $('st-ref-etat').textContent = parts.join(' ');
+  $('st-ref-etat').className = (x?.faults ?? []).length > 0 ? 'erreur champ large' : 'note champ large';
+  const words = colorWordsOf($('st-prompt').value);
+  $('st-couleurs').textContent = words.length > 0 ? `Couleur nommée dans le prompt de style : ${words.join(', ')}. Les couleurs viennent du rendu 3D (§13.2).` : '';
+}
+
+/** Même liste que `src/comfy/prompt.ts`, pour l'alerte pendant la saisie ; la vue « Générer » reçoit celle du serveur. */
+const COLOR_WORDS = ['red', 'green', 'blue', 'yellow', 'orange', 'purple', 'violet', 'pink', 'brown', 'black', 'white', 'grey', 'gray', 'gold', 'golden', 'silver', 'crimson', 'scarlet', 'beige', 'turquoise', 'cyan', 'magenta', 'teal', 'emerald', 'amber', 'ochre', 'tan', 'rouge', 'rouges', 'vert', 'verte', 'verts', 'vertes', 'bleu', 'bleue', 'bleus', 'bleues', 'jaune', 'jaunes', 'rose', 'roses', 'marron', 'brun', 'brune', 'noir', 'noire', 'noirs', 'noires', 'blanc', 'blanche', 'blancs', 'blanches', 'gris', 'grise', 'doré', 'dorée', 'argenté', 'argentée', 'ocre', 'pourpre'];
+const colorWordsOf = (text) => [...new Set((text.toLowerCase().match(/[\p{L}]+/gu) ?? []).filter((w) => COLOR_WORDS.includes(w)))];
+
+function readStyleForm() {
+  const n = (id) => Number($(id).value);
+  const type = $('st-ref-type').value;
+  const reference = type === 'aucune' ? { type } : type === 'dessin' ? { type, grayscale: $('st-gris').checked } : { type, rights: $('st-ref-droit').value, grayscale: $('st-gris').checked };
+  return {
+    name: $('st-nom').value,
+    description: $('st-description').value,
+    prompt: $('st-prompt').value,
+    negative: $('st-negatif').value,
+    denoise: n('st-denoise'),
+    ipAdapterWeight: n('st-poids'),
+    controlnet: { depth: { strength: n('st-profondeur') }, canny: { strength: n('st-canny') }, tile: { strength: n('st-tile'), start: n('st-tile-debut'), end: n('st-tile-fin') } },
+    colorDosage: n('st-dosage'),
+    reference,
+    upscale: { prompt: $('st-ag-prompt').value, negative: $('st-ag-negatif').value },
+  };
+}
+
+function showOpenPreview() {
+  const x = openStyle();
+  const img = $('st-apercu-image');
+  const ready = x?.state === 'ok' && x.preview?.cached;
+  img.hidden = !ready;
+  if (ready) {
+    const src = `/apercu-style?${new URLSearchParams({ id: x.id, key: x.preview.key })}`;
+    if (img.getAttribute('src') !== src) img.src = src;
+  }
+  $('st-apercu-etat').textContent = !x ? 'Ouvrir un style pour voir son aperçu.' : x.state !== 'ok' ? '' : ready ? '' : previewText(x);
+  $('st-apercu').disabled = !x || x.state !== 'ok' || x.faults.length > 0 || x.busy || !x.preview || x.preview.cached;
+}
+
+function openStyleForm(id) {
+  stylesUi.open = id;
+  writeStyleForm(openStyle());
+  $('st-liste').replaceChildren(stylesTable(stylesUi.view));
+  showOpenPreview();
+}
+
+function showEssaiInputs(view) {
+  for (const k of ['rendu', 'mist']) {
+    const input = view.essai.inputs[k];
+    const [text, cls] = input.state === 'ok' ? ['✓ déposé', 'bien'] : input.state === 'absent' ? ['à déposer', 'note'] : [input.message, 'erreur'];
+    $(`st-etat-${k}`).textContent = text;
+    $(`st-etat-${k}`).className = cls;
+  }
+  if (document.activeElement !== $('st-essai-prompt')) $('st-essai-prompt').value = view.essai.prompt;
+}
+
+function plancheCard(x) {
+  const card = el('div', undefined, 'carte-style');
+  card.dataset.style = x.id;
+  const box = el('div', undefined, 'vignette');
+  if (x.state === 'ok' && x.preview?.cached) {
+    const img = el('img');
+    img.alt = `Aperçu du style ${x.style.name}`;
+    img.src = `/apercu-style?${new URLSearchParams({ id: x.id, key: x.preview.key })}`;
+    box.append(img);
+  } else box.append(el('p', x.state !== 'ok' || x.faults.length > 0 ? 'style à corriger' : previewText(x)));
+  card.append(box, el('p', x.state === 'ok' ? x.style.name : x.id, 'nom-style'), el('p', x.id === stylesUi.view.defaultStyle ? `${x.id}, par défaut` : x.id));
+  return card;
+}
+
+function showPlanche() {
+  const view = stylesUi.view;
+  if (!view) return;
+  const shown = [...$('st-planche').children].map((c) => `${c.dataset.style}:${c.querySelector('img')?.getAttribute('src') ?? c.textContent}`).join('|');
+  const cards = view.styles.map(plancheCard);
+  const wanted = cards.map((c) => `${c.dataset.style}:${c.querySelector('img')?.getAttribute('src') ?? c.textContent}`).join('|');
+  if (shown !== wanted) $('st-planche').replaceChildren(...cards);
+  showPlancheState();
+}
+
+/** Temps de la planche : de « Afficher la planche » à la fin du dernier aperçu de la file. */
+function showPlancheState() {
+  const view = stylesUi.view;
+  if (!view) return;
+  const cached = view.styles.filter((x) => x.state === 'ok' && x.preview?.cached).length;
+  // Les aperçus de la planche en cours : la file du serveur peut ne pas encore les montrer, le cache dit quand ils sont faits.
+  const pending = (stylesUi.plancheIds ?? []).filter((id) => !view.styles.some((x) => x.id === id && x.state === 'ok' && x.preview?.cached)).length;
+  const parts = [`${cached} aperçu${cached > 1 ? 's' : ''} en cache sur ${view.styles.length} style${view.styles.length > 1 ? 's' : ''}, graine ${view.seed}.`];
+  if (pending > 0) parts.push(`${pending} dans la file.`);
+  if (stylesUi.plancheStart !== null && stylesUi.plancheIds === null) parts.push('Planche demandée…');
+  else if (stylesUi.plancheStart !== null) {
+    const s = Math.round((Date.now() - stylesUi.plancheStart) / 1000);
+    const t = `${Math.floor(s / 60)} min ${String(s % 60).padStart(2, '0')} s`;
+    if (pending > 0) parts.push(`Planche lancée depuis ${t}.`);
+    else {
+      parts.push(`Planche complète en ${t}.`);
+      stylesUi.plancheStart = null;
+      stylesUi.plancheIds = [];
+      stylesUi.lastTime = t;
+    }
+  } else if (stylesUi.lastTime) parts.push(`Dernière planche : ${stylesUi.lastTime}.`);
+  $('st-planche-etat').textContent = parts.join(' ');
+}
+
+function showStylesMode(mode) {
+  stylesUi.view_mode = mode;
+  $('st-vue-bibliotheque').hidden = mode !== 'bibliotheque';
+  $('st-vue-planche').hidden = mode !== 'planche';
+  $('v-bibliotheque').setAttribute('aria-pressed', String(mode === 'bibliotheque'));
+  $('v-planche').setAttribute('aria-pressed', String(mode === 'planche'));
+  if (mode === 'planche') showPlanche();
+}
+
+function showStyles(view) {
+  stylesUi.view = view;
+  if (!view.styles.some((x) => x.id === stylesUi.open)) stylesUi.open = view.styles.find((x) => x.id === view.defaultStyle)?.id ?? view.styles[0]?.id ?? null;
+  fillDefaultSelect(view);
+  $('st-base').hidden = !view.canCreateBase;
+  $('st-base').disabled = !view.workflows.ready;
+  const list = $('st-liste');
+  const top = list.scrollTop;
+  list.replaceChildren(view.styles.length > 0 ? stylesTable(view) : el('p', 'Aucun style. Commencer par « Créer le style de base depuis les workflows ».', 'note'));
+  list.scrollTop = top;
+  const focused = STYLE_FIELDS.includes(document.activeElement?.id);
+  if (!focused) writeStyleForm(openStyle());
+  showOpenPreview();
+  showEssaiInputs(view);
+  showPlanche();
+}
+
+async function stylesAction(path, body, done) {
+  const box = $('st-message');
+  box.replaceChildren();
+  try {
+    const reply = await action(path, { dir: dirOf(), ...body });
+    showStyles(reply);
+    done?.(reply, box);
+    if (reply.queued?.length > 0) pollComfy(false);
+  } catch (e) {
+    box.replaceChildren(el('p', e.message, 'erreur'));
+    if (stylesUi.plancheIds === null) {
+      stylesUi.plancheStart = null;
+      stylesUi.plancheIds = [];
+    }
+  } finally {
+    await refreshParcours();
+  }
+}
+
+async function loadStyles(ping = true) {
+  if (!dirOf()) return;
+  try {
+    showStyles(await action('/api/styles/state', { dir: dirOf() }));
+  } catch (e) {
+    $('st-message').replaceChildren(el('p', e.message, 'erreur'));
+  }
+  if (ping) await pollComfy(true);
+}
+
+function saveStyleForm(event) {
+  event.preventDefault();
+  if (!stylesUi.open) return;
+  stylesAction('/api/styles/enregistrer', { id: stylesUi.open, style: readStyleForm() }, ({ entry }, box) => {
+    box.append(el('p', `Style enregistré${entry ? ` ; entrée ${entry} créée au registre commun` : ''}.`, 'bien'));
+  });
+}
+
+function newStyle() {
+  const id = $('st-nouvel-id').value.trim();
+  const base = openStyle();
+  if (!base || base.state !== 'ok') {
+    $('st-message').replaceChildren(el('p', 'Ouvrir d\'abord un style valide : le nouveau part de ses réglages.', 'erreur'));
+    return;
+  }
+  const style = { ...readStyleForm(), name: id || 'Nouveau style', description: '' };
+  stylesAction('/api/styles/creer', { id, style }, ({ created, entry }, box) => {
+    $('st-nouvel-id').value = '';
+    openStyleForm(created);
+    box.append(el('p', `Style ${created} créé${entry ? ` ; entrée ${entry} créée au registre commun` : ''}.`, 'bien'));
+  });
+}
+
+async function uploadStyleFile(route, query, file, label) {
+  const box = $('st-message');
+  if (file.size > IMAGE_MAX) {
+    box.replaceChildren(el('p', 'Fichier trop gros : 64 Mio au plus.', 'erreur'));
+    return;
+  }
+  box.replaceChildren(el('p', 'Dépôt en cours…', 'note'));
+  try {
+    const type = file.type === 'image/jpeg' || /\.jpe?g$/i.test(file.name) ? 'image/jpeg' : 'image/png';
+    const res = await fetch(`${route}?${new URLSearchParams({ dir: dirOf(), ...query })}`, { method: 'POST', headers: { 'Content-Type': type, 'x-book-print': '1' }, body: file });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error ?? `erreur ${res.status}`);
+    showStyles(data);
+    box.replaceChildren(el('p', `${label} gardé.`, 'bien'));
+  } catch (e) {
+    box.replaceChildren(el('p', e.message, 'erreur'));
+  } finally {
+    await refreshParcours();
+  }
+}
+
+function launchPlanche() {
+  stylesUi.plancheStart = Date.now();
+  // `null` jusqu'à la réponse : la planche n'est pas finie avant d'avoir été mise en file.
+  stylesUi.plancheIds = null;
+  stylesAction('/api/styles/apercus', {}, ({ queued, skipped }, box) => {
+    stylesUi.plancheIds = queued;
+    if (queued.length === 0) stylesUi.plancheStart = null;
+    showPlancheState();
+    const parts = [queued.length > 0 ? `${queued.length} aperçu${queued.length > 1 ? 's' : ''} mis en file.` : 'Tous les aperçus sont en cache.'];
+    if (skipped.length > 0) parts.push(`À corriger, sans aperçu : ${skipped.join(', ')}.`);
+    box.append(el('p', parts.join(' '), queued.length > 0 ? 'note' : 'bien'));
+    showPlanche();
+  });
+}
+
+
 async function start() {
-  pollComfy(false);
+  pollComfy(true);
   const { config, books } = await action('/api/state');
   showConfig(config);
   if (!config.ok) return refreshParcours({ reopen: true });
@@ -1864,7 +2284,54 @@ $('il-zone').addEventListener('change', () => {
 });
 $('v-depot').addEventListener('click', () => showImageMode('depot'));
 $('v-generer').addEventListener('click', () => showImageMode('generer'));
-$('ge-lancer').addEventListener('click', () => generateChange('/api/generer/lancer', {}));
+$('ge-lancer').addEventListener('click', () => {
+  const seed = $('ge-graine').value.trim();
+  generateChange('/api/generer/lancer', seed === '' ? {} : { seed: Number(seed) });
+});
+$('ge-graine').addEventListener('input', showGenerate);
+$('ge-loupe-fermer').addEventListener('click', () => $('ge-loupe').close());
+$('ge-loupe-agrandir').addEventListener('click', () => {
+  $('ge-loupe').close();
+  askUpscale(loupe.seed, false);
+});
+$('ge-loupe-cadre').addEventListener('pointerdown', (event) => {
+  const frame = $('ge-loupe-cadre');
+  loupe.moved = false;
+  loupe.drag = { x: event.clientX, y: event.clientY, left: frame.scrollLeft, top: frame.scrollTop };
+  frame.setPointerCapture(event.pointerId);
+});
+$('ge-loupe-cadre').addEventListener('pointermove', (event) => {
+  const frame = $('ge-loupe-cadre');
+  if (!loupe.drag) return;
+  const dx = event.clientX - loupe.drag.x;
+  const dy = event.clientY - loupe.drag.y;
+  if (Math.abs(dx) + Math.abs(dy) > 4) loupe.moved = true;
+  if (loupe.moved && frame.classList.contains('zoom')) {
+    frame.classList.add('glisse');
+    frame.scrollLeft = loupe.drag.left - dx;
+    frame.scrollTop = loupe.drag.top - dy;
+  }
+});
+$('ge-loupe-cadre').addEventListener('pointerup', (event) => {
+  $('ge-loupe-cadre').classList.remove('glisse');
+  const moved = loupe.moved;
+  loupe.drag = null;
+  if (!moved) toggleLoupeZoom(event);
+});
+$('ge-style').addEventListener('change', () => generateChange('/api/generer/style', { styleId: $('ge-style').value === '' ? null : $('ge-style').value }));
+$('v-bibliotheque').addEventListener('click', () => showStylesMode('bibliotheque'));
+$('v-planche').addEventListener('click', () => showStylesMode('planche'));
+$('st-defaut').addEventListener('change', () => stylesAction('/api/styles/defaut', { styleId: $('st-defaut').value === '' ? null : $('st-defaut').value }));
+$('st-base').addEventListener('click', () => stylesAction('/api/styles/base', {}, ({ reference }, box) => box.append(el('p', `Style de base créé depuis les workflows, référence ${reference} relue dans ComfyUI.`, 'bien'))));
+$('st-form').addEventListener('submit', saveStyleForm);
+$('st-ref-type').addEventListener('change', () => showReferenceFields(openStyle()));
+$('st-prompt').addEventListener('input', () => showReferenceFields(openStyle()));
+$('st-nouveau').addEventListener('click', newStyle);
+$('st-apercu').addEventListener('click', () => stylesAction('/api/styles/apercus', { ids: [stylesUi.open] }, ({ queued }, box) => box.append(el('p', queued.length > 0 ? 'Aperçu mis en file.' : 'Aperçu déjà en cache.', 'note'))));
+$('st-planche-lancer').addEventListener('click', launchPlanche);
+$('st-essai-prompt').addEventListener('change', () => stylesAction('/api/styles/essai-prompt', { prompt: $('st-essai-prompt').value }));
+dropZone($('st-depot-reference'), $('st-fichier-reference'), (file) => uploadStyleFile('/api/styles/reference', { id: stylesUi.open }, file, 'Référence'));
+for (const kind of ['rendu', 'mist']) dropZone($(`st-depot-${kind}`), $(`st-fichier-${kind}`), (file) => uploadStyleFile('/api/styles/essai', { kind }, file, kind === 'rendu' ? 'Rendu d\'essai' : 'Mist d\'essai'));
 $('ge-prompt').addEventListener('change', () => generateChange('/api/generer/prompt', { text: $('ge-prompt').value }));
 $('ge-remplacer').addEventListener('click', () => askUpscale(gen.confirmSeed, true));
 $('ge-annuler').addEventListener('click', () => {
@@ -1875,6 +2342,7 @@ for (const kind of ['rendu', 'mist']) dropZone($(`ge-depot-${kind}`), $(`ge-fich
 for (const kind of WF_KINDS) dropZone($(`wf-depot-${kind}`), $(`wf-fichier-${kind}`), (file) => depositWorkflow(kind, file));
 $('wf-verifier').addEventListener('click', () => pollComfy(true));
 $('wf-lancer').addEventListener('click', launchComfy);
+$('bandeau-lancer').addEventListener('click', launchComfy);
 $('ge-lancer-comfy').addEventListener('click', launchComfy);
 dropZone($('il-depot'), $('il-fichier'), (file) => depositImage(file));
 $('il-remplacer').addEventListener('click', () => {

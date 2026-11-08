@@ -29,6 +29,8 @@ export const printBookSchema = z.strictObject({
   subjects: uniqueList(slugSchema, 'sujet'),
   /** Remplace la fiche de `collection/style.json` pour ce livre (P-30). Les pictogrammes sont contrôlés avec la collection, au rendu. */
   fiche: ficheSchema.optional(),
+  /** Style de la bibliothèque par défaut pour les illustrations du livre (IC2), réglé dans l'étape Styles. */
+  defaultStyle: slugSchema.optional(),
 });
 export type PrintBook = z.infer<typeof printBookSchema>;
 

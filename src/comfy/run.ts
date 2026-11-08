@@ -8,8 +8,12 @@ import type { Size } from '../images/crop';
 import type { Generation } from '../schema/subject';
 import { ComfyClient, ComfyError, executionError, type HistoryEntry, type ImageFile } from './client';
 import { correctColors } from './colors';
+import { keepImageChunks } from '../images/png';
+import { writePreview } from '../styles/files';
+import { generationGraph, upscaleFields } from '../styles/graph';
+import type { ImageKind } from '../styles/read';
+import type { Style } from '../styles/schema';
 import { cacheFolder, clearCandidates, correctedName, generatedName, CANDIDATES_FILE, candidatesSchema, writeCacheFile, type Candidates } from './files';
-import { COLOR_DOSAGE } from './lab';
 import { TaskCancelled, type TaskContext } from './queue';
 import type { WorkflowEntry } from './workflow-file';
 import { applyFields, sha256, SPECS, type FieldChanges, type Graph } from './workflow';
@@ -92,15 +96,43 @@ async function execute(client: ComfyClient, graph: Graph, outputNode: string, ct
 export const comfyInputName = (bookId: string, subjectId: string, zone: string, suffix: string) => `bookprint_${bookId}_${subjectId}_${zone}_${suffix}.png`;
 const outputPrefix = (subjectId: string, zone: string, suffix: string) => `book-print/${subjectId}_${zone}_${suffix}`;
 
-/** La référence de style reste dans le dossier d'entrée de ComfyUI (question 3) : son empreinte est lue par `/view`, sans accès au disque. */
-async function referenceHash(client: ComfyClient, name: string): Promise<string> {
-  const at = name.lastIndexOf('/');
-  try {
-    return sha256((await client.view({ filename: name.slice(at + 1), subfolder: at < 0 ? '' : name.slice(0, at), type: 'input' })).png);
-  } catch (e) {
-    throw new ComfyError(`Référence de style ${name} introuvable dans le dossier d'entrée de ComfyUI : ${(e as Error).message}`);
-  }
+/** Le style emporté par une tâche (IC2) : lu au lancement, il ne change pas si David le modifie pendant que la tâche attend. */
+export interface StyleRun {
+  id: string;
+  /** Empreinte de `style.json`, tracée avec l'image. */
+  sha256: string;
+  style: Style;
+  /** Octets de la référence, tels que rangés dans le style ; `null` sans référence. */
+  reference: { bytes: Buffer; kind: ImageKind } | null;
 }
+
+/** Copie en niveaux de gris d'une référence (question 5) : l'original reste dans le style. */
+export async function grayscaleCopy(bytes: Buffer): Promise<Buffer> {
+  const { default: sharp } = await import('sharp');
+  const out = await sharp(bytes, { limitInputPixels: 64_000_000 }).grayscale().toColourspace('srgb').png({ compressionLevel: 6, adaptiveFiltering: true }).toBuffer();
+  return keepImageChunks(out);
+}
+
+/** Nom de la référence dans le dossier d'entrée de ComfyUI : `bookprint_style_<styleId>.<ext>`, ou `_gris.png` pour la copie en gris. */
+export const referenceInputName = (styleId: string, kind: ImageKind, gray: boolean) => (gray ? `bookprint_style_${styleId}_gris.png` : `bookprint_style_${styleId}.${kind}`);
+
+/** Dépose la référence du style au moment de générer, avec l'empreinte des octets envoyés. `null` : style sans référence. */
+async function uploadReference(client: ComfyClient, s: StyleRun): Promise<{ name: string; sha256: string } | null> {
+  if (!s.reference || s.style.reference.type === 'aucune') return null;
+  const gray = s.style.reference.grayscale;
+  const bytes = gray ? await grayscaleCopy(s.reference.bytes) : s.reference.bytes;
+  const kind = gray ? 'png' : s.reference.kind;
+  const name = await client.upload(referenceInputName(s.id, kind, gray), bytes, kind === 'png' ? 'image/png' : 'image/jpeg');
+  return { name, sha256: sha256(bytes) };
+}
+
+/** Correction de couleurs au dosage du style. À 0, sans correction : l'image générée, sans ses métadonnées. */
+async function correct(generated: Buffer, rendu: Buffer, dosage: number): Promise<Buffer> {
+  return dosage === 0 ? keepImageChunks(generated) : correctColors(generated, rendu, dosage);
+}
+
+/** Droit de la référence d'un style : il passe à l'image finale (question 6). */
+export const referenceRights = (style: Style): string | null => (style.reference.type === 'aucune' ? null : style.reference.rights);
 
 export interface GenerationJob {
   dataRoot: string;
@@ -114,7 +146,7 @@ export interface GenerationJob {
   mist: Buffer;
   renderSize: Size;
   workflow: { entry: WorkflowEntry; graph: Graph };
-  referenceName: string;
+  style: StyleRun;
 }
 
 export async function runGeneration(job: GenerationJob, ctx: TaskContext, deps: RunDeps): Promise<string> {
@@ -126,7 +158,8 @@ export async function runGeneration(job: GenerationJob, ctx: TaskContext, deps: 
   ctx.progress('dépôt du rendu et de la Mist');
   const renduName = await client.upload(comfyInputName(bookId, subjectId, zone, 'rendu'), job.rendu);
   const mistName = await client.upload(comfyInputName(bookId, subjectId, zone, 'mist'), job.mist);
-  const reference = { name: job.referenceName, sha256: await referenceHash(client, job.referenceName) };
+  const reference = await uploadReference(client, job.style);
+  const { style } = job.style;
   // Les anciens candidats restent jusqu'à la première image nouvelle : un agrandissement lancé entre-temps les a déjà emportés.
   let dir: string | null = null;
   const candidates: Candidates['candidates'] = [];
@@ -134,8 +167,8 @@ export async function runGeneration(job: GenerationJob, ctx: TaskContext, deps: 
   for (const [i, seed] of job.seeds.entries()) {
     const step = `graine ${i + 1} sur ${job.seeds.length}`;
     const start = deps.now().getTime();
-    const fields: FieldChanges = { '3': { seed }, '6': { text: job.prompt }, '9': { filename_prefix: outputPrefix(subjectId, zone, `g${seed}`) }, '10': { image: renduName }, '11': { image: mistName } };
-    const image = await execute(client, applyFields(job.workflow.graph, 'generation', fields), SPECS.generation.output, ctx, deps, step, ours);
+    const { graph, fields } = generationGraph(job.workflow.graph, style, { seed, zonePrompt: job.prompt, renduName, mistName, referenceName: reference?.name ?? null, prefix: outputPrefix(subjectId, zone, `g${seed}`) });
+    const image = await execute(client, graph, SPECS.generation.output, ctx, deps, step, ours);
     if (image.width !== job.renderSize.width || image.height !== job.renderSize.height) {
       throw new ComfyError(`Image générée en ${image.width} × ${image.height} px, ${job.renderSize.width} × ${job.renderSize.height} attendus : le workflow ne garde pas la taille du rendu.`);
     }
@@ -146,7 +179,7 @@ export async function runGeneration(job: GenerationJob, ctx: TaskContext, deps: 
     writeCacheFile(dir, generatedName(seed), image.png);
     ctx.progress(`${step} : correction des couleurs`);
     const correctionStart = deps.now().getTime();
-    const corrected = await correctColors(image.png, job.rendu, COLOR_DOSAGE);
+    const corrected = await correct(image.png, job.rendu, style.colorDosage);
     const correctionSeconds = Math.round((deps.now().getTime() - correctionStart) / 100) / 10;
     writeCacheFile(dir, correctedName(seed), corrected);
     candidates.push({ seed, generated: sha256(image.png), corrected: sha256(corrected), fields, seconds: Math.round((deps.now().getTime() - start) / 100) / 10, correctionSeconds });
@@ -156,14 +189,16 @@ export async function runGeneration(job: GenerationJob, ctx: TaskContext, deps: 
     date: deps.now().toISOString(),
     comfyuiVersion: version,
     prompt: job.prompt,
-    dosage: COLOR_DOSAGE,
+    dosage: style.colorDosage,
     workflow: { file: job.workflow.entry.file, date: job.workflow.entry.date, sha256: job.workflow.entry.sha256 },
+    style: { id: job.style.id, sha256: job.style.sha256, upscale: style.upscale, rights: referenceRights(style) },
     inputs: { rendu: sha256(job.rendu), mist: sha256(job.mist), reference },
     size: job.renderSize,
     candidates,
   });
   writeCacheFile(dir!, CANDIDATES_FILE, `${JSON.stringify(file, null, 2)}\n`);
-  return `${candidates.length} images générées et corrigées, graines ${job.seeds.join(', ')}.`;
+  const n = candidates.length;
+  return `${n} image${n > 1 ? 's générées et corrigées' : ' générée et corrigée'}, style ${style.name}, graine${n > 1 ? 's' : ''} ${job.seeds.join(', ')}.`;
 }
 
 export interface UpscaleJob {
@@ -177,7 +212,7 @@ export interface UpscaleJob {
   candidates: Candidates;
   output: Size;
   workflows: { generation: WorkflowEntry; agrandissement: { entry: WorkflowEntry; graph: Graph } };
-  /** Droits de l'image finale : ceux des deux workflows, plus les modèles 3D déjà rattachés à la zone. */
+  /** Droits de l'image finale : ceux des deux workflows, la référence du style et les modèles 3D déjà rattachés à la zone. */
   rights: string[];
 }
 
@@ -191,12 +226,7 @@ export async function runUpscale(job: UpscaleJob, ctx: TaskContext, deps: RunDep
   if (ctx.cancelled()) throw new TaskCancelled('annulée avant son envoi');
   ctx.progress('dépôt de l\'image choisie');
   const source = await client.upload(comfyInputName(bookId, subjectId, zone, `c${seed}`), job.corrected);
-  const fields: FieldChanges = {
-    '10': { image: source },
-    '32': { seed },
-    '34': { width: job.output.width, height: job.output.height, crop: 'center' },
-    '35': { filename_prefix: outputPrefix(subjectId, zone, `final_g${seed}`) },
-  };
+  const fields: FieldChanges = upscaleFields(job.candidates.style.upscale, { seed, sourceName: source, width: job.output.width, height: job.output.height, prefix: outputPrefix(subjectId, zone, `final_g${seed}`) });
   const start = deps.now().getTime();
   const image = await execute(client, applyFields(job.workflows.agrandissement.graph, 'agrandissement', fields), SPECS.agrandissement.output, ctx, deps, 'agrandissement', new Set());
   if (image.width !== job.output.width || image.height !== job.output.height) throw new ComfyError(`Image agrandie en ${image.width} × ${image.height} px, ${job.output.width} × ${job.output.height} attendus.`);
@@ -208,6 +238,7 @@ export async function runUpscale(job: UpscaleJob, ctx: TaskContext, deps: RunDep
     seed,
     prompt: job.candidates.prompt,
     dosage: job.candidates.dosage,
+    style: { id: job.candidates.style.id, sha256: job.candidates.style.sha256 },
     workflows: {
       generation: { file: job.workflows.generation.file, date: job.workflows.generation.date, sha256: job.workflows.generation.sha256 },
       agrandissement: { file: job.workflows.agrandissement.entry.file, date: job.workflows.agrandissement.entry.date, sha256: job.workflows.agrandissement.entry.sha256 },
@@ -217,6 +248,41 @@ export async function runUpscale(job: UpscaleJob, ctx: TaskContext, deps: RunDep
   };
   storeIllustration(dataRoot, bookId, subjectId, zone, cleaned, { generation, rights: job.rights });
   return `Image finale rangée : ${cleaned.width} × ${cleaned.height} px, graine ${seed}, ${mmss(deps.now().getTime() - start)} de calcul.`;
+}
+
+/** Graine fixe des aperçus de style (question 8) : celle de l'image du livre 1 tracée en IC1. */
+export const PREVIEW_SEED = 2397429127;
+
+export interface PreviewJob {
+  dataRoot: string;
+  origin: string;
+  /** Clé de l'aperçu : empreinte du style, de sa référence, des entrées d'essai, du prompt, du workflow et de la graine. */
+  key: string;
+  prompt: string;
+  rendu: Buffer;
+  mist: Buffer;
+  workflow: { entry: WorkflowEntry; graph: Graph };
+  style: StyleRun;
+}
+
+/** Aperçu d'un style : une génération à graine fixe sur le rendu d'essai, corrigée, sans agrandissement, rangée dans `collection/.cache/styles/`. */
+export async function runPreview(job: PreviewJob, ctx: TaskContext, deps: RunDeps): Promise<string> {
+  const client = deps.client(job.origin);
+  ctx.progress('contrôle de ComfyUI');
+  await client.systemStats();
+  if (ctx.cancelled()) throw new TaskCancelled('annulée avant son envoi');
+  ctx.progress('dépôt du rendu d\'essai');
+  const renduName = await client.upload('bookprint_style_essai_rendu.png', job.rendu);
+  const mistName = await client.upload('bookprint_style_essai_mist.png', job.mist);
+  const reference = await uploadReference(client, job.style);
+  const { style } = job.style;
+  const { graph } = generationGraph(job.workflow.graph, style, { seed: PREVIEW_SEED, zonePrompt: job.prompt, renduName, mistName, referenceName: reference?.name ?? null, prefix: `book-print/styles/${job.style.id}_${job.key}` });
+  const start = deps.now().getTime();
+  const image = await execute(client, graph, SPECS.generation.output, ctx, deps, `aperçu du style ${style.name}`, new Set());
+  ctx.progress('correction des couleurs');
+  const corrected = await correct(image.png, job.rendu, style.colorDosage);
+  writePreview(job.dataRoot, job.style.id, job.key, corrected);
+  return `Aperçu du style ${style.name} rangé, ${mmss(deps.now().getTime() - start)} de calcul.`;
 }
 
 /** Les entrées lues au lancement d'une génération : jamais un chemin venu de ComfyUI. */

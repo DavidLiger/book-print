@@ -13,7 +13,7 @@ import { colorWords } from '../comfy/prompt';
 import { QueueRefused, TaskQueue, type QueueSnapshot } from '../comfy/queue';
 import { defaultRunDeps, runGeneration, runUpscale, type RunDeps } from '../comfy/run';
 import { outputPixels, renderSize, sizeText, zoneKind, ZONE_KIND_LABELS } from '../comfy/size';
-import { defaultPrompt, depositWorkflow, readWorkflows, referenceName, setWorkflowRights, workflowsReady, type Workflows, type WorkflowState } from '../comfy/workflow-file';
+import { defaultPrompt, depositWorkflow, effectiveRights, readWorkflows, setWorkflowRights, workflowsReady, type Workflows, type WorkflowState } from '../comfy/workflow-file';
 import { SPECS, WORKFLOW_KINDS, WORKFLOW_LABELS, WORKFLOW_RIGHTS_KINDS, WorkflowRefused } from '../comfy/workflow';
 import { illustrationFile, illustrationFolder } from '../data/illustration-file';
 import { SubjectRefused, updateSubject } from '../data/subject-file';
@@ -23,6 +23,8 @@ import { zoneImages, type SubjectContext } from '../render/subject';
 import { allEntries, readBookRights, readCollectionRights } from '../rights/registry';
 import { slugSchema } from '../schema/common';
 import { GENERATION_PROMPT_MAX } from '../schema/subject';
+import { styleFaults, styleRun, zoneStyleId } from '../styles/library';
+import { readStyles, StyleRefused } from '../styles/read';
 import type { Config } from './config';
 import { context, receive, requireZone, UploadTooLarge } from './illustration-actions';
 import { reading } from './subject-actions';
@@ -66,6 +68,10 @@ const wfDepositBody = z.strictObject({ dir: z.string(), kind: kindSchema, conten
 const wfRightsBody = z.strictObject({ dir: z.string(), kind: kindSchema, rights: z.array(slugSchema) });
 const subjectBody = z.strictObject({ dir: z.string(), subjectId: slugSchema });
 const zoneBody = z.strictObject({ dir: z.string(), subjectId: slugSchema, zone: slugSchema });
+/** `seed` (IC2, question 11) : une seule image, de cette graine, au lieu de trois au hasard. */
+const launchBody = z.strictObject({ dir: z.string(), subjectId: slugSchema, zone: slugSchema, seed: z.number().int().nonnegative().max(2 ** 53 - 1).optional() });
+/** `styleId: null` : la zone revient au style par défaut du livre. */
+const zoneStyleBody = z.strictObject({ dir: z.string(), subjectId: slugSchema, zone: slugSchema, styleId: slugSchema.nullable() });
 const promptBody = z.strictObject({ dir: z.string(), subjectId: slugSchema, zone: slugSchema, text: z.string().max(GENERATION_PROMPT_MAX) });
 const upscaleBody = z.strictObject({ dir: z.string(), subjectId: slugSchema, zone: slugSchema, seed: z.number().int().nonnegative(), confirm: z.boolean().optional() });
 const cancelBody = z.strictObject({ id: z.number().int().positive() });
@@ -128,7 +134,7 @@ async function launchComfy(config: Config, rt: ComfyRuntime): Promise<Json> {
 function workflowView(s: WorkflowState): Json {
   if (s.state === 'absent') return { state: 'absent' };
   if (s.state === 'refuse') return { state: 'refuse', message: s.message, file: s.entry?.file ?? null, rights: s.entry?.rights ?? [] };
-  return { state: 'ok', file: s.entry.file, date: s.entry.date, sha256: s.entry.sha256, rights: s.entry.rights, rightsFaults: s.rightsFaults };
+  return { state: 'ok', file: s.entry.file, date: s.entry.date, sha256: s.entry.sha256, rights: effectiveRights(s), rightsFaults: s.rightsFaults, ignored: s.ignored };
 }
 
 function workflowsState(config: Config, dir: string): Json {
@@ -136,13 +142,22 @@ function workflowsState(config: Config, dir: string): Json {
   const workflows = readWorkflows(config.dataRoot, bookId);
   const registry = allEntries(readCollectionRights(config.dataRoot), readBookRights(config.dataRoot, bookId));
   const entries = [...registry.values()].filter((e) => (WORKFLOW_RIGHTS_KINDS as readonly string[]).includes(e.kind)).map(({ id, kind, name, author, license, commercialOk }) => ({ id, kind, name, author, license, commercialOk }));
+  // Les droits ignorés (IC2) sont nommés : `workflows.json` n'est pas réécrit sans action de David.
   const checked = Object.fromEntries(WORKFLOW_KINDS.map((k) => [k, Object.entries(SPECS[k].nodes).map(([id, n]) => `${id} ${n.classType}`)]));
   return { kinds: Object.fromEntries(WORKFLOW_KINDS.map((k) => [k, workflowView(workflows[k])])), ready: workflowsReady(workflows), entries, checked };
 }
 
 // Génération (vue « Générer » de l'étape Illustrations)
 
-function zoneView(ctx: SubjectContext, workflows: Workflows, rt: ComfyRuntime): Json[] {
+type Registry = ReturnType<typeof allEntries>;
+const registryOf = (ctx: SubjectContext): Registry => allEntries(ctx.collection.rights, readBookRights(ctx.dataRoot, ctx.book.bookId));
+
+/** Les styles proposés dans la vue « Générer » : tous, avec ce qui empêche de générer. */
+function stylesView(ctx: SubjectContext, registry: Registry): Json[] {
+  return readStyles(ctx.dataRoot).map((s) => ({ id: s.id, name: s.state === 'ok' ? s.style.name : s.id, faults: styleFaults(s, registry) }));
+}
+
+function zoneView(ctx: SubjectContext, workflows: Workflows, rt: ComfyRuntime, styles: Json[]): Json[] {
   const { dataRoot, book, subject } = ctx;
   const fallback = defaultPrompt(workflows);
   return zoneImages(ctx).map((z) => {
@@ -164,6 +179,11 @@ function zoneView(ctx: SubjectContext, workflows: Workflows, rt: ComfyRuntime): 
     );
     const prompt = subject.generationPrompts?.[z.zone] ?? fallback ?? '';
     const candidates = readCandidates(dataRoot, book.bookId, subject.id, z.zone);
+    const styleId = zoneStyleId(book, subject, z.zone);
+    const style = styles.find((x) => x.id === styleId) as { id: string; name: string; faults: string[] } | undefined;
+    const styleReason = styleId === null
+      ? 'Aucun style : choisir le style par défaut du livre (étape Styles), ou un style pour cette zone.'
+      : !style ? `Style inconnu de la bibliothèque : ${styleId}.` : style.faults.length > 0 ? style.faults.join(' ') : null;
     return {
       zone: z.zone,
       kind,
@@ -176,17 +196,42 @@ function zoneView(ctx: SubjectContext, workflows: Workflows, rt: ComfyRuntime): 
       prompt,
       promptIsDefault: subject.generationPrompts?.[z.zone] === undefined,
       colors: colorWords(prompt),
-      candidates: candidates && { date: candidates.date, seeds: candidates.candidates.map((c) => c.seed), comfyuiVersion: candidates.comfyuiVersion },
+      // L'alerte de couleur porte aussi sur le prompt de style (question 3).
+      styleColors: colorWords(style ? stylePromptOf(dataRoot, style.id) : ''),
+      style: { id: styleId, chosen: subject.generationStyles?.[z.zone] !== undefined, name: style?.name ?? styleId, reason: styleReason },
+      candidates: candidates && { date: candidates.date, seeds: candidates.candidates.map((c) => c.seed), comfyuiVersion: candidates.comfyuiVersion, style: candidates.style.id },
       hasImage: z.illustration !== null,
       busy: rt.queue.busy(zoneKeyOf(book.bookId, subject.id, z.zone)),
     };
   });
 }
 
+const stylePromptOf = (dataRoot: string, id: string): string => {
+  const s = readStyles(dataRoot).find((x) => x.id === id);
+  return s?.state === 'ok' ? s.style.prompt : '';
+};
+
 function generateState(config: Config, dir: string, subjectId: string, rt: ComfyRuntime): Json {
   const ctx = context(config, dir, subjectId);
   const workflows = readWorkflows(config.dataRoot, ctx.book.bookId);
-  return { workflows: workflowsReady(workflows), zones: zoneView(ctx, workflows, rt), trim: ctx.trim };
+  const styles = stylesView(ctx, registryOf(ctx));
+  return { workflows: workflowsReady(workflows), zones: zoneView(ctx, workflows, rt, styles), trim: ctx.trim, styles, defaultStyle: ctx.book.defaultStyle ?? null };
+}
+
+/** Style d'une zone (question 7) : un style de la bibliothèque, ou `null` pour revenir au style par défaut du livre. */
+function changeZoneStyle(config: Config, value: z.infer<typeof zoneStyleBody>, rt: ComfyRuntime): Json {
+  const { dir, subjectId, zone, styleId } = value;
+  const ctx = context(config, dir, subjectId);
+  requireZone(ctx, zone);
+  if (styleId !== null && !readStyles(config.dataRoot).some((s) => s.id === styleId)) throw new StyleRefused(`Style inconnu de la bibliothèque : ${styleId}.`);
+  updateSubject(config.dataRoot, ctx.book.bookId, subjectId, (data) => {
+    const styles = { ...(data.subject.generationStyles ?? {}) };
+    if (styleId === null) delete styles[zone];
+    else styles[zone] = styleId;
+    const { generationStyles: _old, ...rest } = data.subject;
+    return { ...data, subject: Object.keys(styles).length > 0 ? { ...rest, generationStyles: styles } : rest };
+  });
+  return generateState(config, dir, subjectId, rt);
 }
 
 function changePrompt(config: Config, value: z.infer<typeof promptBody>, rt: ComfyRuntime): Json {
@@ -228,21 +273,24 @@ function readyWorkflows(config: Config, bookId: string) {
   return { generation: workflows.generation, agrandissement: workflows.agrandissement, workflows };
 }
 
-function launch(config: Config, value: z.infer<typeof zoneBody>, rt: ComfyRuntime): Json {
+function launch(config: Config, value: z.infer<typeof launchBody>, rt: ComfyRuntime): Json {
   const { dir, subjectId, zone } = value;
   const ctx = context(config, dir, subjectId);
   requireZone(ctx, zone);
   const address = origin(config);
   const { generation, workflows } = readyWorkflows(config, ctx.book.bookId);
   const { render, rendu, mist } = generationInputs(ctx, zone);
-  const seeds = new Set<number>();
-  while (seeds.size < SEEDS_PER_RUN) seeds.add(rt.seed());
+  const styleId = zoneStyleId(ctx.book, ctx.subject, zone);
+  if (styleId === null) throw new StyleRefused('Aucun style : choisir le style par défaut du livre (étape Styles), ou un style pour cette zone.');
+  const style = styleRun(config.dataRoot, styleId, registryOf(ctx));
+  const seeds = new Set<number>(value.seed !== undefined ? [value.seed] : []);
+  while (seeds.size < (value.seed !== undefined ? 1 : SEEDS_PER_RUN)) seeds.add(rt.seed());
   const prompt = ctx.subject.generationPrompts?.[zone] ?? defaultPrompt(workflows)!;
   const job = {
     dataRoot: config.dataRoot, bookId: ctx.book.bookId, subjectId, zone, origin: address, prompt, seeds: [...seeds], rendu, mist, renderSize: render,
-    workflow: { entry: generation.entry, graph: generation.graph }, referenceName: referenceName(workflows)!,
+    workflow: { entry: generation.entry, graph: generation.graph }, style,
   };
-  const task = rt.queue.add({ kind: 'generation', zoneKey: zoneKeyOf(ctx.book.bookId, subjectId, zone), label: `génération ${subjectId}/${zone}`, run: (c) => runGeneration(job, c, rt.deps) });
+  const task = rt.queue.add({ kind: 'generation', zoneKey: zoneKeyOf(ctx.book.bookId, subjectId, zone), label: `génération ${subjectId}/${zone}, style ${style.style.name}`, run: (c) => runGeneration(job, c, rt.deps) });
   return { task, ...generateState(config, dir, subjectId, rt) };
 }
 
@@ -261,9 +309,10 @@ function upscale(config: Config, value: z.infer<typeof upscaleBody>, rt: ComfyRu
   // La confirmation vient avant le calcul : deux minutes plus tard, il serait trop tard pour annuler.
   const exists = illustrationFile(config.dataRoot, bookId, subjectId, zone).state !== 'absent';
   if ((exists || z.illustration) && !confirm) return { needsConfirm: true };
-  const registry = allEntries(ctx.collection.rights, readBookRights(config.dataRoot, bookId));
+  const registry = registryOf(ctx);
   const models3d = (z.rights ?? []).filter((id) => registry.get(id)?.kind === 'modele-3d');
-  const rights = [...new Set([...models3d, ...generation.entry.rights, ...agrandissement.entry.rights])];
+  // La référence vient du style tracé avec les candidats, plus du workflow (question 6).
+  const rights = [...new Set([...models3d, ...effectiveRights(generation), ...effectiveRights(agrandissement), ...(candidates.style.rights ? [candidates.style.rights] : [])])];
   const job = {
     dataRoot: config.dataRoot, bookId, subjectId, zone, origin: address, seed, corrected, candidates, output: outputPixels(z.size),
     workflows: { generation: generation.entry, agrandissement: { entry: agrandissement.entry, graph: agrandissement.graph } }, rights,
@@ -300,7 +349,8 @@ export function comfyActions(rt: ComfyRuntime): Record<string, (body: unknown, c
       return generateState(config, dir, subjectId, rt);
     },
     '/api/generer/prompt': (body, config) => changePrompt(config, parse(promptBody, body), rt),
-    '/api/generer/lancer': (body, config) => launch(config, parse(zoneBody, body), rt),
+    '/api/generer/lancer': (body, config) => launch(config, parse(launchBody, body), rt),
+    '/api/generer/style': (body, config) => changeZoneStyle(config, parse(zoneStyleBody, body), rt),
     '/api/generer/agrandir': (body, config) => upscale(config, parse(upscaleBody, body), rt),
   };
 }

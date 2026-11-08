@@ -13,7 +13,7 @@
     <div class="choix-livre">
       <label for="choix">Livre</label>
       <select id="choix" disabled></select>
-      <p id="file-comfy" class="file" aria-live="polite" hidden></p>
+      <div class="ligne-bandeau"><p id="file-comfy" class="file" aria-live="polite"></p><button id="bandeau-lancer" type="button" class="secondaire petit" hidden>Lancer ComfyUI</button></div>
     </div>
     <nav aria-label="Étapes du parcours"><ol id="etapes" class="etapes"></ol></nav>
   </header>
@@ -205,6 +205,72 @@
       </div>
     </section>
 
+    <section id="styles" class="panneau" aria-labelledby="t-styles" hidden>
+      <div class="tete">
+        <h2 id="t-styles">Bibliothèque de styles</h2>
+        <div class="vues" role="group" aria-label="Vue des styles">
+          <button id="v-bibliotheque" type="button" class="secondaire" aria-pressed="true">Bibliothèque</button>
+          <button id="v-planche" type="button" class="secondaire" aria-pressed="false">Planche</button>
+        </div>
+        <div class="champ ligne"><label for="st-defaut">Style par défaut du livre</label><select id="st-defaut"></select></div>
+        <button id="st-base" type="button" class="secondaire" hidden>Créer le style de base depuis les workflows</button>
+        <p id="st-comfy" class="note"></p>
+      </div>
+      <div id="st-message" class="liste"></div>
+      <div id="st-vue-bibliotheque" class="colonnes">
+        <div class="colonne">
+          <div id="st-liste" class="defile"></div>
+          <div class="nouveau-style">
+            <div class="champ"><label for="st-nouvel-id">Nouveau style : identifiant</label><input id="st-nouvel-id" maxlength="40" placeholder="crayonne"></div>
+            <button id="st-nouveau" type="button" class="secondaire">Créer, d'après le style ouvert</button>
+          </div>
+          <div id="st-apercu-cadre" class="cadre-style"><img id="st-apercu-image" alt="Aperçu du style ouvert, sur le rendu d'essai" hidden><p id="st-apercu-etat" class="note"></p></div>
+        </div>
+        <form id="st-form" class="colonne" autocomplete="off">
+          <h3 id="st-titre">Aucun style ouvert</h3>
+          <div id="st-champs" class="defile">
+            <div class="grille">
+              <div class="champ"><label for="st-nom">Nom</label><input id="st-nom" maxlength="80" required></div>
+              <div class="champ large"><label for="st-description">Description</label><input id="st-description" maxlength="500"></div>
+              <div class="champ large"><label for="st-prompt">Prompt de style, ajouté au prompt de la zone, sans couleur</label><textarea id="st-prompt" rows="2" maxlength="1000"></textarea></div>
+              <p id="st-couleurs" class="alerte champ large"></p>
+              <div class="champ large"><label for="st-negatif">Négatif</label><textarea id="st-negatif" rows="2" maxlength="2000"></textarea></div>
+              <div class="champ"><label for="st-denoise">Débruitage</label><input id="st-denoise" type="number" min="0.01" max="1" step="0.01"></div>
+              <div class="champ"><label for="st-poids">Poids de l'IP-Adapter</label><input id="st-poids" type="number" min="0" max="2" step="0.01"></div>
+              <div class="champ"><label for="st-dosage">Dosage des couleurs (0 à 1)</label><input id="st-dosage" type="number" min="0" max="1" step="0.05"></div>
+              <div class="champ"><label for="st-profondeur">Force de la profondeur</label><input id="st-profondeur" type="number" min="0" max="2" step="0.01"></div>
+              <div class="champ"><label for="st-canny">Force du Canny</label><input id="st-canny" type="number" min="0" max="2" step="0.01"></div>
+              <div class="champ"><label for="st-tile">Force du tile</label><input id="st-tile" type="number" min="0" max="2" step="0.01"></div>
+              <div class="champ"><label for="st-tile-debut">Début du tile (0 à 1)</label><input id="st-tile-debut" type="number" min="0" max="1" step="0.05"></div>
+              <div class="champ"><label for="st-tile-fin">Fin du tile (0 à 1)</label><input id="st-tile-fin" type="number" min="0" max="1" step="0.05"></div>
+              <div class="champ"><label for="st-ref-type">Référence</label>
+                <select id="st-ref-type"><option value="aucune">aucune, prompt seul</option><option value="dessin">dessin de David</option><option value="externe">image externe</option></select></div>
+              <div class="champ"><label for="st-ref-droit">Image externe, au registre</label><select id="st-ref-droit"></select></div>
+              <div class="champ"><label class="case"><input id="st-gris" type="checkbox"> Référence en niveaux de gris</label></div>
+              <p id="st-ref-etat" class="note champ large"></p>
+              <div class="champ large"><label for="st-ag-prompt">Prompt de l'agrandissement</label><textarea id="st-ag-prompt" rows="2" maxlength="2000"></textarea></div>
+              <div class="champ large"><label for="st-ag-negatif">Négatif de l'agrandissement</label><textarea id="st-ag-negatif" rows="2" maxlength="2000"></textarea></div>
+            </div>
+          </div>
+          <label id="st-depot-reference" class="depot" for="st-fichier-reference">Déposer la référence (PNG ou JPEG) ici, ou la choisir <input id="st-fichier-reference" type="file" accept=".png,.jpg,.jpeg,image/png,image/jpeg"></label>
+          <div class="boutons">
+            <button id="st-enregistrer" type="submit">Enregistrer</button>
+            <button id="st-apercu" type="button" class="secondaire">Aperçu de ce style</button>
+          </div>
+        </form>
+      </div>
+      <div id="st-vue-planche" class="sous-panneau" hidden>
+        <div class="grille essai-style">
+          <label id="st-depot-rendu" class="depot" for="st-fichier-rendu">Rendu d'essai, 832 × 1216 : <span id="st-etat-rendu"></span> <input id="st-fichier-rendu" type="file" accept=".png,image/png"></label>
+          <label id="st-depot-mist" class="depot" for="st-fichier-mist">Mist d'essai : <span id="st-etat-mist"></span> <input id="st-fichier-mist" type="file" accept=".png,image/png"></label>
+          <div class="champ"><label for="st-essai-prompt">Prompt du rendu d'essai</label><input id="st-essai-prompt" maxlength="2000"></div>
+          <button id="st-planche-lancer" type="button">Afficher la planche</button>
+        </div>
+        <p id="st-planche-etat" class="note"></p>
+        <div id="st-planche" class="defile planche"></div>
+      </div>
+    </section>
+
     <section id="sujets" class="panneau" aria-labelledby="t-sujets" hidden>
       <div id="sujets-accueil" class="colonnes">
         <div class="colonne">
@@ -328,9 +394,13 @@
                 <label id="ge-depot-rendu" class="depot" for="ge-fichier-rendu">Rendu : <span id="ge-etat-rendu"></span> <input id="ge-fichier-rendu" type="file" accept=".png,image/png"></label>
                 <label id="ge-depot-mist" class="depot" for="ge-fichier-mist">Passe Mist : <span id="ge-etat-mist"></span> <input id="ge-fichier-mist" type="file" accept=".png,image/png"></label>
               </div>
-              <div class="champ"><label for="ge-prompt">Prompt positif, sans couleur</label><textarea id="ge-prompt" rows="3"></textarea></div>
+              <div class="champ"><label for="ge-prompt">Prompt positif, sans couleur</label><textarea id="ge-prompt" rows="2"></textarea></div>
               <p id="ge-couleurs" class="alerte"></p>
-              <div class="boutons"><button id="ge-lancer" type="button">Lancer la génération (3 graines)</button></div>
+              <div class="grille style-zone">
+                <div class="champ"><label for="ge-style">Style de la zone</label><select id="ge-style"></select></div>
+                <div class="champ"><label for="ge-graine">Graine imposée</label><input id="ge-graine" type="number" min="0" step="1" placeholder="3 au hasard"></div>
+                <button id="ge-lancer" type="button">Lancer la génération (3 graines)</button>
+              </div>
               <div id="ge-message" class="liste"></div>
             </div>
             <div class="colonne">
@@ -341,6 +411,15 @@
                 <button id="ge-annuler" type="button" class="secondaire">Annuler</button>
               </div>
               <div id="ge-candidats" class="candidats"></div>
+              <dialog id="ge-loupe" class="loupe" aria-labelledby="ge-loupe-titre">
+                <div class="loupe-tete">
+                  <h3 id="ge-loupe-titre">Candidat</h3>
+                  <p class="note">Clic : zoom à 100 % sur le point cliqué, ou retour à l'image entière. Glisser pour se déplacer. Échap pour fermer.</p>
+                  <button id="ge-loupe-agrandir" type="button">Agrandir</button>
+                  <button id="ge-loupe-fermer" type="button" class="secondaire">Fermer</button>
+                </div>
+                <div id="ge-loupe-cadre" class="loupe-cadre"><img id="ge-loupe-image" alt=""></div>
+              </dialog>
               <div id="ge-file" class="liste"></div>
             </div>
           </div>

@@ -9,7 +9,7 @@ import { collectionFolder } from '../data/collection';
 import { isInside } from '../glbi/paths';
 import { readBookRights, readCollectionRights, allEntries } from '../rights/registry';
 import { schemaVersionSchema, slugSchema, uniqueList } from '../schema/common';
-import { fieldOf, graphFaults, parseGraph, sha256, SPECS, WORKFLOW_KINDS, WORKFLOW_LABELS, WORKFLOW_RIGHTS_KINDS, WorkflowRefused, type Graph, type WorkflowKind } from './workflow';
+import { fieldOf, graphFaults, IGNORED_WORKFLOW_KINDS, parseGraph, sha256, SPECS, WORKFLOW_KINDS, WORKFLOW_LABELS, WORKFLOW_RIGHTS_KINDS, WorkflowRefused, type Graph, type WorkflowKind } from './workflow';
 
 export const WORKFLOWS_DIR = 'workflows';
 export const WORKFLOWS_INDEX = 'workflows.json';
@@ -28,7 +28,7 @@ type WorkflowIndex = z.infer<typeof indexSchema>;
 export type WorkflowState =
   | { state: 'absent' }
   | { state: 'refuse'; message: string; entry: WorkflowEntry | null }
-  | { state: 'ok'; entry: WorkflowEntry; graph: Graph; rightsFaults: string[] };
+  | { state: 'ok'; entry: WorkflowEntry; graph: Graph; rightsFaults: string[]; ignored: string[] };
 
 const issues = (e: z.ZodError) => e.issues.map((i) => `${i.path.join('.') || '(racine)'} : ${i.message}`).join(' ; ');
 const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
@@ -65,18 +65,31 @@ function readIndex(dir: string): WorkflowIndex {
   return parsed.data;
 }
 
-/** Droits d'un workflow contrôlés contre les deux registres : inconnus, ou d'un type qu'un workflow ne porte pas. */
-export function rightsFaults(dataRoot: string, bookId: string | null, rights: string[]): string[] {
-  const registry = allEntries(readCollectionRights(dataRoot), bookId ? readBookRights(dataRoot, bookId) : { schemaVersion: 1, entries: [], illustrations: [] });
+const registryOf = (dataRoot: string, bookId: string | null) =>
+  allEntries(readCollectionRights(dataRoot), bookId ? readBookRights(dataRoot, bookId) : { schemaVersion: 1, entries: [], illustrations: [] });
+
+/** Droits d'un workflow cochés en IC1 et ignorés depuis IC2 : une référence de style vient du style (question 6). Le fichier n'est pas réécrit. */
+export function ignoredRights(dataRoot: string, bookId: string | null, rights: string[]): string[] {
+  const registry = registryOf(dataRoot, bookId);
+  return rights.filter((id) => (IGNORED_WORKFLOW_KINDS as readonly string[]).includes(registry.get(id)?.kind ?? ''));
+}
+
+/** Droits d'un workflow contrôlés contre les deux registres : inconnus, ou d'un type qu'un workflow ne porte pas. `lenient` : un droit ignoré n'est pas une faute. */
+export function rightsFaults(dataRoot: string, bookId: string | null, rights: string[], lenient = true): string[] {
+  const registry = registryOf(dataRoot, bookId);
   return rights.flatMap((id) => {
     const e = registry.get(id);
     if (!e) return [`droit inconnu du registre : ${id}`];
-    if (!(WORKFLOW_RIGHTS_KINDS as readonly string[]).includes(e.kind)) return [`${id} : un workflow ne porte pas ce type de droit (${e.kind})`];
+    if (lenient && (IGNORED_WORKFLOW_KINDS as readonly string[]).includes(e.kind)) return [];
+    if (!(WORKFLOW_RIGHTS_KINDS as readonly string[]).includes(e.kind)) return [`${id} : un workflow ne porte pas ce type de droit (${e.kind})${e.kind === 'image-reference' ? ', la référence vient du style' : ''}`];
     return [];
   });
 }
 
-function readOne(dir: string, entry: WorkflowEntry | undefined, kind: WorkflowKind, faultsOf: (rights: string[]) => string[]): WorkflowState {
+/** Les droits d'un workflow qui passent à l'image : les droits ignorés en sont retirés. */
+export const effectiveRights = (s: WorkflowState & { state: 'ok' }) => s.entry.rights.filter((id) => !s.ignored.includes(id));
+
+function readOne(dir: string, entry: WorkflowEntry | undefined, kind: WorkflowKind, faultsOf: (rights: string[]) => string[], ignoredOf: (rights: string[]) => string[]): WorkflowState {
   if (!entry) return { state: 'absent' };
   const label = `collection/workflows/${entry.file}`;
   const refuse = (message: string): WorkflowState => ({ state: 'refuse', message, entry });
@@ -88,7 +101,7 @@ function readOne(dir: string, entry: WorkflowEntry | undefined, kind: WorkflowKi
   const bytes = fs.readFileSync(file);
   if (sha256(bytes) !== entry.sha256) return refuse(`${label} a changé depuis son dépôt (empreinte différente) : le redéposer dans la page.`);
   try {
-    return { state: 'ok', entry, graph: parseGraph(bytes.toString('utf8'), kind), rightsFaults: faultsOf(entry.rights) };
+    return { state: 'ok', entry, graph: parseGraph(bytes.toString('utf8'), kind), rightsFaults: faultsOf(entry.rights), ignored: ignoredOf(entry.rights) };
   } catch (e) {
     if (e instanceof WorkflowRefused) return refuse(e.message);
     throw e;
@@ -103,7 +116,8 @@ export function readWorkflows(dataRoot: string, bookId: string | null): Workflow
   if (!dir) return { generation: { state: 'absent' }, agrandissement: { state: 'absent' } };
   const index = readIndex(dir);
   const faultsOf = (rights: string[]) => rightsFaults(dataRoot, bookId, rights);
-  return { generation: readOne(dir, index.generation, 'generation', faultsOf), agrandissement: readOne(dir, index.agrandissement, 'agrandissement', faultsOf) };
+  const ignoredOf = (rights: string[]) => ignoredRights(dataRoot, bookId, rights);
+  return { generation: readOne(dir, index.generation, 'generation', faultsOf, ignoredOf), agrandissement: readOne(dir, index.agrandissement, 'agrandissement', faultsOf, ignoredOf) };
 }
 
 /** Les deux workflows sont prêts : valides, avec au moins un droit coché, tous connus. Sinon, les motifs. */
@@ -115,7 +129,7 @@ export function workflowsReady(w: Workflows): { ready: boolean; reasons: string[
     if (s.state === 'absent') reasons.push(`Déposer le workflow de ${label} (étape Workflows).`);
     else if (s.state === 'refuse') reasons.push(s.message);
     else if (s.rightsFaults.length > 0) reasons.push(`Workflow de ${label} : ${s.rightsFaults.join(' ; ')}.`);
-    else if (s.entry.rights.length === 0) reasons.push(`Workflow de ${label} : cocher ses droits (étape Workflows).`);
+    else if (effectiveRights(s).length === 0) reasons.push(`Workflow de ${label} : cocher ses droits (étape Workflows).`);
   }
   return { ready: reasons.length === 0, reasons };
 }
@@ -138,7 +152,7 @@ export function depositWorkflow(dataRoot: string, bookId: string | null, kind: W
     fs.closeSync(fd);
   }
   const previous = index[kind] ?? null;
-  const registry = allEntries(readCollectionRights(dataRoot), bookId ? readBookRights(dataRoot, bookId) : { schemaVersion: 1, entries: [], illustrations: [] });
+  const registry = registryOf(dataRoot, bookId);
   const rights = previous ? previous.rights : SPECS[kind].defaultRights.filter((id) => registry.has(id));
   const entry: WorkflowEntry = { file: name, date: now.toISOString(), sha256: sha256(bytes), rights };
   writeAtomic(dir, WORKFLOWS_INDEX, json(indexSchema.parse({ ...index, [kind]: entry })));
@@ -151,7 +165,7 @@ export function setWorkflowRights(dataRoot: string, bookId: string | null, kind:
   const entry = index?.[kind];
   if (!dir || !index || !entry) throw new WorkflowRefused(`Déposer d'abord le workflow de ${WORKFLOW_LABELS[kind]}.`);
   const unique = [...new Set(rights)];
-  const faults = rightsFaults(dataRoot, bookId, unique);
+  const faults = rightsFaults(dataRoot, bookId, unique, false);
   if (faults.length > 0) throw new WorkflowRefused(`Droits refusés : ${faults.join(' ; ')}.`);
   const next = indexSchema.parse({ ...index, [kind]: { ...entry, rights: unique } });
   if (JSON.stringify(next) !== JSON.stringify(index)) writeAtomic(dir, WORKFLOWS_INDEX, json(next));
@@ -159,7 +173,7 @@ export function setWorkflowRights(dataRoot: string, bookId: string | null, kind:
 
 /** Prompt positif du workflow de génération : prérempli dans la vue, tant que David ne l'a pas changé pour la zone. */
 export const defaultPrompt = (w: Workflows): string | null => (w.generation.state === 'ok' ? String(fieldOf(w.generation.graph, '6', 'text')) : null);
-/** Nom de la référence de style dans le dossier d'entrée de ComfyUI (nœud 22). */
+/** Nom de la référence d'IL1 dans le dossier d'entrée de ComfyUI (nœud 22) : relue une fois, pour créer le style de base (IC2). */
 export const referenceName = (w: Workflows): string | null => (w.generation.state === 'ok' ? String(fieldOf(w.generation.graph, '22', 'image')) : null);
 
 export { graphFaults };

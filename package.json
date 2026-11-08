@@ -17,7 +17,8 @@
     "schema:research": "tsx scripts/gen-research-schema.ts",
     "test:images": "tsx scripts/test-images.ts",
     "test:rights": "tsx scripts/test-rights.ts",
-    "test:comfy": "tsx scripts/test-comfy.ts"
+    "test:comfy": "tsx scripts/test-comfy.ts",
+    "test:styles": "tsx scripts/test-styles.ts"
   },
   "keywords": [],
   "author": "",

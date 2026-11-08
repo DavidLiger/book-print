@@ -1,4 +1,6 @@
 {
   "glbRoot": "D:/GLBInterpreter/glbinterpreter",
-  "dataRoot": "D:/GLBInterpreter/book-print-data"
+  "dataRoot": "D:/GLBInterpreter/book-print-data",
+  "comfyUrl": "http://127.0.0.1:8188",
+  "comfyLauncher": "D:/IA/ComfyUI/run_il0.bat"
 }
