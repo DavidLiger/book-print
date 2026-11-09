@@ -16,6 +16,7 @@
       <div class="ligne-bandeau"><p id="file-comfy" class="file" aria-live="polite"></p><button id="bandeau-lancer" type="button" class="secondaire petit" hidden>Lancer ComfyUI</button></div>
     </div>
     <nav aria-label="Étapes du parcours"><ol id="etapes" class="etapes"></ol></nav>
+    <button id="quitter" type="button" class="secondaire petit">Tout arrêter et quitter</button>
   </header>
 
   <main>
@@ -487,6 +488,12 @@
       </div>
     </section>
   </main>
+  <!-- Un seul onglet actif (LC1, comme le studio) : cet onglet est mis en veille quand un autre se connecte. -->
+  <dialog id="veille" class="veille" aria-labelledby="veille-titre">
+    <h2 id="veille-titre">Print est ouvert dans un autre onglet</h2>
+    <p>Cet onglet est en veille : seul le dernier onglet ouvert reste relié à Print.</p>
+    <div class="boutons"><button id="veille-reprendre" type="button">Utiliser cet onglet</button></div>
+  </dialog>
   <script src="/app.js"></script>
 </body>
 </html>

@@ -6,15 +6,17 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import '../schema/common';
 import { isInside } from '../glbi/paths';
+import { comfyArgsSchema } from '../lanceur/outils';
 
 const rootSchema = z
   .string({ error: 'chemin attendu' })
   .min(1, 'chemin vide')
   .refine((p) => path.isAbsolute(p), 'chemin absolu attendu, par exemple D:/GLBInterpreter/glbinterpreter');
 
-/** `comfyLauncher` (IC1) : le .bat qui lance ComfyUI, contrôlé à l'usage (`src/comfy/launcher.ts`). Adresse de ComfyUI (IC1), facultative : sans elle, `http://127.0.0.1:8188`. Elle n'est contrôlée qu'à l'usage (`src/comfy/address.ts`) :
+/** `comfyArgs` (LC1) : options du Python de ComfyUI pour le lanceur unique (`src/lanceur/outils.ts`), facultatives.
+ * `comfyLauncher` (IC1) : le .bat qui lance ComfyUI, contrôlé à l'usage (`src/comfy/launcher.ts`). Adresse de ComfyUI (IC1), facultative : sans elle, `http://127.0.0.1:8188`. Elle n'est contrôlée qu'à l'usage (`src/comfy/address.ts`) :
  * une adresse refusée se voit dans l'étape Workflows et dans la vue Générer, sans bloquer le reste de l'outil. */
-const configSchema = z.strictObject({ glbRoot: rootSchema, dataRoot: rootSchema, comfyUrl: z.string({ error: 'comfyUrl : texte attendu' }).optional(), comfyLauncher: z.string({ error: 'comfyLauncher : texte attendu' }).optional() });
+const configSchema = z.strictObject({ glbRoot: rootSchema, dataRoot: rootSchema, comfyUrl: z.string({ error: 'comfyUrl : texte attendu' }).optional(), comfyLauncher: z.string({ error: 'comfyLauncher : texte attendu' }).optional(), comfyArgs: comfyArgsSchema.optional() });
 export type Config = z.infer<typeof configSchema>;
 
 export type ConfigState = { ok: true; config: Config } | { ok: false; message: string };

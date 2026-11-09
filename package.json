@@ -19,7 +19,8 @@
     "test:rights": "tsx scripts/test-rights.ts",
     "test:comfy": "tsx scripts/test-comfy.ts",
     "test:styles": "tsx scripts/test-styles.ts",
-    "test:gabarits": "tsx scripts/test-gabarits.ts"
+    "test:gabarits": "tsx scripts/test-gabarits.ts",
+    "test:lanceur": "tsx scripts/test-lanceur.ts"
   },
   "keywords": [],
   "author": "",

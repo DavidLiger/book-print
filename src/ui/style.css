@@ -45,6 +45,9 @@ h1 { font-size: 17px; margin: 0; white-space: nowrap; }
 /* File de ComfyUI (IC1) : une ligne sous le choix du livre, pour ne rien prendre aux onglets. */
 /* État de ComfyUI et file, sous le choix du livre, sur toutes les étapes (correctif IC2) */
 .ligne-bandeau { grid-column: 1 / -1; display: flex; gap: 6px; align-items: center; min-width: 0; max-width: 260px; }
+/* « Tout arrêter et quitter » (LC1), en bout de bandeau */
+#bandeau #quitter { flex: none; margin: 0 0 0 auto; }
+.quitte { max-width: 640px; margin: 48px auto; }
 .ligne-bandeau button.petit { flex: none; margin: 0; padding: 0 6px; font-size: 12px; }
 .file { flex: 1 1 auto; min-width: 0; font-size: 12px; line-height: 1.25; color: var(--doux); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .file.erreur { color: var(--erreur); }
@@ -279,6 +282,8 @@ label.case { display: flex; gap: 6px; align-items: center; margin: 18px 0 0; col
 .candidat .vue-candidat img { flex: 1 1 0; min-height: 0; width: 100%; object-fit: contain; background: var(--fond); cursor: zoom-in; }
 .candidat .ouvrir-loupe { position: absolute; top: 4px; right: 4px; padding: 2px 8px; font-size: 16px; line-height: 1.2; }
 .candidat .boutons-candidat { display: flex; gap: 6px; align-items: center; justify-content: space-between; }
+dialog.veille { max-width: 440px; padding: 16px 20px; border: 1px solid var(--bord); border-radius: 8px; background: var(--carte); color: var(--texte); }
+dialog.veille::backdrop { background: rgba(0, 0, 0, 0.6); }
 dialog.loupe { width: calc(100vw - 32px); height: calc(100vh - 32px); max-width: none; max-height: none; padding: 8px; border: 1px solid var(--bord); border-radius: 8px; background: var(--carte); color: var(--texte); }
 dialog.loupe[open] { display: flex; flex-direction: column; gap: 8px; }
 dialog.loupe::backdrop { background: rgba(0, 0, 0, 0.7); }

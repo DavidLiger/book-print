@@ -29,3 +29,13 @@ export const actionAllowed = (h: ActionHeaders, port: number): boolean => ownPos
 
 /** Dépôt d'une image : mêmes protections, corps binaire. La signature est contrôlée ensuite, sur le fichier lui-même. `jpeg` : la référence d'un style (IC2). */
 export const uploadAllowed = (h: ActionHeaders, port: number, jpeg = false): boolean => ownPost(h, port) && (jpeg ? /^image\/(png|jpeg)$/i : /^image\/png$/i).test(h.contentType ?? '');
+
+/** Attente d'un onglet déjà ouvert au démarrage, comme le studio (LC1) : il se reconnecte en une seconde environ. */
+export const TAB_WAIT_MS = 3_000;
+/** Page à ouvrir au démarrage : seulement si aucun onglet ne s'est connecté depuis le démarrage. */
+export const pageAOuvrir = (ongletVuA: number, demarreA: number): boolean => ongletVuA < demarreA;
+/** `npm run print -- --no-open` (LC1) : le lanceur unique ouvre lui-même les pages ; sans option, Print ouvre la sienne (print.cmd). */
+export function printOptions(argv: string[]): { open: boolean } {
+  for (const a of argv) if (a !== '--no-open') throw new Error(`option inconnue « ${a} » (option : --no-open)`);
+  return { open: !argv.includes('--no-open') };
+}

@@ -1,5 +1,6 @@
 // src/server/app.ts — serveur local (node:http). Toute requête : `Host` et `Origin` contrôlés. Toute action : `POST` JSON
 // avec `x-book-print: 1`. La page n'est servie que depuis une liste fermée : aucun chemin ne vient de l'URL.
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -46,6 +47,23 @@ const MAX_BODY = 64 * 1024;
 /** Limites propres à une route : toutes les autres restent à `MAX_BODY`. */
 const BODY_LIMITS: Record<string, number> = { '/api/sujet/import': IMPORT_MAX_BYTES, '/api/droits/credits': IMPORT_MAX_BYTES, '/api/workflows/depot': WORKFLOW_MAX_BYTES };
 const dirBody = z.strictObject({ dir: z.string() });
+const quitBody = z.strictObject({});
+/**
+ * « Tout arrêter et quitter » (LC1) : route à part, servie seulement si le serveur a reçu de quoi s'arrêter (`print` le lui donne,
+ * les tests une fonction factice). La réponse part d'abord ; l'arrêt suit.
+ */
+export const QUIT_ROUTE = '/api/quitter';
+/**
+ * Onglets de la page (LC1, comme le studio) : chaque onglet garde un flux d'événements ouvert sur `/evenements` et le relance seul
+ * quand il est coupé. Le serveur y envoie son identifiant d'instance : un onglet qui voit un autre identifiant (Print relancé) se
+ * recharge. Un seul onglet actif, comme le studio (ST2) : un onglet qui se connecte remplace les autres, qui reçoivent `remplace`
+ * et se mettent en veille. `onglet` est appelé à chaque connexion : `main.ts` n'ouvre pas de page si un onglet s'est reconnecté.
+ * `TABS_ROUTE` donne le nombre d'onglets actifs au lanceur unique, qui ouvre lui-même les pages.
+ */
+export const EVENTS_ROUTE = '/evenements';
+export const TABS_ROUTE = '/api/onglets';
+export type PrintServerOptions = { quitter?: () => void; onglet?: () => void };
+type Onglets = { instance: string; clients: Set<http.ServerResponse> };
 const parcoursBody = z.strictObject({ dir: z.string().nullable() });
 
 type Json = Record<string, unknown>;
@@ -127,7 +145,16 @@ const ACTIONS: Record<string, (body: unknown, configPath: string) => Json | Prom
   ...Object.fromEntries(Object.entries({ ...SUBJECT_ACTIONS, ...ILLUSTRATION_ACTIONS, ...RIGHTS_ACTIONS }).map(([route, run]) => [route, (body: unknown, configPath: string) => run(body, configured(loadConfig(configPath)))])),
 };
 
-async function handle(req: http.IncomingMessage, res: http.ServerResponse, port: number, configPath: string, comfy: ComfyRuntime, comfyRoutes: ReturnType<typeof comfyActions>): Promise<void> {
+async function handle(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  port: number,
+  configPath: string,
+  comfy: ComfyRuntime,
+  comfyRoutes: ReturnType<typeof comfyActions>,
+  options: PrintServerOptions,
+  onglets: Onglets,
+): Promise<void> {
   // `comfyRoutes` porte aussi les routes de l'étape Styles (IC2), qui partagent la file de ComfyUI.
   if (!hostAllowed(req.headers.host, req.headers.origin, port)) return sendJson(res, 403, { error: 'Host ou Origin refusé' });
   const url = (req.url ?? '/').split('?')[0];
@@ -148,6 +175,46 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, port:
     if (url === REFERENCE_ROUTE) return sendJson(res, 200, await depositReference(query, req, config, comfy));
     if (url === ESSAI_ROUTE) return sendJson(res, 200, await depositEssai(query, req, config, comfy));
     return sendJson(res, 200, url === ENTRY_ROUTE ? await depositEntry(query, req, config, comfy) : await depositIllustration(query, req, config));
+  }
+
+  if (url === EVENTS_ROUTE) {
+    if (req.method !== 'GET') return sendJson(res, 405, { error: 'GET attendu' }, { Allow: 'GET' });
+    res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
+    res.write(`retry: 1000\nevent: instance\ndata: ${onglets.instance}\n\n`);
+    for (const autre of onglets.clients) {
+      autre.write('event: remplace\ndata: {}\n\n');
+      autre.end();
+    }
+    onglets.clients.clear();
+    onglets.clients.add(res);
+    req.on('close', () => onglets.clients.delete(res));
+    options.onglet?.();
+    return;
+  }
+
+  if (url === TABS_ROUTE) {
+    if (req.method !== 'POST') return sendJson(res, 405, { error: 'action : POST attendu' }, { Allow: 'POST' });
+    const allowed = actionAllowed(
+      { method: req.method, contentType: req.headers['content-type'], actionHeader: req.headers[ACTION_HEADER], origin: req.headers.origin, host: req.headers.host },
+      port,
+    );
+    if (!allowed) return sendJson(res, 403, { error: `action refusée : POST JSON avec ${ACTION_HEADER}: 1 attendu` });
+    if (!quitBody.safeParse(await readBody(req, MAX_BODY)).success) throw new HttpError(400, 'corps attendu : {}');
+    return sendJson(res, 200, { onglets: onglets.clients.size });
+  }
+
+  if (url === QUIT_ROUTE) {
+    if (req.method !== 'POST') return sendJson(res, 405, { error: 'action : POST attendu' }, { Allow: 'POST' });
+    const allowed = actionAllowed(
+      { method: req.method, contentType: req.headers['content-type'], actionHeader: req.headers[ACTION_HEADER], origin: req.headers.origin, host: req.headers.host },
+      port,
+    );
+    if (!allowed) return sendJson(res, 403, { error: `action refusée : POST JSON avec ${ACTION_HEADER}: 1 attendu` });
+    if (!quitBody.safeParse(await readBody(req, MAX_BODY)).success) throw new HttpError(400, 'corps attendu : {}');
+    const quitter = options.quitter;
+    if (!quitter) throw new HttpError(409, 'arrêt indisponible : Print n\'a pas été lancé par npm run print');
+    res.once('finish', quitter);
+    return sendJson(res, 200, { ok: true });
   }
 
   const comfyAction = Object.hasOwn(comfyRoutes, url) ? comfyRoutes[url] : undefined;
@@ -222,11 +289,15 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, port:
 }
 
 /** Le port vient du serveur lui-même, pour que les tests puissent écouter sur un port libre. La file de ComfyUI vit avec le serveur. */
-export function createPrintServer(configPath: string, comfy: ComfyRuntime = createComfyRuntime()): http.Server {
+export function createPrintServer(configPath: string, comfy: ComfyRuntime = createComfyRuntime(), options: PrintServerOptions = {}): http.Server {
   const comfyRoutes = { ...comfyActions(comfy), ...styleActions(comfy) };
+  const onglets: Onglets = { instance: crypto.randomUUID(), clients: new Set() };
   const server = http.createServer((req, res) => {
-    const { port } = server.address() as AddressInfo;
-    handle(req, res, port, configPath, comfy, comfyRoutes).catch((e: unknown) => {
+    // Serveur fermé (LC1 : relance, « Tout arrêter et quitter ») : une connexion encore ouverte peut porter une dernière requête.
+    const address = server.address() as AddressInfo | null;
+    if (!address) return sendJson(res, 503, { error: 'Print s\'arrête' }, { Connection: 'close' });
+    const { port } = address;
+    handle(req, res, port, configPath, comfy, comfyRoutes, options, onglets).catch((e: unknown) => {
       if (res.headersSent) return res.destroy();
       if (e instanceof HttpError) return sendJson(res, e.status, { error: e.message });
       // Le reste du corps n'est pas lu : la connexion se ferme après la réponse.
@@ -242,5 +313,14 @@ export function createPrintServer(configPath: string, comfy: ComfyRuntime = crea
       sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) });
     });
   });
+  // Les flux des onglets ne finissent jamais d'eux-mêmes : fermés avec le serveur.
+  const close = server.close.bind(server);
+  server.close = ((cb?: (err?: Error) => void) => {
+    for (const c of onglets.clients) c.end();
+    onglets.clients.clear();
+    const r = close(cb);
+    server.closeIdleConnections();
+    return r;
+  }) as typeof server.close;
   return server;
 }

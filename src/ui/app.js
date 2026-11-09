@@ -2481,6 +2481,65 @@ for (const kind of WF_KINDS) dropZone($(`wf-depot-${kind}`), $(`wf-fichier-${kin
 $('wf-verifier').addEventListener('click', () => pollComfy(true));
 $('wf-lancer').addEventListener('click', launchComfy);
 $('bandeau-lancer').addEventListener('click', launchComfy);
+
+// « Tout arrêter et quitter » (LC1), comme le bouton du studio : arrête ce que le lanceur unique (« Livres – Lancer ») a démarré,
+// puis Print se ferme. La page ne montre plus qu'un message (bandeau et panneaux cachés) ; relancé, Print la recharge.
+const QUIT_CONFIRM = 'Tout arrêter et quitter ?\n\nLe Studio (avec l’Atelier), ComfyUI et Print lancés par l’icône « Livres – Lancer » sont arrêtés, puis Print se ferme. Les tâches en cours sont perdues. Blender reste ouvert.';
+async function quitAll() {
+  if (!window.confirm(QUIT_CONFIRM)) return;
+  $('quitter').disabled = true;
+  try {
+    await action('/api/quitter');
+  } catch (e) {
+    $('quitter').disabled = false;
+    $('file-comfy').textContent = `Tout arrêter : ${e.message}`;
+    $('file-comfy').className = 'file erreur';
+    return;
+  }
+  const fin = el('section', undefined, 'quitte');
+  fin.append(el('h2', 'Tout s’arrête'), el('p', 'Le Studio, ComfyUI et Print s’arrêtent. Cette page peut être fermée ; l’icône « Livres – Lancer » relance tout.'));
+  $('bandeau').hidden = true;
+  document.querySelector('main').hidden = true;
+  document.body.prepend(fin);
+  document.title = 'book-print : arrêté';
+}
+$('quitter').addEventListener('click', quitAll);
+
+// Onglets (LC1, comme le studio) : flux d'événements ouvert sur le serveur. Coupé (Print arrêté, y compris après « Tout arrêter et
+// quitter »), le navigateur le relance ; s'il y renonce, la page le relance elle-même chaque seconde. Print relancé retrouve donc cet
+// onglet et n'en ouvre pas d'autre ; l'onglet voit un autre identifiant d'instance et se recharge. Un seul onglet actif : un onglet
+// qui se connecte met les autres en veille (`remplace`) ; « Utiliser cet onglet » le reprend.
+let evenements = null;
+let instance = null;
+let relance = null;
+let enVeille = false;
+function ecouter() {
+  if (evenements) evenements.close();
+  if (enVeille) return;
+  evenements = new EventSource('/evenements');
+  evenements.addEventListener('instance', (e) => {
+    if (instance !== null && e.data !== instance) location.reload();
+    else instance = e.data;
+  });
+  evenements.addEventListener('remplace', () => {
+    enVeille = true;
+    evenements.close();
+    if (!$('veille').open) $('veille').showModal();
+  });
+  evenements.addEventListener('error', () => {
+    if (enVeille || evenements.readyState !== EventSource.CLOSED || relance) return;
+    relance = setTimeout(() => {
+      relance = null;
+      ecouter();
+    }, 1000);
+  });
+}
+$('veille-reprendre').addEventListener('click', () => {
+  enVeille = false;
+  $('veille').close();
+  ecouter();
+});
+ecouter();
 $('ge-lancer-comfy').addEventListener('click', launchComfy);
 dropZone($('il-depot'), $('il-fichier'), (file) => depositImage(file));
 $('il-remplacer').addEventListener('click', () => {

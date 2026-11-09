@@ -26,7 +26,9 @@ const fake = await startFakeComfy();
 put(parent, 'config.local.json', { glbRoot, dataRoot, comfyUrl: fake.url });
 let seedAt = 0;
 const comfyRuntime = createComfyRuntime({ historyPollMs: 5, busyPollMs: 5 }, () => [11, 22, 33][seedAt++ % 3]!);
-const server = createPrintServer(path.join(parent, 'config.local.json'), comfyRuntime);
+let quits = 0;
+const server = createPrintServer(path.join(parent, 'config.local.json'), comfyRuntime, { quitter: () => void quits++ });
+let actif = server;
 await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
 const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
 const browser = await chromium.launch();
@@ -949,8 +951,64 @@ await page.unrouteAll({ behavior: 'ignoreErrors' });
   await fits('configuration invalide');
 }
 
-check('aucune erreur dans la console de la page', pageErrors.filter((e) => !e.includes('409')).length === 0, pageErrors);
+// Un seul onglet actif (LC1, comme le studio) : un second onglet met le premier en veille ; « Utiliser cet onglet » le reprend.
+{
+  put(parent, 'config.local.json', { glbRoot, dataRoot, comfyUrl: fake.url });
+  await open();
+  const second = await browser.newPage({ viewport: SIZES[1]! });
+  await second.goto(url);
+  await second.waitForSelector('#etapes li');
+  await until(`document.querySelector('#veille').open === true`);
+  check('second onglet : le premier passe en veille, message et bouton', (await text('#veille')).includes('Print est ouvert dans un autre onglet') && (await page.isVisible('#veille-reprendre')));
+  check('second onglet : lui reste actif', !(await second.evaluate(`document.querySelector('#veille').open`)));
+  await page.click('#veille-reprendre');
+  const limite = Date.now() + 10_000;
+  while (!(await second.evaluate(`document.querySelector('#veille').open`)) && Date.now() < limite) await page.waitForTimeout(25);
+  check('« Utiliser cet onglet » : le premier reprend, le second passe en veille', !(await page.evaluate(`document.querySelector('#veille').open`)) && (await second.evaluate(`document.querySelector('#veille').open`)) === true);
+  await second.close();
+}
+
+// « Tout arrêter et quitter » (LC1) : confirmation, arrêt demandé au serveur, page réduite à un message.
+{
+  put(parent, 'config.local.json', { glbRoot, dataRoot, comfyUrl: fake.url });
+  await open();
+  check('bandeau : « Tout arrêter et quitter » visible', (await page.isVisible('#quitter')) && (await text('#quitter')) === 'Tout arrêter et quitter');
+  page.once('dialog', (d) => void d.dismiss());
+  await page.click('#quitter');
+  await page.waitForTimeout(300);
+  check('quitter annulé : rien n’est demandé, la page reste', quits === 0 && (await page.isVisible('#etapes')));
+  let message = '';
+  page.once('dialog', (d) => {
+    message = d.message();
+    void d.accept();
+  });
+  await page.click('#quitter');
+  await until(`document.querySelector('.quitte') !== null`);
+  check('quitter confirmé : arrêt demandé une fois, page réduite à un message', quits === 1 && (await text('.quitte')).includes('Livres – Lancer') && !(await page.isVisible('#etapes')), { quits });
+  check('quitter : la confirmation dit ce qui s’arrête', message.startsWith('Tout arrêter et quitter ?') && message.includes('Studio') && message.includes('ComfyUI') && message.includes('Blender reste ouvert'), message);
+}
+
+// Print relancé (LC1) : l'onglet resté ouvert, même après « Tout arrêter et quitter », se reconnecte et se recharge ; le nouveau
+// serveur le voit (main.ts n'ouvre alors pas de nouvelle page).
+{
+  const port = (server.address() as AddressInfo).port;
+  await new Promise((resolve) => server.close(resolve));
+  let vus = 0;
+  actif = createPrintServer(path.join(parent, 'config.local.json'), comfyRuntime, { onglet: () => void vus++ });
+  await new Promise<void>((resolve) => actif.listen(port, '127.0.0.1', resolve));
+  // La page se recharge pendant l'attente : une évaluation interrompue par le rechargement est reprise.
+  const fin = Date.now() + 60_000;
+  for (;;) {
+    const ok = await page.evaluate(`document.querySelector('.quitte') === null && !document.querySelector('#bandeau').hidden && document.querySelector('#etapes li') !== null`).catch(() => false);
+    if (ok || Date.now() > fin) break;
+    await page.waitForTimeout(50);
+  }
+  check('Print relancé : l’onglet ouvert se reconnecte et se recharge, sans nouvel onglet', vus >= 1 && (await page.isVisible('#etapes')) && page.context().pages().length === 1, { vus });
+}
+
+// Print arrêté le temps de la relance : le navigateur signale la connexion refusée du flux d'événements.
+check('aucune erreur dans la console de la page', pageErrors.filter((e) => !e.includes('409') && !e.includes('ERR_CONNECTION_REFUSED') && !e.includes('/evenements')).length === 0, pageErrors);
 await browser.close();
 await fake.close();
-await new Promise((resolve) => server.close(resolve));
+await new Promise((resolve) => actif.close(resolve));
 finish('page');
