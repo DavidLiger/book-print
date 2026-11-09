@@ -16,6 +16,10 @@ export interface SubjectFacts {
   pages: number;
   template: string | null;
   theme: string | null;
+  /** Gabarit absent ou invalide (GB1). */
+  templateError: string | null;
+  /** Blocs attendus par le gabarit et absents, blocs en trop : un gabarit modifié depuis l'import (GB1). */
+  blocksGap: { missing: string[]; extra: string[] };
   research: { state: 'absent' | 'ok' | 'invalide'; error: string | null };
   blocks: { total: number; valide: number; aRelire: number; aReprendre: number };
   claims: { total: number; propose: number };
@@ -39,6 +43,16 @@ export interface ParcoursFacts {
   folder: { exists: boolean; error: string | null; printBook: 'ok' | 'absent' | 'invalide'; printBookError: string | null };
   pricing: { error: string | null; retained: boolean; retainedErrors: string[]; deviation: string[]; bookAlert: string | null };
   collection: { exists: boolean; error: string | null };
+  /** Gabarits de la collection (GB1). */
+  gabarits: {
+    /** `collection/gabarits/` refusé. */
+    error: string | null;
+    valid: number;
+    /** Fichiers invalides, avec leur erreur. */
+    invalid: string[];
+    /** Sujets du livre posés sur un gabarit absent. */
+    orphans: string[];
+  };
   essai: {
     /** Le livre et la collection ne se rendent pas : l'export est impossible. */
     renderError: string | null;
@@ -46,6 +60,8 @@ export interface ParcoursFacts {
     controlError: string | null;
     styleMs: number | null;
     printBookMs: number | null;
+    /** Date de `collection/gabarits/2A.json` (GB1). */
+    templateMs: number | null;
     /** Le format ou la fiche ont changé depuis l'export. `null` : export d'avant MP3, seule la date de `print-book.json` le dit. */
     bookChanged: boolean | null;
   };
@@ -159,6 +175,13 @@ function collection({ collection: c }: ParcoursFacts): StepVerdict {
   return { state: 'validee', reasons: [] };
 }
 
+function gabarits({ gabarits: g }: ParcoursFacts): StepVerdict {
+  if (g.error) return { state: 'erreur', reasons: [g.error] };
+  if (g.invalid.length + g.orphans.length > 0) return { state: 'erreur', reasons: [...g.invalid, ...g.orphans] };
+  if (g.valid === 0) return { state: 'a-faire', reasons: ['Ajouter les gabarits livrés, ou poser un gabarit dans collection/gabarits/.'] };
+  return { state: 'validee', reasons: [] };
+}
+
 function essai({ essai: e }: ParcoursFacts): StepVerdict {
   if (e.renderError) return { state: 'erreur', reasons: [e.renderError] };
   if (e.controlError) return { state: 'a-faire', redo: true, reasons: [`${e.controlError} Relancer l'export.`] };
@@ -166,7 +189,8 @@ function essai({ essai: e }: ParcoursFacts): StepVerdict {
   const { control } = e;
   const styleNewer = e.styleMs !== null && e.styleMs >= control.dateMs;
   const bookNewer = e.bookChanged ?? (e.printBookMs !== null && e.printBookMs >= control.dateMs);
-  const newer = ([['collection/style.json', styleNewer], ['print-book.json', bookNewer]] as const).filter(([, changed]) => changed);
+  const templateNewer = e.templateMs !== null && e.templateMs >= control.dateMs;
+  const newer = ([['collection/style.json', styleNewer], ['collection/gabarits/2A.json', templateNewer], ['print-book.json', bookNewer]] as const).filter(([, changed]) => changed);
   if (newer.length > 0) return { state: 'a-faire', redo: true, reasons: [`${newer.map(([name]) => name).join(' et ')} modifié après le dernier export : relancer l'export.`] };
   if (control.errors.length > 0) return { state: 'erreur', reasons: [`${control.errors.join(', ')} en erreur dans le dernier export.`] };
   if (control.alerts.length > 0) return { state: 'alerte', reasons: [`${control.alerts.join(', ')} en alerte dans le dernier export.`] };
@@ -199,9 +223,20 @@ function styles({ styles: s }: ParcoursFacts): StepVerdict {
 
 const isRelu = (s: SubjectFacts) => s.status === 'relu' || s.status === 'prêt';
 
+/** Écart d'un sujet avec son gabarit (GB1) : `null` si les blocs sont ceux attendus. */
+function gapReason(s: SubjectFacts): string | null {
+  const { missing, extra } = s.blocksGap;
+  if (missing.length + extra.length === 0) return null;
+  const parts = [...(missing.length ? [`blocs attendus absents : ${missing.join(', ')}`] : []), ...(extra.length ? [`blocs en trop : ${extra.join(', ')}`] : [])];
+  return `Gabarit ${s.template} modifié depuis l'import, ${parts.join(' ; ')}. Un second import règle l'écart.`;
+}
+
 function sujets({ subjects }: ParcoursFacts): StepVerdict {
-  const broken = subjects.filter((s) => s.error);
-  if (broken.length > 0) return { state: 'erreur', reasons: broken.map((s) => `${s.id} : ${s.error}`) };
+  const broken = subjects.flatMap((s) => {
+    const fault = s.error ?? s.templateError ?? gapReason(s);
+    return fault ? [`${s.id} : ${fault}`] : [];
+  });
+  if (broken.length > 0) return { state: 'erreur', reasons: broken };
   if (subjects.length === 0) return { state: 'a-faire', reasons: ['Créer un premier sujet.'] };
   const left = subjects.filter((s) => !isRelu(s)).length;
   if (left > 0) return { state: 'a-faire', reasons: [`${count(left, 'sujet')} à relire, sur ${subjects.length}.`] };
@@ -213,8 +248,11 @@ const unreadable = (s: SubjectFacts | undefined): StepVerdict | null => (s?.erro
 function sujetRecherche(_f: ParcoursFacts, s?: SubjectFacts): StepVerdict {
   const fault = unreadable(s);
   if (fault) return fault;
+  if (s?.templateError) return { state: 'erreur', reasons: [s.templateError] };
   if (s?.research.state === 'invalide') return { state: 'erreur', reasons: [s.research.error ?? 'research.json invalide.'] };
   if (s?.research.state !== 'ok') return { state: 'a-faire', reasons: ['Préparer la recherche, puis importer le fichier.'] };
+  const gap = gapReason(s);
+  if (gap) return { state: 'erreur', reasons: [gap] };
   return { state: 'validee', reasons: [] };
 }
 
@@ -242,7 +280,8 @@ function sujetApercu(_f: ParcoursFacts, s?: SubjectFacts): StepVerdict {
 }
 
 /**
- * Sujets exige Collection et non Essai : une couleur modifiée ne reverrouille pas tout le contenu. Essai reste jusqu'à MP5.
+ * Sujets exige Gabarits et non Essai : une couleur modifiée ne reverrouille pas tout le contenu. Essai reste jusqu'à MP5.
+ * Gabarits exige Collection (GB1) : ses fichiers y vivent et ses zones lisent le style. Essai et Sujets l'exigent : ils posent un gabarit.
  * Droits exige Collection : le registre commun y vit. Sujets ne l'exige pas : une licence à revoir ne reverrouille pas le contenu.
  * Workflows exige Droits : ses cases viennent du registre. Sujets ne l'exige pas : le dépôt manuel d'une image reste possible sans ComfyUI.
  * Styles exige Workflows : le style de base en vient, et un aperçu passe par eux. Sujets ne l'exige pas non plus.
@@ -253,11 +292,12 @@ export const STEPS: StepDef[] = [
   { id: 'livre', label: 'Livre', scope: 'livre', requires: [], evaluate: livre },
   { id: 'prix', label: 'Prix', scope: 'livre', requires: ['livre'], evaluate: prix },
   { id: 'collection', label: 'Collection', scope: 'livre', requires: ['prix'], evaluate: collection },
-  { id: 'essai', label: 'Essai', scope: 'livre', requires: ['collection'], evaluate: essai },
+  { id: 'gabarits', label: 'Gabarits', scope: 'livre', requires: ['collection'], evaluate: gabarits },
+  { id: 'essai', label: 'Essai', scope: 'livre', requires: ['gabarits'], evaluate: essai },
   { id: 'droits', label: 'Droits', scope: 'livre', requires: ['collection'], evaluate: droits },
   { id: 'workflows', label: 'Workflows', scope: 'livre', requires: ['droits'], evaluate: workflows },
   { id: 'styles', label: 'Styles', scope: 'livre', requires: ['workflows'], evaluate: styles },
-  { id: 'sujets', label: 'Sujets', scope: 'livre', requires: ['collection'], evaluate: sujets },
+  { id: 'sujets', label: 'Sujets', scope: 'livre', requires: ['gabarits'], evaluate: sujets },
   { id: 'sujet-recherche', label: 'Recherche', scope: 'sujet', requires: [], evaluate: sujetRecherche },
   { id: 'sujet-relecture', label: 'Relecture', scope: 'sujet', requires: ['sujet-recherche'], evaluate: sujetRelecture },
   { id: 'sujet-illustrations', label: 'Illustrations', scope: 'sujet', requires: ['sujet-recherche'], evaluate: sujetIllustrations },

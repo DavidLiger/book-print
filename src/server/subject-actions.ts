@@ -17,7 +17,8 @@ import { applyBookFiche, RenderRefused } from '../render/html';
 import { controlSubject, subjectContext, subjectHtml, type SubjectContext } from '../render/subject';
 import { slugSchema } from '../schema/common';
 import type { StoredResearch } from '../schema/research';
-import { TEMPLATES, templateFits } from '../templates';
+import { templateFits } from '../templates';
+import { readTemplates, validTemplates } from '../templates/files';
 import type { Config } from './config';
 
 export class BadSubjectRequest extends Error {}
@@ -83,7 +84,7 @@ function bookState(config: Config, dir: string): Json {
     bookId: read.bookId,
     lang: book.edition.lang,
     scenes: read.scenes.map((s) => ({ id: s.id, title: s.title?.[book.edition.lang] ?? s.id, used: used.has(s.id) })),
-    templates: Object.values(TEMPLATES).map((t) => ({ id: t.id, pages: t.pages, fits: templateFits(t, firstPage) })),
+    templates: Object.values(validTemplates(readTemplates(config.dataRoot, collection.style))).map((t) => ({ id: t.id, pages: t.pages, fits: templateFits(t, firstPage) })),
     firstPage,
     themes: Object.keys(collection.style.palette.themes),
     /** Le thème suivant dans la rotation : deux sujets voisins ne se ressemblent pas. */

@@ -452,7 +452,7 @@ const mist = makePng(832, 1216, 3, (_x, y) => [y % 256, y % 256, y % 256]);
   await idle();
   const mixed = stylesStep();
   check('mélange : Styles en alerte, zones et styles nommés', mixed.state === 'alerte' && mixed.reasons.some((r) => r.includes('Plusieurs styles') && r.includes('alpha/illustration') && r.includes('beta/illustration') && r.includes('Trait')), mixed);
-  check('mélange : Sujets reste ouvert', STEPS.find((s) => s.id === 'sujets')!.requires.join() === 'collection');
+  check('mélange : Sujets reste ouvert', STEPS.find((s) => s.id === 'sujets')!.requires.join() === 'gabarits');
   const sj = JSON.parse(fs.readFileSync(path.join(dataRoot, BOOK_ID, 'subjects', 'alpha', 'subject.json'), 'utf8'));
   sj.generationStyles = { illustration: 'aquarelle' };
   fs.writeFileSync(path.join(dataRoot, BOOK_ID, 'subjects', 'alpha', 'subject.json'), JSON.stringify(sj));

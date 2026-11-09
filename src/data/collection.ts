@@ -42,6 +42,9 @@ export function createCollection(dataRoot: string): WriteReport {
   copy('style.json');
   copy('rights.json');
   for (const file of fs.readdirSync(path.join(DEFAULTS, 'pictos')).sort()) copy(`pictos/${file}`);
+  // Gabarits livrés (GB1) : copiés comme le style, sans écraser.
+  ensureDir(root, ['collection', 'gabarits'], out);
+  for (const file of fs.readdirSync(path.join(DEFAULTS, 'gabarits')).filter((n) => n.endsWith('.json')).sort()) copy(`gabarits/${file}`);
   return out;
 }
 

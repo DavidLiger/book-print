@@ -13,7 +13,11 @@ import { loadRates } from '../pricing/rates';
 import { deviation } from '../pricing/scenarios';
 import { bookSnapshot, essaiFor, readEssaiControl } from '../render/essai';
 import { RenderRefused } from '../render/html';
-import { imageChecks, subjectContext, subjectTitle } from '../render/subject';
+import { imageChecks, strayIllustrations, subjectContext, subjectTitle } from '../render/subject';
+import { applyBookFiche } from '../render/html';
+import { blocksGap, expectedBlocks } from '../research/blocks';
+import { readTemplates, templateOf, TEMPLATES_DIR } from '../templates/files';
+import { ESSAI_TEMPLATE_FILE } from '../render/essai';
 import { missingDefaults, readBookRights, readCollectionRights, RightsRefused } from '../rights/registry';
 import type { PrintBook } from '../schema/print-book';
 import type { ConfigState } from '../server/config';
@@ -83,6 +87,7 @@ function essaiFacts(dataRoot: string, book: PrintBook, dir: string): ParcoursFac
     controlError: error,
     styleMs: mtime(path.join(fs.realpathSync.native(dataRoot), 'collection', 'style.json')),
     printBookMs: mtime(path.join(dir, 'print-book.json')),
+    templateMs: mtime(path.join(fs.realpathSync.native(dataRoot), ...ESSAI_TEMPLATE_FILE.split('/'))),
     bookChanged: control?.book === undefined ? null : control.book !== bookSnapshot(book),
   };
 }
@@ -152,11 +157,58 @@ function styleFacts(dataRoot: string, book: PrintBook): ParcoursFacts['styles'] 
   }
 }
 
+/** Étape Gabarits (GB1) : les fichiers de `collection/gabarits/`, et les sujets du livre posés sur un gabarit absent. */
+function gabaritFacts(dataRoot: string, book: PrintBook): ParcoursFacts['gabarits'] {
+  const empty = { error: null, valid: 0, invalid: [], orphans: [] };
+  try {
+    const style = readCollection(dataRoot)?.style ?? null;
+    const library = readTemplates(dataRoot, style);
+    if (library.error) return { ...empty, error: library.error };
+    const ids = new Set(library.entries.map((e) => e.id));
+    const orphans = book.subjects.flatMap((id) => {
+      try {
+        const subject = readSubject(dataRoot, book.bookId, id);
+        return ids.has(subject.template) ? [] : [`${id} : gabarit ${subject.template} absent de collection/${TEMPLATES_DIR}/.`];
+      } catch (e) {
+        if (e instanceof SubjectRefused) return [];
+        throw e;
+      }
+    });
+    return {
+      error: null,
+      valid: library.entries.filter((e) => e.template).length,
+      invalid: library.entries.filter((e) => e.error).map((e) => `${e.file} : ${e.error}`),
+      orphans,
+    };
+  } catch (e) {
+    if (e instanceof CollectionRefused) return { ...empty, error: e.message };
+    throw e;
+  }
+}
+
+/** Gabarit d'un sujet (GB1) : absent ou invalide, ou modifié depuis l'import, ce qui change les blocs attendus. */
+function subjectTemplateFacts(dataRoot: string, book: PrintBook, subject: Subject): Pick<SubjectFacts, 'templateError' | 'blocksGap'> {
+  const none: Pick<SubjectFacts, 'templateError' | 'blocksGap'> = { templateError: null, blocksGap: { missing: [], extra: [] } };
+  try {
+    const read = readCollection(dataRoot);
+    if (!read) return none;
+    const style = applyBookFiche(read.style, book);
+    const found = templateOf(readTemplates(dataRoot, style), subject.template);
+    if ('error' in found) return { ...none, templateError: found.error };
+    if (subject.blocks.length === 0) return none;
+    return { ...none, blocksGap: blocksGap(subject.blocks, expectedBlocks(found.template, style.fiche, book.edition.lang)) };
+  } catch (e) {
+    if (e instanceof CollectionRefused || e instanceof RenderRefused) return none;
+    throw e;
+  }
+}
+
 function illustrationFacts(dataRoot: string, bookId: string, id: string, scenes: SceneReading[]): SubjectFacts['illustrations'] {
   try {
-    const { zones, checks } = imageChecks(subjectContext(dataRoot, bookId, id, scenes));
+    const ctx = subjectContext(dataRoot, bookId, id, scenes);
+    const { zones, checks } = imageChecks(ctx);
     const details = (level: string) => checks.filter((c) => c.level === level).flatMap((c) => c.details.map((d) => `${c.id}, ${d}`));
-    return { error: null, zones: zones.length, missing: zones.filter((z) => !z.illustration).length, errors: [...zones.flatMap((z) => z.fault ?? []), ...details('erreur')], alerts: details('alerte') };
+    return { error: null, zones: zones.length, missing: zones.filter((z) => !z.illustration).length, errors: [...strayIllustrations(ctx), ...zones.flatMap((z) => z.fault ?? []), ...details('erreur')], alerts: details('alerte') };
   } catch (e) {
     if (e instanceof RenderRefused || e instanceof GeometryRefused || e instanceof SubjectRefused || e instanceof CollectionRefused || e instanceof RightsRefused || e instanceof PricingRefused) return { error: e.message, zones: 0, missing: 0, errors: [], alerts: [] };
     throw e;
@@ -166,6 +218,7 @@ function illustrationFacts(dataRoot: string, bookId: string, id: string, scenes:
 function subjectFacts(dataRoot: string, book: PrintBook, id: string, scenes: SceneReading[]): SubjectFacts {
   const empty: SubjectFacts = {
     id, title: id, error: null, status: null, pages: 0, template: null, theme: null,
+    templateError: null, blocksGap: { missing: [], extra: [] },
     research: { state: 'absent', error: null }, blocks: { total: 0, valide: 0, aRelire: 0, aReprendre: 0 }, claims: { total: 0, propose: 0 },
     illustrations: { error: null, zones: 0, missing: 0, errors: [], alerts: [] },
   };
@@ -186,6 +239,7 @@ function subjectFacts(dataRoot: string, book: PrintBook, id: string, scenes: Sce
     theme: subject.variant.theme,
     blocks: { total: subject.blocks.length, valide: count('valide'), aRelire: count('a-relire'), aReprendre: count('a-reprendre') },
     illustrations: illustrationFacts(dataRoot, book.bookId, id, scenes),
+    ...subjectTemplateFacts(dataRoot, book, subject),
   };
   try {
     const research = readResearch(dataRoot, book.bookId, id);
@@ -204,7 +258,8 @@ export function readFacts(state: ConfigState, dir: string | null): ParcoursFacts
     folder: { exists: false, error: null, printBook: 'absent', printBookError: null },
     pricing: { error: null, retained: false, retainedErrors: [], deviation: [], bookAlert: null },
     collection: { exists: false, error: null },
-    essai: { renderError: null, control: null, controlError: null, styleMs: null, printBookMs: null, bookChanged: null },
+    gabarits: { error: null, valid: 0, invalid: [], orphans: [] },
+    essai: { renderError: null, control: null, controlError: null, styleMs: null, printBookMs: null, templateMs: null, bookChanged: null },
     droits: { error: null, missing: 0, faults: [], toCheck: [] },
     workflows: { error: null, todo: [], faults: [] },
     styles: { error: null, count: 0, faults: [], todo: [], alerts: [] },
@@ -233,6 +288,7 @@ export function readFacts(state: ConfigState, dir: string | null): ParcoursFacts
   facts.pricing = pricingFacts(dataRoot, bookId);
   facts.collection = collectionFacts(dataRoot);
   if (facts.collection.exists && !facts.collection.error) {
+    facts.gabarits = gabaritFacts(dataRoot, book);
     facts.essai = essaiFacts(dataRoot, book, folder);
     facts.droits = droitsFacts(dataRoot, bookId);
     facts.workflows = workflowFacts(dataRoot, bookId);

@@ -26,7 +26,7 @@ import { createPrintServer } from '../src/server/app';
 import { BOOK_ID, makeGlbi, put, tempDir } from './fixtures/make-glbi';
 import { makePng, pngDataUri } from './fixtures/make-png';
 import { essaiContent, essaiSubject, ESSAI_FIRST_PAGE } from './fixtures/sujet-essai';
-import { TEMPLATE_2A } from '../src/templates/2A';
+import { TEMPLATE_2A } from './fixtures/gabarits';
 import { BLEED_IN, BLEED_MM, GeometryRefused, layoutTemplate, pageSize, sideOfPage } from '../src/templates/geometry';
 import { check, finish } from './test-lib';
 
@@ -87,8 +87,8 @@ const detailOf = (checks: CheckResult[], id: string) => checks.find((c) => c.id 
 
 // HTML : aucune taille en dur, repères absents
 {
-  const a = buildEssai(SIX_NINE, collection, 'foret').html;
-  const b = buildEssai(LETTER, collection, 'foret').html;
+  const a = buildEssai(SIX_NINE, collection, 'foret', TEMPLATE_2A).html;
+  const b = buildEssai(LETTER, collection, 'foret', TEMPLATE_2A).html;
   check('HTML : taille de page venue du format', a.includes('@page { size: 6.125in 9.25in; margin: 0 }') && b.includes('@page { size: 8.625in 11.25in; margin: 0 }'));
   check('HTML : sections à la taille du format', a.includes('width: 6.125in; height: 9.25in') && b.includes('width: 8.625in; height: 11.25in'));
   check('HTML : aucun repère imprimé', !/reperes|repère/.test(a));
@@ -99,15 +99,15 @@ const detailOf = (checks: CheckResult[], id: string) => checks.find((c) => c.id 
   check('numéro de page réel', a.includes('<span>6</span>') && a.includes('<span>7</span>'));
   const noFolio = structuredClone(collection);
   noFolio.style.folio.show = false;
-  check('numéros de page retirés par le style', !buildEssai(SIX_NINE, noFolio, 'foret').html.includes('data-type="folio"'));
-  check('thème : couleur venue du style', buildEssai(SIX_NINE, collection, 'volcan').html.includes(collection.style.palette.themes.volcan!));
-  expectThrows('thème inconnu refusé', () => buildEssai(SIX_NINE, collection, 'nuit'), RenderRefused, 'Thème inconnu');
+  check('numéros de page retirés par le style', !buildEssai(SIX_NINE, noFolio, 'foret', TEMPLATE_2A).html.includes('data-type="folio"'));
+  check('thème : couleur venue du style', buildEssai(SIX_NINE, collection, 'volcan', TEMPLATE_2A).html.includes(collection.style.palette.themes.volcan!));
+  expectThrows('thème inconnu refusé', () => buildEssai(SIX_NINE, collection, 'nuit', TEMPLATE_2A), RenderRefused, 'Thème inconnu');
   const six: Collection = structuredClone(collection);
   six.style.fiche.push({ id: 'vitesse', picto: 'taille', label: { fr: 'Vitesse', en: 'Speed', es: 'Velocidad' } });
-  const sixHtml = buildEssai(SIX_NINE, six, 'foret').html;
+  const sixHtml = buildEssai(SIX_NINE, six, 'foret', TEMPLATE_2A).html;
   check('fiche : information ajoutée dans le style, rendue sans toucher au code', sixHtml.includes('Vitesse') && sixHtml.includes('valeur d\'essai'));
   six.style.fiche.push({ id: 'autre', picto: 'taille', label: { fr: 'Autre', en: 'Other', es: 'Otro' } });
-  expectThrows('fiche au-delà de ce que pose le gabarit', () => buildEssai(SIX_NINE, six, 'foret'), RenderRefused, '6 au plus');
+  expectThrows('fiche au-delà de ce que pose le gabarit', () => buildEssai(SIX_NINE, six, 'foret', TEMPLATE_2A), RenderRefused, '6 au plus');
   check('sujet d’essai : mirror faux, 2 pages', essaiSubject('foret').pages === 2 && !essaiSubject('foret').variant.mirror);
   check('sujet d’essai : page gauche, plan du §5.1', ESSAI_FIRST_PAGE === 6);
   const texts = essaiContent('foret', SIX_NINE).texts;
@@ -120,7 +120,7 @@ const detailOf = (checks: CheckResult[], id: string) => checks.find((c) => c.id 
 
 // Chaîne réelle, aux deux formats
 for (const [name, trim, wantW, wantH] of [['6 × 9"', SIX_NINE, 441, 666], ['8,5 × 11"', LETTER, 621, 810]] as const) {
-  const r = await renderEssai(buildEssai(trim, collection, 'foret'));
+  const r = await renderEssai(buildEssai(trim, collection, 'foret', TEMPLATE_2A));
   check(`${name} : deux pages`, r.pages.length === 2, r.pages);
   check(`${name} : largeur relue dans le PDF`, r.pages.every((p) => Math.abs(p.widthPt - wantW) <= 0.15 && Math.abs(p.heightPt - wantH) <= 0.15), r.pages);
   for (const c of r.checks) check(`${name} : ${c.id} vert`, c.level === 'ok', c);
@@ -131,7 +131,7 @@ for (const [name, trim, wantW, wantH] of [['6 × 9"', SIX_NINE, 441, 666], ['8,5
 
 // Côté de la page, mesuré dans le rendu
 {
-  const essai = buildEssai(SIX_NINE, collection, 'foret');
+  const essai = buildEssai(SIX_NINE, collection, 'foret', TEMPLATE_2A);
   const { measures } = await renderPdf(essai.html, SIX_NINE);
   const box = (zone: string) => measures.boxes.find((b) => b.zone === zone && b.kind === 'zone')!.rect;
   const pageWidth = pageSize(SIX_NINE).widthIn * 25.4;
@@ -154,7 +154,7 @@ for (const [name, trim, wantW, wantH] of [['6 × 9"', SIX_NINE, 441, 666], ['8,5
   const rgb = pngDataUri(makePng(600, 200, 3, (x) => [200, gradient(x), 40]));
   const rgba = pngDataUri(makePng(600, 200, 4, (x) => [200, 40, 40, 255 - gradient(x)]));
   const swap = (uri: string) => {
-    const essai = buildEssai(SIX_NINE, collection, 'foret');
+    const essai = buildEssai(SIX_NINE, collection, 'foret', TEMPLATE_2A);
     return { ...essai, html: renderHtml(essai.layout, SIX_NINE, collection.style, { ...essaiContent('foret', SIX_NINE), images: { illustration: uri } }, collection.pictos) };
   };
   const clean = await renderPdf(swap(rgb).html, SIX_NINE);
@@ -163,7 +163,7 @@ for (const [name, trim, wantW, wantH] of [['6 × 9"', SIX_NINE, 441, 666], ['8,5
   check('PNG RVB sans alpha : présent dans le PDF, non recompressé en JPEG', cleanFacts.images.some((i) => i.heightPx === 200 && i.filter === '/FlateDecode'), cleanFacts.images);
   check('PNG RVB sans alpha : aucun /SMask', !cleanFacts.transparency.some((t) => t.kind.includes('SMask')), cleanFacts.transparency);
   check('PNG RVB sans alpha : C6 vert', level(runChecks({ facts: cleanFacts, measures: clean.measures, pages: swap(rgb).layout, pack: packFonts() }), 'C6') === 'ok');
-  const full = await readPdfFacts((await renderPdf(buildEssai(SIX_NINE, collection, 'foret').html, SIX_NINE)).pdf);
+  const full = await readPdfFacts((await renderPdf(buildEssai(SIX_NINE, collection, 'foret', TEMPLATE_2A).html, SIX_NINE)).pdf);
   check('PNG pleine page du sujet d’essai : 1838 × 2775 px, sans /SMask', full.images.some((i) => i.widthPx === 1838 && i.heightPx === 2775 && i.filter === '/FlateDecode') && full.transparency.length === 0, full);
   const dirty = await readPdfFacts((await renderPdf(swap(rgba).html, SIX_NINE)).pdf);
   check('PNG avec alpha : /SMask relu, C6 rouge', dirty.transparency.some((t) => t.kind === '/SMask sur une image'), dirty.transparency);
@@ -171,7 +171,7 @@ for (const [name, trim, wantW, wantH] of [['6 × 9"', SIX_NINE, 441, 666], ['8,5
 
 // Fautes réelles : le contrôle voit ce que Chromium a produit
 {
-  const base = buildEssai(SIX_NINE, collection, 'foret');
+  const base = buildEssai(SIX_NINE, collection, 'foret', TEMPLATE_2A);
   const faults: [string, string, string, string][] = [
     ['opacity sur la fiche', '.fiche { opacity: 0.5 }', 'C6', '/ca'],
     ['couleur à alpha', '.fiche { background: rgba(255, 0, 0, 0.4) }', 'C6', 'couleur à alpha'],

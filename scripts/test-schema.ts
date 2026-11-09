@@ -7,8 +7,8 @@ import { researchImportSchema, storedResearchSchema } from '../src/schema/resear
 import { rightsFileSchema } from '../src/schema/rights';
 import { contrast, styleSchema } from '../src/schema/style';
 import { subjectSchema } from '../src/schema/subject';
-import { TEMPLATE_2A } from '../src/templates/2A';
-import { TEMPLATES } from '../src/templates';
+import { TEMPLATE_2A } from './fixtures/gabarits';
+import { deliveredNames } from '../src/templates/files';
 import { templateSchema } from '../src/templates/model';
 import { check, finish } from './test-lib';
 
@@ -93,7 +93,7 @@ noSubject('statut inconnu', (s) => (s.status = 'fini'));
 // gabarits (§3.4)
 const edge = (mm = 0) => ({ from: 'securite', mm });
 const box = { outer: edge(), inner: edge(), top: edge(), heightMm: 20 };
-const zone = (id: string, extra: Dict = {}): Dict => ({ id, type: 'texte', bleed: false, box, ...extra });
+const zone = (id: string, extra: Dict = {}): Dict => ({ id, type: 'texte', bleed: false, box, constraints: { maxChars: 100 }, ...extra });
 const tpl = (start: string, sheets: Dict[][], id = `${sheets.length}A`): Dict => ({ id, pages: sheets.length, start, sheets: sheets.map((zones) => ({ zones })) });
 const qr = (extra: Dict = {}) => zone('qr', { type: 'qr', constraints: { qrSideMm: 25 }, ...extra });
 const spread = zone('large', { type: 'illustration', spread: true });
@@ -101,7 +101,7 @@ const twoA = (): Dict => structuredClone(TEMPLATE_2A);
 const goodTpl = (name: string, t: Dict) => check(`gabarit admis : ${name}`, templateSchema.safeParse(t).success, templateSchema.safeParse(t).error?.issues);
 const noTpl = (name: string, t: Dict) => check(`gabarit refusé : ${name}`, !templateSchema.safeParse(t).success, t);
 
-check('gabarit 2A livré et valide', TEMPLATES['2A']?.id === '2A' && templateSchema.safeParse(twoA()).success);
+check('gabarit 2A livré et valide', TEMPLATE_2A.id === '2A' && deliveredNames().includes('2A.json') && templateSchema.safeParse(twoA()).success);
 goodTpl('à cheval, page gauche puis droite, start gauche', tpl('gauche', [[spread], []]));
 goodTpl('à cheval sur les pages 2 et 3, start droite', tpl('droite', [[], [spread], []]));
 goodTpl('libre, sans élément à cheval', tpl('libre', [[zone('a')], []]));
@@ -320,6 +320,6 @@ check('recherche stockée valide', storedResearchSchema.safeParse({ ...research(
 check('recherche stockée : sans statut, refusée', !storedResearchSchema.safeParse(research()).success);
 
 // Gabarit : limite d'une information de fiche
-check('2A : limite par information de fiche', TEMPLATES['2A']!.sheets[0]!.zones.find((z) => z.id === 'fiche')!.constraints?.itemMaxChars === 28);
+check('2A : limite par information de fiche', TEMPLATE_2A.sheets[0]!.zones.find((z) => z.id === 'fiche')!.constraints?.itemMaxChars === 28);
 
 finish('schémas');

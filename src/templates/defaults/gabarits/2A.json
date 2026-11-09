@@ -1,0 +1,119 @@
+{
+  "id": "2A",
+  "pages": 2,
+  "start": "gauche",
+  "sheets": [
+    {
+      "zones": [
+        {
+          "id": "bandeau",
+          "type": "fond",
+          "bleed": true,
+          "box": {
+            "outer": { "from": "rogne", "mm": 0 },
+            "inner": { "from": "rogne", "mm": 0 },
+            "top": { "from": "rogne", "mm": 0 },
+            "heightMm": 37
+          }
+        },
+        {
+          "id": "titre",
+          "type": "titre",
+          "bleed": false,
+          "box": {
+            "outer": { "from": "securite", "mm": 0 },
+            "inner": { "from": "securite", "mm": 0 },
+            "top": { "from": "securite", "mm": 0 },
+            "heightMm": 23
+          },
+          "constraints": { "maxChars": 40 }
+        },
+        {
+          "id": "chapeau",
+          "type": "chapeau",
+          "bleed": false,
+          "box": {
+            "outer": { "from": "securite", "mm": 0 },
+            "inner": { "from": "securite", "mm": 0 },
+            "top": { "from": "securite", "mm": 28 },
+            "heightMm": 24
+          },
+          "constraints": { "maxChars": 140 }
+        },
+        {
+          "id": "texte",
+          "type": "texte",
+          "bleed": false,
+          "box": {
+            "outer": { "from": "securite", "mm": 0 },
+            "inner": { "from": "securite", "mm": 0 },
+            "top": { "from": "securite", "mm": 53 },
+            "bottom": { "from": "securite", "mm": 58 }
+          },
+          "constraints": { "maxChars": 600 }
+        },
+        {
+          "id": "fiche",
+          "type": "fiche",
+          "bleed": false,
+          "box": {
+            "outer": { "from": "securite", "mm": 0 },
+            "inner": { "from": "securite", "mm": 0 },
+            "bottom": { "from": "securite", "mm": 9 },
+            "heightMm": 46
+          },
+          "constraints": { "maxPictos": 6, "itemMaxChars": 28 }
+        },
+        {
+          "id": "folio-g",
+          "type": "folio",
+          "bleed": false,
+          "box": {
+            "outer": { "from": "securite", "mm": 0 },
+            "inner": { "from": "securite", "mm": 0 },
+            "bottom": { "from": "securite", "mm": 0 },
+            "heightMm": 7
+          }
+        }
+      ]
+    },
+    {
+      "zones": [
+        {
+          "id": "illustration",
+          "type": "illustration",
+          "bleed": true,
+          "box": {
+            "outer": { "from": "rogne", "mm": 0 },
+            "inner": { "from": "rogne", "mm": 0 },
+            "top": { "from": "rogne", "mm": 0 },
+            "bottom": { "from": "rogne", "mm": 0 }
+          }
+        },
+        {
+          "id": "folio-d",
+          "type": "folio",
+          "bleed": false,
+          "box": {
+            "outer": { "from": "securite", "mm": 0 },
+            "inner": { "from": "securite", "mm": 0 },
+            "bottom": { "from": "securite", "mm": 0 },
+            "heightMm": 7
+          }
+        },
+        {
+          "id": "qr",
+          "type": "qr",
+          "bleed": false,
+          "box": {
+            "outer": { "from": "securite", "mm": 0 },
+            "bottom": { "from": "securite", "mm": 0 },
+            "widthMm": 37,
+            "heightMm": 42
+          },
+          "constraints": { "qrSideMm": 25, "maxChars": 44 }
+        }
+      ]
+    }
+  ]
+}

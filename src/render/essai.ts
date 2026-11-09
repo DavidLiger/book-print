@@ -5,15 +5,17 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
-import { essaiContent, essaiSubject, ESSAI_FIRST_PAGE } from '../../scripts/fixtures/sujet-essai';
+import { essaiContent, essaiSubject, ESSAI_FIRST_PAGE, ESSAI_TEMPLATE } from '../../scripts/fixtures/sujet-essai';
 import { readPdfFacts } from '../checks/pdf-facts';
 import { runChecks, type CheckResult } from '../checks/rules';
 import { readCollection, type Collection } from '../data/collection';
 import { bookFolder, readPrintBook } from '../data/pricing-file';
 import type { PrintBook } from '../schema/print-book';
-import { TEMPLATES } from '../templates';
+import { readTemplates, templateOf, TEMPLATES_DIR } from '../templates/files';
+import type { Template } from '../templates/model';
 import { layoutTemplate, pageSize, type LayoutPage, type Trim } from '../templates/geometry';
 import { FONT_PACK } from './fonts';
+import { fillerImages, fillerTexts } from './gabarit';
 import { applyBookFiche, renderHtml, RenderRefused } from './html';
 import { renderPdf } from './pdf';
 
@@ -37,12 +39,17 @@ export interface Essai {
   book?: string;
 }
 
-export function buildEssai(trim: Trim, collection: Collection, theme: string): Essai {
+/** Fichier du gabarit de l'essai : sa date entre dans la fraîcheur d'Essai (GB1). */
+export const ESSAI_TEMPLATE_FILE = `collection/${TEMPLATES_DIR}/${ESSAI_TEMPLATE}.json`;
+
+/** `template` : le 2A de la collection. Une zone que le sujet d'essai ne connaît pas (2A modifié par David) reçoit le remplissage de l'aperçu d'un gabarit. */
+export function buildEssai(trim: Trim, collection: Collection, theme: string, template: Template): Essai {
   const subject = essaiSubject(theme);
   if (subject.variant.mirror) throw new RenderRefused('Miroir : pas encore rendu, il viendra avec les gabarits suivants.');
-  const template = TEMPLATES[subject.template]!;
   const layout = layoutTemplate(template, trim, collection.style.margins, ESSAI_FIRST_PAGE);
-  return { html: renderHtml(layout, trim, collection.style, essaiContent(theme, trim), collection.pictos), layout, trim, theme };
+  const content = essaiContent(theme, trim);
+  const filled = { ...content, texts: { ...fillerTexts(template), ...content.texts }, images: { ...fillerImages(template, trim), ...content.images } };
+  return { html: renderHtml(layout, trim, collection.style, filled, collection.pictos), layout, trim, theme };
 }
 
 /** Ce que le PDF et l'aperçu partagent : le livre fixe le format, la collection le style. */
@@ -52,7 +59,13 @@ export function essaiFor(dataRoot: string, bookId: string, theme?: string): Essa
   const collection = readCollection(dataRoot);
   if (!collection) throw new RenderRefused('collection/ absent : le créer d\'abord dans la page.');
   const style = applyBookFiche(collection.style, book);
-  return { ...buildEssai(book.edition.trim, { ...collection, style }, theme ?? style.variants.rotation[0]!), book: bookSnapshot(book) };
+  const library = readTemplates(dataRoot, style);
+  const found = templateOf(library, ESSAI_TEMPLATE);
+  if ('error' in found) {
+    const present = library.entries.some((e) => e.id === ESSAI_TEMPLATE);
+    throw new RenderRefused(present ? found.error : `${found.error} L'essai pose ce gabarit : « Ajouter les gabarits livrés » dans l'étape Gabarits.`);
+  }
+  return { ...buildEssai(book.edition.trim, { ...collection, style }, theme ?? style.variants.rotation[0]!, found.template), book: bookSnapshot(book) };
 }
 
 export const packFonts = () => Object.values(FONT_PACK).map(({ family, pdfName }) => ({ family, pdfName }));

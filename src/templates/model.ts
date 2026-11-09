@@ -50,6 +50,14 @@ const constraintsSchema = z.strictObject({
   qrSideMm: z.number().min(QR_MIN_SIDE_MM, `QR : côté de ${QR_MIN_SIDE_MM} mm au moins`).optional(),
 });
 
+/** Zones qui portent un texte : leur longueur maximale est obligatoire (GB1). Le prompt, l'aperçu d'un gabarit et C12 en ont besoin. */
+export const TEXT_ZONE_TYPES: readonly ZoneType[] = ['titre', 'chapeau', 'texte', 'encadre', 'chiffre-cle', 'legende', 'etiquette'];
+
+/** Corps minimum de KDP (C8) : un chiffre-clé ne peut pas descendre plus bas. */
+const KDP_MIN_PT = 7;
+
+const headingText = z.string().trim().min(1, 'titre de l\'encadré vide');
+
 const zoneSchema = z.strictObject({
   id: slugSchema,
   type: z.enum(ZONE_TYPES),
@@ -58,8 +66,24 @@ const zoneSchema = z.strictObject({
   /** Élément à cheval : il continue sur la page suivante, qui doit lui faire face. */
   spread: z.boolean().optional(),
   constraints: constraintsSchema.optional(),
+  /** `encadre` (GB1) : la couleur, une clé de `palette.boxes` du style. */
+  encadre: slugSchema.optional(),
+  /** `encadre` (GB1), facultatif : le titre imprimé en tête, dans chaque langue. */
+  heading: z.strictObject({ fr: headingText, en: headingText, es: headingText }).optional(),
+  /** `picto` (GB1) : un pictogramme de `style.pictos`. */
+  picto: slugSchema.optional(),
+  /** `chiffre-cle` (GB1), facultatif : le corps du chiffre ; sans lui, celui du titre. */
+  sizePt: z.number().min(KDP_MIN_PT, `corps : ${KDP_MIN_PT} pt au moins (KDP)`).optional(),
 });
 export type Zone = z.infer<typeof zoneSchema>;
+
+/** Champs propres à un type : refusés sur les autres (GB1). */
+const OWN_FIELDS: { field: 'encadre' | 'heading' | 'picto' | 'sizePt'; type: ZoneType }[] = [
+  { field: 'encadre', type: 'encadre' },
+  { field: 'heading', type: 'encadre' },
+  { field: 'picto', type: 'picto' },
+  { field: 'sizePt', type: 'chiffre-cle' },
+];
 
 const onTrim = (e: z.infer<typeof edgeSchema> | undefined) => e?.from === 'rogne' && e.mm === 0;
 
@@ -95,6 +119,12 @@ export const templateSchema = z
         if (zone.bleed && !(onTrim(zone.box.outer) || onTrim(zone.box.top) || onTrim(zone.box.bottom))) {
           issue(`${zone.id} : bleed sans bord rogné à l'extérieur, en haut ou en bas`, path);
         }
+        for (const { field, type } of OWN_FIELDS) {
+          if (zone[field] !== undefined && zone.type !== type) issue(`${zone.id} : ${field} réservé aux zones ${type}`, path);
+        }
+        if (zone.type === 'encadre' && zone.encadre === undefined) issue(`${zone.id} : encadre attendu, une couleur de palette.boxes`, path);
+        if (zone.type === 'picto' && zone.picto === undefined) issue(`${zone.id} : picto attendu, un pictogramme de style.pictos`, path);
+        if (TEXT_ZONE_TYPES.includes(zone.type) && zone.constraints?.maxChars === undefined) issue(`${zone.id} : constraints.maxChars attendu pour une zone ${zone.type}`, path);
         if (zone.type === 'qr') {
           if (index !== t.sheets.length - 1) issue(`${zone.id} : le QR est sur la dernière page du sujet`, path);
           if (zone.constraints?.qrSideMm === undefined) issue(`${zone.id} : côté du QR attendu`, path);

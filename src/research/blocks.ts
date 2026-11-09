@@ -33,3 +33,14 @@ export function expectedBlocks(template: Template, fiche: Fiche, lang: Lang): Ex
 export function zoneLimit(template: Template, type: 'titre' | 'qr'): number | null {
   return template.sheets.flatMap((s) => s.zones).find((z) => z.type === type)?.constraints?.maxChars ?? null;
 }
+
+/**
+ * Écart entre les blocs d'un sujet et ceux que son gabarit attend (GB1) : un gabarit modifié sous un sujet. Un bloc dont la zone a changé de
+ * type compte des deux côtés. Rien n'est réécrit : un second import règle l'écart.
+ */
+export function blocksGap(blocks: { id: string; type: string }[], expected: ExpectedBlock[]): { missing: string[]; extra: string[] } {
+  const key = (b: { id: string; type: string }) => `${b.id} (${b.type})`;
+  const have = new Set(blocks.map(key));
+  const want = new Set(expected.map(key));
+  return { missing: [...want].filter((k) => !have.has(k)), extra: [...have].filter((k) => !want.has(k)) };
+}

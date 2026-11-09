@@ -13,8 +13,8 @@ import { AGE_TARGET, researchPrompt } from '../src/research/prompt';
 import { applyBlockAction, applyClaimAction, type Data } from '../src/research/state';
 import { checkUrl, checkUrls, isPrivateAddress, MAX_REDIRECTS, type UrlDeps } from '../src/research/url-check';
 import { researchJsonSchema } from '../src/schema/research';
-import { TEMPLATE_2A } from '../src/templates/2A';
-import { FIRST_SUBJECT_PAGE, TEMPLATES, templateFits } from '../src/templates';
+import { TEMPLATE_2A } from './fixtures/gabarits';
+import { FIRST_SUBJECT_PAGE, templateFits } from '../src/templates';
 import { makeResearch } from './fixtures/recherche';
 import { BOOK_ID, dirLink, fileLink, put, tempDir } from './fixtures/make-glbi';
 import { SCHEMA_FILE, schemaText } from './gen-research-schema';
@@ -70,8 +70,8 @@ check('création : aucun fichier temporaire', fs.readdirSync(subjectFolder(dataR
 check('création : pageBudget inchangé', book().pageBudget === 46);
 refused('création : même sujet deux fois', () => newSubject('alpha'), 'existe déjà');
 refused('création : scène inconnue', () => newSubject('omega'), 'Scène inconnue');
-refused('création : gabarit inconnu', () => newSubject('beta', { template: '2Z' }), 'Gabarit inconnu');
-refused('création : gabarit, nom de prototype', () => newSubject('beta', { template: 'constructor' }), 'Gabarit inconnu');
+refused('création : gabarit inconnu', () => newSubject('beta', { template: '2Z' }), 'Gabarit 2Z absent de collection/gabarits/');
+refused('création : gabarit, nom de prototype', () => newSubject('beta', { template: 'constructor' }), 'Gabarit constructor absent');
 refused('création : pages et gabarit différents', () => newSubject('beta', { pages: 4 }), 'a 2 pages');
 refused('création : thème inconnu', () => newSubject('beta', { theme: 'rose' }), 'Thème inconnu');
 refused('création : nom réservé', () => newSubject('nul'), 'réservé par Windows');
@@ -87,7 +87,7 @@ fs.rmdirSync(path.join(dataRoot, BOOK_ID, 'subjects', 'beta'));
 // Pages
 check('première page : somme des sujets précédents', firstPageOf(dataRoot, book(), 'alpha') === FIRST_SUBJECT_PAGE && firstPageOf(dataRoot, book(), 'gamma-2') === FIRST_SUBJECT_PAGE + 2 && firstPageOf(dataRoot, book(), 'delta') === FIRST_SUBJECT_PAGE + 4);
 check('page suivante : après le dernier sujet', firstPageOf(dataRoot, book(), '') === FIRST_SUBJECT_PAGE + 6);
-check('registre : 2A passe en page paire, pas en page impaire', templateFits(TEMPLATES['2A']!, 8) && !templateFits(TEMPLATES['2A']!, 9));
+check('registre : 2A passe en page paire, pas en page impaire', templateFits(TEMPLATE_2A, 8) && !templateFits(TEMPLATE_2A, 9));
 check('registre : un gabarit libre se pose partout', templateFits({ ...TEMPLATE_2A, start: 'libre' }, 9));
 {
   const saved = fs.readFileSync(bookFile, 'utf8');
@@ -149,6 +149,7 @@ const linkedBook = () => {
   const root = path.join(tempDir(), 'donnees');
   fs.mkdirSync(root);
   createBookFolder(root, BOOK_ID);
+  createCollection(root);
   createSubject(root, BOOK_ID, { sceneId: 'alpha', pages: 2, template: '2A', theme: 'foret' }, ['alpha'], ['foret']);
   return root;
 };

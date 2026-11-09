@@ -33,6 +33,11 @@ export interface LayoutZone {
   rect: Rect;
   bleedEdges: BleedEdge[];
   constraints: Zone['constraints'];
+  /** Champs propres à un type (GB1), repris tels quels du gabarit. */
+  encadre?: string;
+  heading?: Zone['heading'];
+  picto?: string;
+  sizePt?: number;
 }
 export interface LayoutPage {
   number: number;
@@ -130,7 +135,9 @@ export function layoutTemplate(template: Template, trim: Trim, margins: Margins,
       if (zone.spread) throw new GeometryRefused(`${zone.id} : élément à cheval, non rendu avant les gabarits qui en ont besoin`);
       const rect = zoneRect(frame, margins, zone.box, `${template.id}, zone ${zone.id}`);
       const edges = zone.bleed ? bleedEdges(zone.box) : [];
-      return { id: zone.id, type: zone.type, rect: extend(rect, frame, edges), bleedEdges: edges, constraints: zone.constraints };
+      const own = { encadre: zone.encadre, heading: zone.heading, picto: zone.picto, sizePt: zone.sizePt };
+      const extra = Object.fromEntries(Object.entries(own).filter(([, v]) => v !== undefined));
+      return { id: zone.id, type: zone.type, rect: extend(rect, frame, edges), bleedEdges: edges, constraints: zone.constraints, ...extra };
     });
     return { number, ...frame, zones };
   });

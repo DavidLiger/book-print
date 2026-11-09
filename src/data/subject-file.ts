@@ -9,7 +9,9 @@ import { glbiIdSchema, slugSchema, WINDOWS_RESERVED } from '../schema/common';
 import { printBookSchema, type PrintBook } from '../schema/print-book';
 import { storedResearchSchema, type StoredResearch } from '../schema/research';
 import { subjectSchema, type Subject } from '../schema/subject';
-import { FIRST_SUBJECT_PAGE, TEMPLATES, templateFits } from '../templates';
+import { FIRST_SUBJECT_PAGE, templateFits } from '../templates';
+import { readTemplates, templateOf } from '../templates/files';
+import { readCollection } from './collection';
 import { writeAtomic } from './atomic';
 import { bookFolder } from './pricing-file';
 
@@ -124,8 +126,10 @@ export function createSubject(dataRoot: string, bookId: string, input: NewSubjec
     if (known.sceneId !== undefined && known.sceneId === input.sceneId) throw new SubjectRefused(`La scène ${input.sceneId} a déjà son sujet : ${other}.`);
   }
   if (!themes.includes(input.theme)) throw new SubjectRefused(`Thème inconnu : ${input.theme}.`);
-  const template = Object.hasOwn(TEMPLATES, input.template) ? TEMPLATES[input.template] : undefined;
-  if (!template) throw new SubjectRefused(`Gabarit inconnu : ${input.template}.`);
+  // Les gabarits sont relus dans la collection (GB1) : un gabarit absent ou invalide est refusé, nommé.
+  const found = templateOf(readTemplates(dataRoot, readCollection(dataRoot)?.style ?? null), input.template);
+  if ('error' in found) throw new SubjectRefused(found.error);
+  const { template } = found;
   if (template.pages !== input.pages) throw new SubjectRefused(`Le gabarit ${input.template} a ${template.pages} pages, pas ${input.pages}.`);
   const firstPage = firstPageOf(dataRoot, book, id);
   if (!templateFits(template, firstPage)) throw new SubjectRefused(`Le gabarit ${input.template} ne peut pas commencer en page ${firstPage}.`);

@@ -111,6 +111,38 @@
       </div>
     </section>
 
+    <section id="gabarits" class="panneau" aria-labelledby="t-gabarits" hidden>
+      <div class="tete">
+        <h2 id="t-gabarits">Gabarits</h2>
+        <p class="note">Un fichier par gabarit dans <code>collection/gabarits/</code>, créé, modifié ou retiré à la main. Aperçu avec un texte de remplissage à la longueur maximale de chaque zone.</p>
+        <button id="ga-ajouter" type="button" class="secondaire">Ajouter les gabarits livrés</button>
+        <button id="ga-recharger" type="button" class="secondaire">Recharger</button>
+      </div>
+      <div id="ga-message"></div>
+      <div class="zone-gabarits">
+        <div id="ga-liste" class="liste"></div>
+        <div id="ga-cadre" class="cadre-apercu">
+          <div id="ga-echelle" class="echelle-apercu">
+            <iframe id="ga-apercu" class="cadre-page" title="Aperçu du gabarit" sandbox scrolling="no"></iframe>
+            <svg id="ga-reperes" class="reperes" aria-hidden="true"></svg>
+          </div>
+        </div>
+        <div class="colonne">
+          <div class="champ"><label for="ga-theme">Thème</label><select id="ga-theme"></select></div>
+          <fieldset>
+            <legend>Repères</legend>
+            <label><input type="checkbox" data-gabarit-layer="bleed"> Fond perdu</label>
+            <label><input type="checkbox" data-gabarit-layer="safe"> Zone de sécurité</label>
+            <label><input type="checkbox" data-gabarit-layer="fold"> Pli</label>
+            <label><input type="checkbox" data-gabarit-layer="zones"> Zones</label>
+          </fieldset>
+          <div class="boutons"><button id="ga-controler" type="button">Contrôler</button></div>
+          <p class="note">C3, C4, C6, C7, C8 et le débordement, sur le texte de remplissage. Résultat non conservé.</p>
+          <div id="ga-resultat" class="liste"></div>
+        </div>
+      </div>
+    </section>
+
     <section id="essai" class="panneau" aria-labelledby="t-essai" hidden>
       <div class="tete">
         <h2 id="t-essai">Gabarit 2A : essai</h2>

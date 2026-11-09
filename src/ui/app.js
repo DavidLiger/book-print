@@ -1,5 +1,5 @@
 // src/ui/app.js — page locale de book-print : un menu d'étapes (UI1) et un panneau par étape : configuration, livre lu, dossier (MP1),
-// simulateur de prix (PX1), collection et essai du gabarit 2A (MP2), sujets et relecture (MP3), droits et illustrations (MP4), workflows et génération par ComfyUI (IC1),
+// simulateur de prix (PX1), collection et essai du gabarit 2A (MP2), gabarits de la collection (GB1), sujets et relecture (MP3), droits et illustrations (MP4), workflows et génération par ComfyUI (IC1),
 // bibliothèque de styles (IC2). L'état des étapes vient du serveur (`/api/parcours`).
 // Les textes viennent de fichiers : ils passent toujours par textContent.
 
@@ -84,6 +84,7 @@ function showStep(id) {
   $('etapes').replaceChildren(...stepItems(shownSteps(), id, showStep));
   showReasons(id === 'sujets' && sujets.open ? undefined : shownSteps().find((s) => s.id === id));
   if (changed && id === 'sujets') loadSujets();
+  if (changed && id === 'gabarits') loadGabarits();
   if (changed && id === 'droits') loadDroits();
   if (changed && id === 'workflows') loadWorkflows();
   if (changed && id === 'styles') loadStyles();
@@ -167,6 +168,7 @@ async function readSelected() {
   closeSubject();
   await refreshParcours({ reopen: true });
   if (parcours.current === 'sujets') await loadSujets();
+  if (parcours.current === 'gabarits') await loadGabarits();
   if (parcours.current === 'droits') await loadDroits();
   if (parcours.current === 'workflows') await loadWorkflows();
   if (parcours.current === 'styles') await loadStyles();
@@ -530,7 +532,7 @@ function drawMarks(view) {
 
 function showLayers(view) {
   for (const box of document.querySelectorAll(view.boxes)) {
-    const name = view.attr === 'layer' ? box.dataset.layer : box.dataset.sujetLayer;
+    const name = box.dataset[view.attr];
     const layer = view.svg.querySelector(`g[data-layer="${name}"]`);
     if (layer) layer.setAttribute('display', box.checked ? 'inline' : 'none');
   }
@@ -662,6 +664,133 @@ async function exportEssai() {
 }
 
 async function reloadEssai() {
+  await openEssai(essai.bookId);
+  await refreshParcours();
+}
+
+// Gabarits (GB1). Les gabarits sont des fichiers de `collection/gabarits/` : la page les liste, montre l'aperçu d'un gabarit avec un texte de
+// remplissage à la longueur maximale de chaque zone, et le contrôle sur demande. Aucun éditeur, aucune suppression.
+
+const gabarits = { selected: null, turn: 0 };
+const gabaritView = { layout: null, frame: $('ga-cadre'), inner: $('ga-echelle'), svg: $('ga-reperes'), boxes: 'input[data-gabarit-layer]', attr: 'gabaritLayer' };
+const START_LABELS = { gauche: 'gauche', droite: 'droite', libre: 'libre' };
+
+function gabaritsTable(templates) {
+  if (templates.length === 0) return el('p', 'Aucun gabarit dans collection/gabarits/.', 'alerte');
+  const table = el('table');
+  const head = el('tr');
+  for (const t of ['Gabarit', 'Pages', 'Départ', 'État', 'Sujets']) head.append(el('th', t));
+  table.append(head);
+  for (const t of templates) {
+    const row = el('tr');
+    row.dataset.gabarit = t.id;
+    if (t.id === gabarits.selected) row.setAttribute('aria-current', 'true');
+    const name = el('td');
+    if (t.error) name.append(el('span', t.id));
+    else name.append(smallButton(t.id, () => selectGabarit(t.id)));
+    const verdict = el('td');
+    verdict.append(el('span', t.error ? '✗' : '✓', `signe ${t.error ? 'erreur' : 'bien'}`));
+    if (t.error) verdict.append(el('p', t.error, 'erreur cellule'));
+    row.append(name, el('td', t.pages === null ? '—' : String(t.pages)), el('td', t.start ? START_LABELS[t.start] : '—'), verdict, el('td', t.subjects.join(', ') || '—'));
+    table.append(row);
+  }
+  return table;
+}
+
+/** Le cadre reste en place, vide : la grille de l'étape ne bouge pas. */
+function clearGabaritPreview() {
+  gabaritView.layout = null;
+  $('ga-apercu').removeAttribute('src');
+  $('ga-reperes').replaceChildren();
+}
+
+function loadGabaritPreview() {
+  const query = new URLSearchParams({ bookId: essai.bookId, id: gabarits.selected, theme: $('ga-theme').value, t: String(Date.now()) });
+  $('ga-apercu').src = `/apercu-gabarit?${query}`;
+}
+
+async function selectGabarit(id) {
+  gabarits.selected = id;
+  for (const row of document.querySelectorAll('#ga-liste tr[data-gabarit]')) {
+    if (row.dataset.gabarit === id) row.setAttribute('aria-current', 'true');
+    else row.removeAttribute('aria-current');
+  }
+  $('ga-resultat').replaceChildren();
+  const box = $('ga-message');
+  box.replaceChildren();
+  const turn = ++gabarits.turn;
+  try {
+    const { layout } = await action('/api/gabarits/apercu', { bookId: essai.bookId, id, theme: $('ga-theme').value });
+    if (turn !== gabarits.turn) return;
+    gabaritView.layout = layout;
+    drawMarks(gabaritView);
+    loadGabaritPreview();
+  } catch (e) {
+    clearGabaritPreview();
+    box.append(el('p', e.message, 'erreur'));
+  }
+}
+
+async function loadGabarits() {
+  const box = $('ga-message');
+  box.replaceChildren();
+  if (!essai.bookId) return;
+  try {
+    const state = await action('/api/gabarits/state', { bookId: essai.bookId });
+    if (state.error) box.append(el('p', state.error, 'erreur'));
+    const select = $('ga-theme');
+    const current = select.value;
+    fillSelect(select, state.themes.map((name) => [name, name]), state.themes.includes(current) ? current : state.theme);
+    const valid = state.templates.filter((t) => !t.error);
+    if (!valid.some((t) => t.id === gabarits.selected)) gabarits.selected = valid[0]?.id ?? null;
+    $('ga-liste').replaceChildren(gabaritsTable(state.templates));
+    if (gabarits.selected) await selectGabarit(gabarits.selected);
+    else {
+      clearGabaritPreview();
+      $('ga-resultat').replaceChildren();
+    }
+  } catch (e) {
+    box.append(el('p', e.message, 'erreur'));
+    $('ga-liste').replaceChildren(el('p', 'Liste illisible : voir le message.', 'note'));
+    clearGabaritPreview();
+  }
+}
+
+async function addDeliveredGabarits() {
+  const box = $('ga-message');
+  $('ga-ajouter').disabled = true;
+  try {
+    const { result } = await action('/api/gabarits/ajouter');
+    await loadGabarits();
+    // L'essai pose 2A : son aperçu se refait, comme après la création de la collection.
+    await openEssai(essai.bookId);
+    box.prepend(list(`Créés (${result.created.length})`, result.created, 'bien'), list(`Conservés, non modifiés (${result.kept.length})`, result.kept, ''));
+  } catch (e) {
+    box.replaceChildren(el('p', e.message, 'erreur'));
+  } finally {
+    $('ga-ajouter').disabled = false;
+    await refreshParcours();
+  }
+}
+
+async function controlGabarit() {
+  if (!gabarits.selected) return;
+  const button = $('ga-controler');
+  const box = $('ga-resultat');
+  button.disabled = true;
+  box.replaceChildren(el('p', 'Contrôle en cours…', 'note'));
+  try {
+    const { checks } = await action('/api/gabarits/controle', { bookId: essai.bookId, id: gabarits.selected, theme: $('ga-theme').value });
+    box.replaceChildren(checksTable(checks));
+  } catch (e) {
+    box.replaceChildren(el('p', e.message, 'erreur'));
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function reloadGabarits() {
+  await loadGabarits();
   await openEssai(essai.bookId);
   await refreshParcours();
 }
@@ -2237,6 +2366,15 @@ for (const box of document.querySelectorAll('input[data-layer]')) box.addEventLi
 for (const box of document.querySelectorAll('input[data-sujet-layer]')) box.addEventListener('change', () => showLayers(sujetView));
 new ResizeObserver(() => fitPreview(essaiView)).observe($('apercu-cadre'));
 new ResizeObserver(() => fitPreview(sujetView)).observe($('sa-cadre'));
+new ResizeObserver(() => fitPreview(gabaritView)).observe($('ga-cadre'));
+$('ga-ajouter').addEventListener('click', addDeliveredGabarits);
+$('ga-recharger').addEventListener('click', reloadGabarits);
+$('ga-controler').addEventListener('click', controlGabarit);
+$('ga-theme').addEventListener('change', () => {
+  $('ga-resultat').replaceChildren();
+  if (gabarits.selected) loadGabaritPreview();
+});
+for (const box of document.querySelectorAll('input[data-gabarit-layer]')) box.addEventListener('change', () => showLayers(gabaritView));
 $('sujet-form').addEventListener('submit', createSubject);
 $('s-pages').addEventListener('input', fillTemplates);
 $('sujet-retour').addEventListener('click', async () => {

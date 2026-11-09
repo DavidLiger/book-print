@@ -16,7 +16,7 @@ import { createComfyRuntime } from '../src/server/comfy-actions';
 import { check, finish } from './test-lib';
 
 const SIZES = [{ width: 1920, height: 950 }, { width: 1366, height: 650 }];
-const STEP_IDS = ['livre', 'prix', 'collection', 'essai', 'droits', 'workflows', 'styles', 'sujets'];
+const STEP_IDS = ['livre', 'prix', 'collection', 'gabarits', 'essai', 'droits', 'workflows', 'styles', 'sujets'];
 
 const glbRoot = makeGlbi();
 const parent = tempDir();
@@ -73,9 +73,9 @@ const statesText = async () => (await tabs()).map((t) => t.sign).join();
 await open();
 {
   const all = await tabs();
-  check('menu : huit étapes numérotées, dans l’ordre', all.map((t) => t.id).join() === STEP_IDS.join() && all.every((t, i) => t.text.startsWith(String(i + 1))), all);
+  check('menu : neuf étapes numérotées, dans l’ordre', all.map((t) => t.id).join() === STEP_IDS.join() && all.every((t, i) => t.text.startsWith(String(i + 1))), all);
   check('ouverture : première étape non validée', (await current()) === 'livre');
-  check('départ : Livre à faire, le reste verrouillé', (await statesText()) === 'à faire,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée', await statesText());
+  check('départ : Livre à faire, le reste verrouillé', (await statesText()) === 'à faire,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée', await statesText());
   check('étape verrouillée : motif lisible sur l’onglet', (await tab('essai')).text.includes('Valider d\'abord « Livre »'), await tab('essai'));
   await page.click('#etapes button[data-step="essai"]', { force: true });
   check('étape verrouillée : ne s’ouvre pas', (await current()) === 'livre' && await page.isHidden('#essai'));
@@ -106,6 +106,44 @@ await open();
   await page.click('#collection-creer');
   await untilTab('collection', 'validée');
   check('collection créée : résultat et état du style', (await text('#collection-resultat')).includes('collection/style.json') && (await text('#collection-etat')).includes('foret'));
+
+  // Gabarits (GB1) : fichiers de collection/gabarits/, ajout des gabarits livrés sans écrasement, gabarit invalide, aperçu, contrôle.
+  const gabarit = (name: string) => path.join(dataRoot, 'collection', 'gabarits', name);
+  const delivered = fs.readFileSync(gabarit('2A.json'));
+  check('collection créée : 2A copié, Gabarits validé', (await text('#collection-resultat')).includes('collection/gabarits/2A.json') && (await tab('gabarits')).sign === 'validée');
+  fs.rmSync(gabarit('2A.json'));
+  await page.click('#collection-relire');
+  await untilTab('gabarits', 'à faire');
+  check('Gabarits : aucun gabarit, à faire ; Essai et Sujets verrouillés', (await tab('essai')).sign === 'verrouillée' && (await tab('sujets')).sign === 'verrouillée' && (await tab('essai')).text.includes('Gabarits'), await tabs());
+  await go('gabarits');
+  await until(`document.querySelector('#ga-liste').textContent.includes('Aucun gabarit')`);
+  check('Gabarits : motif et liste vide', (await text('#motifs')).includes('Ajouter les gabarits livrés') && (await text('#ga-liste')).includes('Aucun gabarit'));
+  await page.click('#ga-ajouter');
+  await untilTab('gabarits', 'validée');
+  await until(`(document.querySelector('#ga-apercu').getAttribute('src') ?? '').includes('/apercu-gabarit?')`);
+  check('Ajouter : 2A écrit à l’identique, listé, aperçu chargé', fs.readFileSync(gabarit('2A.json')).equals(delivered) && (await text('#ga-message')).includes('collection/gabarits/2A.json') && (await text('#ga-liste')).includes('gauche') && (await page.getAttribute('#ga-apercu', 'src'))!.includes('id=2A'));
+  fs.appendFileSync(gabarit('2A.json'), ' ');
+  const changed = fs.readFileSync(gabarit('2A.json'));
+  await page.click('#ga-ajouter');
+  await until(`document.querySelector('#ga-message').textContent.includes('Conservés, non modifiés (2)')`);
+  check('Ajouter une seconde fois : rien n’est écrasé', fs.readFileSync(gabarit('2A.json')).equals(changed));
+  fs.writeFileSync(gabarit('2A.json'), delivered);
+  fs.writeFileSync(gabarit('4A.json'), '{');
+  await page.click('#ga-recharger');
+  await untilTab('gabarits', 'erreur');
+  check('gabarit invalide : erreur nommée, Essai verrouillé, 2A toujours affiché', (await text('#ga-liste')).includes('JSON invalide') && (await text('#motifs')).includes('collection/gabarits/4A.json') && (await tab('essai')).sign === 'verrouillée' && (await page.getAttribute('#ga-apercu', 'src'))!.includes('id=2A'));
+  check('gabarit invalide : jamais réécrit', fs.readFileSync(gabarit('4A.json'), 'utf8') === '{');
+  fs.rmSync(gabarit('4A.json'));
+  await page.click('#ga-recharger');
+  await untilTab('gabarits', 'validée');
+  await page.check('input[data-gabarit-layer="zones"]');
+  await until(`document.querySelector('#ga-reperes g[data-layer="zones"]')?.getAttribute('display') === 'inline'`);
+  check('Gabarits : repères des zones dessinés', (await page.locator('#ga-reperes g[data-layer="zones"] rect').count()) === 9);
+  await page.selectOption('#ga-theme', 'volcan');
+  check('Gabarits : thème suivi par l’aperçu', (await page.getAttribute('#ga-apercu', 'src'))!.includes('theme=volcan'));
+  await page.click('#ga-controler');
+  await until(`!document.querySelector('#ga-controler').disabled && document.querySelector('#ga-resultat table') !== null`);
+  check('Gabarits : contrôle de 2A au texte maximal, six contrôles affichés', (await page.locator('#ga-resultat td .signe').count()) === 6 && (await text('#ga-resultat')).includes('C12') && (await text('#ga-resultat')).includes('C3'), await text('#ga-resultat'));
   await go('essai');
   await until(`document.querySelector('#apercu').src.includes('/apercu?')`);
   await exportPdf();
@@ -235,7 +273,7 @@ await open();
   await page.click('#v-scenarios');
   await page.click('#prix-scenarios button:has-text("Ne plus retenir")');
   await untilTab('essai', 'verrouillée');
-  check('étape redevenue non validée : la suite se reverrouille', (await statesText()) === 'validée,à faire,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée', await statesText());
+  check('étape redevenue non validée : la suite se reverrouille', (await statesText()) === 'validée,à faire,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée', await statesText());
   check('reverrouillage : aucune donnée perdue', fs.existsSync(style) && fs.existsSync(path.join(dataRoot, BOOK_ID, 'export', 'essai-2A.pdf')));
   await page.reload();
   await until(`document.querySelector('#etapes li[data-state="a-faire"]') !== null`);
@@ -243,7 +281,7 @@ await open();
   await page.click('#v-scenarios');
   await page.click('#prix-scenarios button:has-text("Retenir")');
   await untilTab('essai', 'validée');
-  check('scénario de nouveau retenu : le parcours revient', (await statesText()) === 'validée,validée,validée,validée,alerte,validée,alerte,à faire', await statesText());
+  check('scénario de nouveau retenu : le parcours revient', (await statesText()) === 'validée,validée,validée,validée,validée,alerte,validée,alerte,à faire', await statesText());
 }
 
 // Sujet réel, de la création à « relu »
@@ -696,6 +734,16 @@ async function everyStep(label: string): Promise<void> {
   await fits(`${label}, Prix, scénarios`);
   await go('collection');
   await fits(`${label}, Collection`);
+  await go('gabarits');
+  await until(`document.querySelector('#ga-echelle').style.transform !== '' && document.querySelector('#ga-liste table') !== null`);
+  await page.waitForTimeout(50);
+  await fits(`${label}, Gabarits`);
+  const gabaritPreview = await page.evaluate(previewFit('#ga-cadre', '#ga-echelle')) as { inside: boolean; width: number; height: number };
+  check(`${label}, Gabarits : double page entière et lisible`, gabaritPreview.inside && gabaritPreview.height > 250, gabaritPreview);
+  check(`${label}, Gabarits : commandes visibles`, await page.isVisible('#ga-ajouter') && await page.isVisible('#ga-recharger') && await page.isVisible('#ga-controler') && await page.isVisible('#ga-theme'));
+  await page.click('#ga-controler');
+  await until(`!document.querySelector('#ga-controler').disabled && document.querySelector('#ga-resultat table') !== null`);
+  await fits(`${label}, Gabarits, contrôle`);
   await go('essai');
   await until(`document.querySelector('#apercu-echelle').style.transform !== ''`);
   await page.waitForTimeout(50);
@@ -843,6 +891,16 @@ await page.route('**/api/styles/state', patchJson((view) => {
   view.styles = Array.from({ length: 40 }, (_, i) => ({ ...first, id: `style-${i}`, style: { ...first.style, name: `Style au nom assez long numéro ${i}` }, faults: i % 9 ? [] : ['Référence à déposer.'] }));
   view.essai.inputs.rendu = { state: 'refuse', message: many('Rendu', 1)[0] };
 }));
+await page.route('**/api/gabarits/state', patchJson((view) => {
+  const [first] = view.templates;
+  view.templates = [first, ...Array.from({ length: 29 }, (_, i) => ({ ...first, id: `${4 + 2 * i}B`, pages: 4 + 2 * i, error: i % 4 ? null : many('Zone', 3).join(' ; '), subjects: i % 3 ? [] : Array.from({ length: 6 }, (_s, j) => `sujet-au-nom-long-${j}`) }))];
+}));
+await page.route('**/api/gabarits/controle', patchJson((r) => {
+  for (const c of r.checks) {
+    c.level = 'erreur';
+    c.details = many('Détail', 8);
+  }
+}));
 await page.route('**/api/create', patchJson(({ result }) => {
   result.kept = many('Conservé', 30);
   result.alerts = many('Alerte', 20);
@@ -879,7 +937,7 @@ await page.unrouteAll({ behavior: 'ignoreErrors' });
   await open();
   await until(`document.querySelector('#etapes li[data-state="validee"]') !== null`);
   const labels = await page.evaluate(`[...document.querySelectorAll('#etapes .nom-signe')].map((e) => [e.getAttribute('role'), e.getAttribute('aria-label'), e.textContent])`) as string[][];
-  check('signes : image nommée, texte visible', labels.length === 8 && labels.every(([role, label, text]) => role === 'img' && !!label && !!text), labels);
+  check('signes : image nommée, texte visible', labels.length === 9 && labels.every(([role, label, text]) => role === 'img' && !!label && !!text), labels);
 }
 
 // Configuration invalide : le menu reste affiché et dit quoi corriger.

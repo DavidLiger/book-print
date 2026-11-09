@@ -42,7 +42,7 @@ export function fakeQr(): string {
 const cache = new Map<string, string>();
 
 /** Paysage de synthèse à 300 ppp pleine page, sans alpha : ciel, soleil et deux collines. */
-function essaiImage(trim: Trim): string {
+export function essaiImage(trim: Trim): string {
   const size = pageSize(trim);
   const w = Math.ceil(size.widthIn * 300);
   const h = Math.ceil(size.heightIn * 300);

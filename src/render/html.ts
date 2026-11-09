@@ -43,7 +43,28 @@ function boxStyle(r: Rect): string {
   return `left:${mm(r.left)};top:${mm(r.top)};width:${mm(r.right - r.left)};height:${mm(r.bottom - r.top)}`;
 }
 
-function css(style: Style, trim: Trim, theme: string): string {
+/**
+ * Règles des cinq types rendus depuis GB1 : écrites seulement pour les types présents dans les pages. Un gabarit qui n'en a pas, comme 2A,
+ * garde exactement le HTML d'avant GB1. Les couleurs d'encadré ne sont écrites que pour les clés utilisées.
+ */
+function extraCss(style: Style, theme: string, pages: LayoutPage[], font: (f: Style['fonts']['body']) => string): string {
+  const zones = pages.flatMap((p) => p.zones);
+  const types = new Set(zones.map((z) => z.type));
+  const { fonts, palette } = style;
+  const rules: string[] = [];
+  if (types.has('encadre')) {
+    rules.push(`.encadre { padding: 2.5mm 3mm; border: 1pt solid ${theme}; ${font(fonts.body)}; }`);
+    rules.push(`.encadre .entete { display: block; margin-bottom: 1mm; ${font(fonts.lead)}; font-weight: 700; color: ${theme}; }`);
+    for (const key of [...new Set(zones.flatMap((z) => (z.encadre ? [z.encadre] : [])))].sort()) rules.push(`.encadre-${key} { background: ${palette.boxes[key]}; }`);
+  }
+  if (types.has('chiffre-cle')) rules.push(`.chiffre-cle { display: flex; align-items: center; justify-content: center; text-align: center; font-family: '${FONT_PACK[fonts.title.pack].family}'; font-size: ${fonts.title.sizePt}pt; line-height: 1.05; font-weight: 700; color: ${theme}; }`);
+  if (types.has('legende')) rules.push(`.legende { ${font(fonts.label)}; }`);
+  if (types.has('picto')) rules.push(`.picto { display: flex; align-items: center; justify-content: center; color: ${theme}; }`, '.picto svg { display: block; width: 100%; height: 100%; }');
+  if (types.has('etiquette')) rules.push(`.etiquette { padding: 1mm 2mm; background: ${palette.paper}; ${font(fonts.label)}; font-weight: 700; }`);
+  return rules.map((r) => `${r}\n`).join('');
+}
+
+function css(style: Style, trim: Trim, theme: string, pages: LayoutPage[]): string {
   const { fonts, palette, folio } = style;
   const size = pageSize(trim);
   const font = (f: Style['fonts']['body']) => `font-family:'${FONT_PACK[f.pack].family}';font-size:${f.sizePt}pt;line-height:${f.lineHeight}`;
@@ -71,7 +92,7 @@ html, body { margin: 0; padding: 0; background: ${palette.paper}; }
 .qr { display: flex; flex-direction: column; align-items: center; justify-content: flex-start; padding: 2mm; background: ${palette.paper}; border: 1pt solid ${palette.text}; text-align: center; ${font(fonts.label)}; font-size: 9pt; }
 .qr svg { display: block; flex: none; }
 .qr p { margin: 1mm 0 0; }
-@media screen { body { display: flex; width: max-content; } .page { flex: none; } }
+${extraCss(style, theme, pages, font)}@media screen { body { display: flex; width: max-content; } .page { flex: none; } }
 `;
 }
 
@@ -122,8 +143,28 @@ function zoneMarkup(zone: LayoutZone, page: LayoutPage, style: Style, content: R
       return style.folio.show ? `<div ${attrs}><span>${page.number}</span></div>` : '';
     case 'qr':
       return `<div ${attrs}>${qrMarkup(zone, content)}<p data-fill>${esc(content.qrLegend)}</p></div>`;
-    default:
-      throw new RenderRefused(`Zone de type ${zone.type} : pas encore rendue, le gabarit 2A n'en a pas.`);
+    case 'encadre': {
+      // La couleur et le pictogramme sont vérifiés à la lecture du gabarit ; le rendu refuse quand même ce que le style ne connaît pas.
+      if (!zone.encadre || !Object.hasOwn(style.palette.boxes, zone.encadre)) throw new RenderRefused(`${zone.id} : couleur d'encadré inconnue, ${zone.encadre}.`);
+      const heading = zone.heading ? `<b class="entete">${esc(zone.heading[content.lang])}</b>` : '';
+      return `<div class="zone encadre encadre-${zone.encadre}" data-zone="${zone.id}" data-type="${zone.type}" style="${boxStyle(zone.rect)}">${heading}<span data-fill>${text()}</span></div>`;
+    }
+    case 'chiffre-cle': {
+      const size = zone.sizePt === undefined ? '' : `;font-size:${zone.sizePt}pt`;
+      return `<p class="zone chiffre-cle" data-zone="${zone.id}" data-type="${zone.type}" style="${boxStyle(zone.rect)}${size}"><span data-fill>${text()}</span></p>`;
+    }
+    case 'legende':
+    case 'etiquette':
+      return `<p ${attrs}><span data-fill>${text()}</span></p>`;
+    case 'picto': {
+      const svg = zone.picto !== undefined && Object.hasOwn(pictos, zone.picto) ? pictos[zone.picto] : undefined;
+      if (svg === undefined) throw new RenderRefused(`${zone.id} : pictogramme inconnu, ${zone.picto}.`);
+      return `<div ${attrs}>${svg}</div>`;
+    }
+    default: {
+      const never: never = zone.type;
+      throw new RenderRefused(`Zone de type ${String(never)} : non rendue.`);
+    }
   }
 }
 
@@ -134,5 +175,5 @@ export function renderHtml(pages: LayoutPage[], trim: Trim, style: Style, conten
   const sections = pages.map(
     (p) => `<section class="page ${p.side}" data-page="${p.number}" data-side="${p.side}">${p.zones.map((z) => zoneMarkup(z, p, style, content, pictos)).join('')}</section>`,
   );
-  return `<!doctype html><html lang="${content.lang}"><head><meta charset="utf-8"><title>${esc(content.title)}</title><style>${css(style, trim, theme)}</style></head><body>${sections.join('\n')}</body></html>`;
+  return `<!doctype html><html lang="${content.lang}"><head><meta charset="utf-8"><title>${esc(content.title)}</title><style>${css(style, trim, theme, pages)}</style></head><body>${sections.join('\n')}</body></html>`;
 }

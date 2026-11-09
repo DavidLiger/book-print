@@ -290,3 +290,14 @@ dialog.loupe::backdrop { background: rgba(0, 0, 0, 0.7); }
 .loupe-cadre.zoom { display: block; overflow: auto; cursor: grab; }
 .loupe-cadre.zoom.glisse { cursor: grabbing; }
 .loupe-cadre.zoom img { display: block; max-width: none; max-height: none; margin: 0 auto; }
+
+/* Étape Gabarits (GB1) : liste, aperçu, contrôle */
+#ga-message { flex: none; max-height: 64px; overflow: auto; }
+#ga-message:empty { display: none; }
+.zone-gabarits { flex: 1 1 0; min-height: 0; display: grid; grid-template-columns: minmax(220px, 0.8fr) minmax(0, 2fr) clamp(260px, 22vw, 380px); gap: 16px; }
+#ga-liste { min-height: 40px; }
+#ga-liste table { margin-top: 0; width: 100%; }
+#ga-liste td { min-width: 0; vertical-align: top; }
+#ga-liste tr[aria-current="true"] td { font-weight: 600; }
+#ga-liste button.petit { margin: 0; }
+#ga-resultat th:first-child { overflow-wrap: normal; }

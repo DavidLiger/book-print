@@ -6,7 +6,7 @@ import type { Block } from '../src/schema/block';
 import { c14Clean, c15FileSize, c1PageSize, c3Safety, c4Bleed, c6Transparency, c7Fonts, c8Sizes, KDP_MAX_BYTES, runChecks, type CheckResult } from '../src/checks/rules';
 import type { PdfFacts } from '../src/checks/pdf-facts';
 import type { MeasuredBox, Measures } from '../src/render/measure';
-import { TEMPLATE_2A } from '../src/templates/2A';
+import { TEMPLATE_2A } from './fixtures/gabarits';
 import { BLEED_MM, layoutTemplate, type LayoutPage, type Rect } from '../src/templates/geometry';
 import { c5Resolution, c11Rights, entryFaults } from '../src/checks/images';
 import type { RightsEntry } from '../src/schema/rights';

@@ -16,7 +16,7 @@ import { allEntries, illustrationRights, readBookRights } from '../rights/regist
 import type { PrintBook } from '../schema/print-book';
 import type { StoredResearch } from '../schema/research';
 import type { Illustration, Subject } from '../schema/subject';
-import { TEMPLATES } from '../templates';
+import { readTemplates, templateOf } from '../templates/files';
 import { layoutTemplate, type LayoutPage, type LayoutZone, type Trim } from '../templates/geometry';
 import type { Template } from '../templates/model';
 import { applyBookFiche, RenderRefused, renderHtml, type RenderContent } from './html';
@@ -65,8 +65,10 @@ export function subjectContext(dataRoot: string, bookId: string, subjectId: stri
   const collection = { ...read, style: applyBookFiche(read.style, book) };
   const subject = readSubject(dataRoot, bookId, subjectId);
   if (subject.variant.mirror) throw new RenderRefused('Miroir : pas encore rendu, il viendra avec les gabarits suivants.');
-  const template = Object.hasOwn(TEMPLATES, subject.template) ? TEMPLATES[subject.template] : undefined;
-  if (!template) throw new RenderRefused(`Gabarit inconnu : ${subject.template}.`);
+  // Gabarit relu dans la collection (GB1) : absent ou invalide, le sujet est en erreur, le gabarit nommé.
+  const found = templateOf(readTemplates(dataRoot, collection.style), subject.template);
+  if ('error' in found) throw new RenderRefused(found.error);
+  const { template } = found;
   if (!(subject.variant.theme in collection.style.palette.themes)) throw new RenderRefused(`Thème inconnu : ${subject.variant.theme}.`);
   const firstPage = firstPageOf(dataRoot, book, subjectId);
   const trim = book.edition.trim;
@@ -128,6 +130,12 @@ export function zoneImages(ctx: SubjectContext): ZoneImage[] {
 export interface ImageChecks {
   zones: ZoneImage[];
   checks: CheckResult[];
+}
+
+/** Images rattachées à une zone que le gabarit n'a plus (GB1) : elles restent dans `subject.json`, rien n'est supprimé. */
+export function strayIllustrations(ctx: SubjectContext): string[] {
+  const zones = new Set(illustrationZones(ctx).map((z) => z.id));
+  return ctx.subject.illustrations.filter((i) => !zones.has(i.zone)).map((i) => `${i.zone} : image rattachée à une zone d'illustration absente du gabarit ${ctx.template.id}.`);
 }
 
 /** C5 sur ce qui a une image ; C11 sur ce que le sujet cite. Aucun Chromium : le parcours peut les calculer à chaque lecture. */
