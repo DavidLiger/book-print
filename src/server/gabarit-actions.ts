@@ -1,6 +1,6 @@
 // src/server/gabarit-actions.ts — étape Gabarits (GB1) : la liste des gabarits de la collection, l'ajout des gabarits livrés sans écrasement,
 // l'aperçu d'un gabarit et son contrôle. Aucune lecture de GLBInterpreter : le `bookId` vient de la page et passe par les refus de `bookFolder`.
-// Aucun éditeur, aucune suppression : un gabarit se crée, se modifie ou se retire à la main, dans `collection/gabarits/`.
+// L'éditeur (ED3) écrit les modèles par `layout-actions.ts` ; aucune suppression : un modèle se retire à la main, dans `collection/gabarits/`.
 import { z } from 'zod';
 import { CollectionRefused, readCollection } from '../data/collection';
 import { bookFolder, readPrintBook } from '../data/pricing-file';
@@ -24,7 +24,7 @@ function parse<T extends z.ZodType>(schema: T, value: unknown): z.infer<T> {
   return body.data;
 }
 
-function requireBook(dataRoot: string, bookId: string) {
+export function requireBook(dataRoot: string, bookId: string) {
   if (bookFolder(dataRoot, bookId) === null) throw new RenderRefused(`Dossier du livre absent : ${bookId}/.`);
   const { book, error } = readPrintBook(dataRoot, bookId);
   if (!book) throw new RenderRefused(error ?? `print-book.json absent : ${bookId}/.`);

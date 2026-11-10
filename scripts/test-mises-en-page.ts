@@ -297,7 +297,8 @@ const snapshot = (root: string): Record<string, string> => {
       const placed = placeLayout(parsed, read.style.margins, 6);
       const m = await measureHtml(renderHtml(placed, SIX_NINE, read.style, templateContent(parsed, read.style.fiche, 'foret', SIX_NINE), read.pictos));
       const zoneBox = m.boxes.find((bx) => bx.zone === 'capsule' && bx.kind === 'zone')!.rect;
-      const texts = m.boxes.filter((bx) => bx.zone === 'capsule' && bx.kind !== 'zone').map((bx) => bx.rect);
+      // Le centrage est celui de la boîte des lignes (ED3 : `texte` est l'encre, asymétrique entre capitales et jambages).
+      const texts = m.boxes.filter((bx) => bx.zone === 'capsule' && (bx.kind === 'lignes' || bx.kind === 'svg')).map((bx) => bx.rect);
       return { top: Math.min(...texts.map((r) => r.top)) - zoneBox.top, bottom: zoneBox.bottom - Math.max(...texts.map((r) => r.bottom)) };
     };
     const milieu = await gaps('milieu');
@@ -306,7 +307,7 @@ const snapshot = (root: string): Record<string, string> => {
     check('mesure : capsule en haut, texte collé au haut', haut.top < 4 && haut.bottom > haut.top + 10, haut);
     // Étiquette de la synthèse (10 mm, une ligne) : même écart en haut et en bas.
     const label = measures.boxes.find((bx) => bx.zone === 'etiquette' && bx.kind === 'zone')!.rect;
-    const line = measures.boxes.filter((bx) => bx.zone === 'etiquette' && bx.kind === 'texte').map((bx) => bx.rect);
+    const line = measures.boxes.filter((bx) => bx.zone === 'etiquette' && bx.kind === 'lignes').map((bx) => bx.rect);
     const lt = Math.min(...line.map((r) => r.top)) - label.top;
     const lb = label.bottom - Math.max(...line.map((r) => r.bottom));
     check('mesure : étiquette au milieu, même écart en haut et en bas (1 mm près)', Math.abs(lt - lb) < 1, { lt, lb });
@@ -485,7 +486,7 @@ const snapshot = (root: string): Record<string, string> => {
   check('route : aperçu, HTML du PDF, CSP des aperçus', page.status === 200 && page.body.includes('data-zone="bandeau"') && page.body.includes('Texte de remplissage') && page.csp?.includes('default-src \'none\'') === true);
   const control = await post('/api/mise-en-page/controle', { dir: BOOK_DIR, subjectId: 'alpha' });
   const checks = JSON.parse(control.body).checks;
-  check('route : contrôle, C17 compris, tout vert', control.status === 200 && checks.map((c: Dict) => c.id).join() === 'C3,C4,C6,C7,C8,C12,C17' && checks.every((c: Dict) => c.level === 'ok'), control.body.slice(0, 400));
+  check('route : contrôle, C17 compris, tout vert', control.status === 200 && checks.map((c: Dict) => c.id).join() === 'C3,C4,C6,C7,C8,C12,C17' && checks.every((c: Dict) => c.level === 'ok'), checks.filter((c: Dict) => c.level !== 'ok'));
   check('route : sujet inconnu, 409', (await post('/api/mise-en-page/state', { dir: BOOK_DIR, subjectId: 'zeta' })).status === 409);
   check('route : corps invalide, 400', (await post('/api/mise-en-page/state', { dir: BOOK_DIR, subjectId: '../alpha' })).status === 400);
   check('route : sans en-tête, 403', (await post('/api/mise-en-page/state', { dir: BOOK_DIR, subjectId: 'alpha' }, { ...headers, 'x-book-print': '0' })).status === 403);

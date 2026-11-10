@@ -670,12 +670,29 @@ async function reloadEssai() {
   await refreshParcours();
 }
 
-// Gabarits (GB1). Les gabarits sont des fichiers de `collection/gabarits/` : la page les liste, montre l'aperçu d'un gabarit avec un texte de
-// remplissage à la longueur maximale de chaque zone, et le contrôle sur demande. Aucun éditeur, aucune suppression.
+// Mises en page (GB1, ED1 ; éditeur depuis ED3). Les modèles sont des fichiers de `collection/gabarits/` : la page les liste ; l'éditeur
+// (`editeur.js`) montre le modèle choisi avec un texte de remplissage à la longueur maximale, et écrit chaque action finie.
 
 const gabarits = { selected: null, turn: 0 };
-const gabaritView = { layout: null, frame: $('ga-cadre'), inner: $('ga-echelle'), svg: $('ga-reperes'), boxes: 'input[data-gabarit-layer]', attr: 'gabaritLayer' };
 const START_LABELS = { gauche: 'gauche', droite: 'droite', libre: 'libre' };
+const themeOf = () => $('ga-theme').value || undefined;
+const gabaritTarget = () => ({ bookId: essai.bookId, id: gabarits.selected, theme: themeOf() });
+const gabaritPreviewUrl = () => `/apercu-gabarit?${new URLSearchParams({ bookId: essai.bookId, id: gabarits.selected, theme: $('ga-theme').value, t: String(Date.now()) })}`;
+const editeurModeles = Editeur.creer({
+  prefixe: 'ga',
+  iframe: 'ga-apercu',
+  couches: 'input[data-gabarit-layer]',
+  attr: 'gabaritLayer',
+  enqueue: (task) => enqueue(task, $('ga-motifs')),
+  cible: gabaritTarget,
+  apercu: gabaritPreviewUrl,
+  relire: () => action('/api/mise-en-page/state', gabaritTarget()),
+  apres: async () => {
+    $('ga-resultat').replaceChildren();
+    await refreshGabaritList();
+    await refreshParcours();
+  },
+});
 
 function gabaritsTable(templates) {
   if (templates.length === 0) return el('p', 'Aucune mise en page dans collection/gabarits/.', 'alerte');
@@ -703,14 +720,11 @@ function gabaritsTable(templates) {
 
 /** Le cadre reste en place, vide : la grille de l'étape ne bouge pas. */
 function clearGabaritPreview() {
-  gabaritView.layout = null;
-  $('ga-apercu').removeAttribute('src');
-  $('ga-reperes').replaceChildren();
+  editeurModeles.fermer();
 }
 
 function loadGabaritPreview() {
-  const query = new URLSearchParams({ bookId: essai.bookId, id: gabarits.selected, theme: $('ga-theme').value, t: String(Date.now()) });
-  $('ga-apercu').src = `/apercu-gabarit?${query}`;
+  $('ga-apercu').src = gabaritPreviewUrl();
 }
 
 async function selectGabarit(id) {
@@ -724,15 +738,21 @@ async function selectGabarit(id) {
   box.replaceChildren();
   const turn = ++gabarits.turn;
   try {
-    const { layout } = await action('/api/gabarits/apercu', { bookId: essai.bookId, id, theme: $('ga-theme').value });
+    const state = await action('/api/mise-en-page/state', gabaritTarget());
     if (turn !== gabarits.turn) return;
-    gabaritView.layout = layout;
-    drawMarks(gabaritView);
-    loadGabaritPreview();
+    editeurModeles.ouvrir(state);
   } catch (e) {
     clearGabaritPreview();
     box.append(el('p', e.message, 'erreur'));
   }
+}
+
+/** La liste seule, sans rouvrir l'éditeur : après une écriture, le départ ou l'état d'un modèle a pu changer. */
+async function refreshGabaritList() {
+  if (!essai.bookId) return null;
+  const state = await action('/api/gabarits/state', { bookId: essai.bookId });
+  $('ga-liste').replaceChildren(gabaritsTable(state.templates));
+  return state;
 }
 
 async function loadGabarits() {
@@ -775,6 +795,39 @@ async function addDeliveredGabarits() {
     $('ga-ajouter').disabled = false;
     await refreshParcours();
   }
+}
+
+/** « Nouvelle mise en page » et copie : la mise en page écrite devient la mise en page choisie. */
+async function createGabarit(path, body, dialog, messageBox) {
+  try {
+    const state = await action(path, body);
+    dialog.close();
+    gabarits.selected = state.id;
+    await loadGabarits();
+    await refreshParcours();
+  } catch (e) {
+    messageBox.textContent = e.message;
+  }
+}
+
+function openNewGabarit() {
+  $('ga-nouvelle-message').textContent = '';
+  $('ga-nouvelle-id').value = '';
+  $('ga-nouvelle-fenetre').showModal();
+}
+
+function openCopyGabarit() {
+  if (!gabarits.selected) return;
+  $('ga-copie-message').textContent = '';
+  $('ga-copie-id').value = '';
+  $('ga-copie-source').textContent = `Copie de ${gabarits.selected}, sous un nouvel identifiant du même nombre de pages.`;
+  $('ga-copie-fenetre').showModal();
+}
+
+/** « Miroir » : une action de l'éditeur, écrite par la même file et annulable par Ctrl+Z. */
+function mirrorGabarit() {
+  if (!gabarits.selected) return;
+  editeurModeles.miroir();
 }
 
 async function controlGabarit() {
@@ -961,29 +1014,44 @@ async function openSubject(id) {
   }
 }
 
-// Mise en page du sujet (ED1). Sans éditeur : la page montre la copie du sujet, ses éléments, ses fautes et son aperçu au texte de remplissage ;
-// le fichier se modifie à la main, « Recharger » le relit.
+// Mise en page du sujet (ED1 ; éditeur depuis ED3). L'éditeur modifie la copie du sujet (`layout.json`) ; pour un sujet créé avant ED1, le
+// premier enregistrement écrit sa conversion. Texte réel là où il existe, remplissage ailleurs (décision de David, ED3).
 
-const miseView = { layout: null, frame: $('mp-cadre'), inner: $('mp-echelle'), svg: $('mp-reperes'), boxes: 'input[data-mise-layer]', attr: 'miseLayer' };
 const mm1 = (n) => (n === undefined ? '—' : (Math.round(n * 10) / 10).toFixed(1).replace('.', ','));
+const subjectTarget = () => ({ dir: dirOf(), subjectId: sujets.open });
 
-function elementsTable(elements) {
-  const table = el('table');
-  const head = el('tr');
-  for (const t of ['Élément', 'Type', 'Page', 'x', 'y', 'l', 'h']) head.append(el('th', t));
-  table.append(head);
-  for (const e of elements) {
-    const row = el('tr');
-    row.append(el('td', e.id), el('td', e.double ? `${e.type}, à cheval` : e.type), el('td', String(e.page + 1)), el('td', mm1(e.x)), el('td', mm1(e.y)), el('td', mm1(e.w)), el('td', mm1(e.h)));
-    table.append(row);
-  }
-  return table;
+function showMiseFile(state) {
+  const origin = state.source === 'layout.json'
+    ? `Copie de ${state.modele.id}, le ${new Date(state.modele.date).toLocaleDateString('fr-FR')}.`
+    : `Sujet créé avant les mises en page libres : il garde le gabarit ${state.id} de la collection jusqu'à son premier enregistrement.`;
+  $('mp-fichier').replaceChildren(el('span', `${origin} Fichier : `), el('code', state.target));
+  $('mp-theme').textContent = `Thème du sujet : ${state.options.theme}`;
 }
 
+const editeurSujet = Editeur.creer({
+  prefixe: 'mp',
+  iframe: 'mp-page',
+  couches: 'input[data-mise-layer]',
+  attr: 'miseLayer',
+  enqueue: (task) => enqueue(task, $('mp-motifs')),
+  cible: subjectTarget,
+  apercu: () => `/apercu-mise-en-page?${new URLSearchParams({ dir: dirOf(), subject: sujets.open, t: String(Date.now()) })}`,
+  relire: () => action('/api/mise-en-page/state', subjectTarget()),
+  apres: async (state) => {
+    showMiseFile(state);
+    $('mp-resultat').replaceChildren();
+    await refreshParcours();
+    try {
+      await loadSubject();
+      $('sujet-erreur').replaceChildren();
+    } catch (e) {
+      $('sujet-erreur').replaceChildren(el('p', e.message, 'erreur'));
+    }
+  },
+});
+
 function clearMisePreview() {
-  miseView.layout = null;
-  $('mp-page').removeAttribute('src');
-  $('mp-reperes').replaceChildren();
+  editeurSujet.fermer();
 }
 
 async function loadMiseEnPage() {
@@ -991,21 +1059,12 @@ async function loadMiseEnPage() {
   box.replaceChildren();
   const id = sujets.open;
   try {
-    const state = await action('/api/mise-en-page/state', { dir: dirOf(), subjectId: id });
+    const state = await action('/api/mise-en-page/state', subjectTarget());
     if (sujets.open !== id) return;
-    const origin = state.source === 'layout.json'
-      ? `Copie de ${state.modele.id}, le ${new Date(state.modele.date).toLocaleDateString('fr-FR')}.`
-      : `Sujet créé avant les mises en page libres : il garde le gabarit ${state.id} de la collection.`;
-    $('mp-fichier').replaceChildren(el('span', `${origin} Fichier : `), el('code', state.file));
-    $('mp-elements').replaceChildren(elementsTable(state.elements));
-    for (const fault of state.errors) box.append(el('p', fault, 'erreur'));
-    if (!state.layout) return clearMisePreview();
-    miseView.layout = state.layout;
-    drawMarks(miseView);
-    $('mp-page').src = `/apercu-mise-en-page?${new URLSearchParams({ dir: dirOf(), subject: id, t: String(Date.now()) })}`;
+    showMiseFile(state);
+    editeurSujet.ouvrir(state);
   } catch (e) {
     clearMisePreview();
-    $('mp-elements').replaceChildren();
     box.append(el('p', e.message, 'erreur'));
   }
 }
@@ -2461,19 +2520,27 @@ for (const box of document.querySelectorAll('input[data-layer]')) box.addEventLi
 for (const box of document.querySelectorAll('input[data-sujet-layer]')) box.addEventListener('change', () => showLayers(sujetView));
 new ResizeObserver(() => fitPreview(essaiView)).observe($('apercu-cadre'));
 new ResizeObserver(() => fitPreview(sujetView)).observe($('sa-cadre'));
-new ResizeObserver(() => fitPreview(gabaritView)).observe($('ga-cadre'));
 $('ga-ajouter').addEventListener('click', addDeliveredGabarits);
 $('mp-controler').addEventListener('click', controlMiseEnPage);
 $('mp-recharger').addEventListener('click', reloadMiseEnPage);
-for (const box of document.querySelectorAll('input[data-mise-layer]')) box.addEventListener('change', () => showLayers(miseView));
-new ResizeObserver(() => fitPreview(miseView)).observe($('mp-cadre'));
 $('ga-recharger').addEventListener('click', reloadGabarits);
 $('ga-controler').addEventListener('click', controlGabarit);
 $('ga-theme').addEventListener('change', () => {
   $('ga-resultat').replaceChildren();
   if (gabarits.selected) loadGabaritPreview();
 });
-for (const box of document.querySelectorAll('input[data-gabarit-layer]')) box.addEventListener('change', () => showLayers(gabaritView));
+$('ga-nouvelle').addEventListener('click', openNewGabarit);
+$('ga-copier').addEventListener('click', openCopyGabarit);
+$('ga-miroir').addEventListener('click', mirrorGabarit);
+$('ga-nouvelle-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  createGabarit('/api/mise-en-page/nouvelle', { bookId: essai.bookId, id: $('ga-nouvelle-id').value.trim(), start: $('ga-nouvelle-depart').value, theme: themeOf() }, $('ga-nouvelle-fenetre'), $('ga-nouvelle-message'));
+});
+$('ga-copie-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  createGabarit('/api/mise-en-page/copier', { bookId: essai.bookId, id: gabarits.selected, nouvel: $('ga-copie-id').value.trim(), theme: themeOf() }, $('ga-copie-fenetre'), $('ga-copie-message'));
+});
+for (const button of document.querySelectorAll('dialog [data-fermer]')) button.addEventListener('click', () => button.closest('dialog').close());
 $('sujet-form').addEventListener('submit', createSubject);
 $('s-pages').addEventListener('input', fillTemplates);
 $('sujet-retour').addEventListener('click', async () => {

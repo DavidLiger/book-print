@@ -23,7 +23,7 @@ import type { StoredResearch } from '../schema/research';
 import type { Illustration, Subject } from '../schema/subject';
 import { readTemplates, templateOf } from '../templates/files';
 import type { LayoutPage, LayoutZone, Trim } from '../templates/geometry';
-import { fillerChains } from './gabarit';
+import { fillerChains, templateContent } from './gabarit';
 import { applyBookFiche, RenderRefused, renderHtml, type RenderContent } from './html';
 import { flowHtml, measureFlowed, type Flowed, type HtmlBuilder } from './pdf';
 
@@ -210,6 +210,31 @@ export function subjectContent(ctx: SubjectContext): RenderContent {
   }
   // Une chaîne n'a pas de bloc avant ED4 : elle reçoit le texte de remplissage, que C13 refuse (décision de David, ED2).
   return { title: 'Aperçu', lang: ctx.lang, theme: ctx.subject.variant.theme, texts, fiche, ficheMissing: '', ...subjectImages(ctx), qrSvg: stampedQr(), qrLegend: ctx.legend, chains: fillerChains(ctx.template) };
+}
+
+/**
+ * Contenu de l'éditeur d'un sujet (ED3, décision de David) : le texte réel là où il existe (titre, blocs importés, légende du QR, images), le
+ * remplissage de l'aperçu d'un modèle ailleurs (chaînes avant ED4, en-têtes écrits, éléments sans bloc, sujet sans recherche, QR).
+ */
+export function editorContent(ctx: SubjectContext): RenderContent {
+  const real = subjectContent(ctx);
+  const filler = templateContent(ctx.template, ctx.collection.style.fiche, ctx.subject.variant.theme, ctx.trim);
+  const zones = new Set(ctx.subject.blocks.filter((b) => !b.item && (b.text[ctx.lang] ?? '') !== '').map((b) => b.zone));
+  const items = new Set(ctx.subject.blocks.filter((b) => b.item && (b.text[ctx.lang] ?? '') !== '').map((b) => b.item!));
+  const titled = new Set(elementsOf(ctx.template).filter((z) => z.type === 'titre' || z.type === 'bandeau').map((z) => z.id));
+  const texts = Object.fromEntries(Object.entries(filler.texts).map(([zone, text]) => [zone, titled.has(zone) || zones.has(zone) ? (real.texts[zone] ?? '') : text]));
+  const fiche = Object.fromEntries(Object.entries(filler.fiche).map(([item, text]) => [item, items.has(item) ? (real.fiche[item] ?? '') : text]));
+  // Une image déposée et lisible est montrée ; ailleurs, l'image d'essai de l'aperçu d'un modèle, sans cadrage. L'aplat « à venir » et le faux
+  // QR tamponné de l'aperçu d'un sujet portent un texte hors du pack (C7, C8) ; le vrai QR viendra en ED6.
+  const placeholder = placeholderImage();
+  const images: Record<string, string> = {};
+  const placements: NonNullable<RenderContent['placements']> = {};
+  for (const [zone, image] of Object.entries(filler.images)) {
+    const deposited = real.images[zone] !== undefined && real.images[zone] !== placeholder;
+    images[zone] = deposited ? real.images[zone]! : image;
+    if (deposited && real.placements?.[zone]) placements[zone] = real.placements[zone];
+  }
+  return { ...real, texts, fiche, images, placements, headings: filler.headings, chains: filler.chains, qrSvg: filler.qrSvg };
 }
 
 /** Le HTML d'un sujet avec les coupures données ; sans coupure, le HTML final d'un sujet sans chaîne. */

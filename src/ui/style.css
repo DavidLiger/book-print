@@ -299,10 +299,61 @@ dialog.loupe::backdrop { background: rgba(0, 0, 0, 0.7); }
 /* Étape Gabarits (GB1) : liste, aperçu, contrôle */
 #ga-message { flex: none; max-height: 64px; overflow: auto; }
 #ga-message:empty { display: none; }
-.zone-gabarits { flex: 1 1 0; min-height: 0; display: grid; grid-template-columns: minmax(220px, 0.8fr) minmax(0, 2fr) clamp(260px, 22vw, 380px); gap: 16px; }
 #ga-liste { min-height: 40px; }
 #ga-liste table { margin-top: 0; width: 100%; }
 #ga-liste td { min-width: 0; vertical-align: top; }
 #ga-liste tr[aria-current="true"] td { font-weight: 600; }
 #ga-liste button.petit { margin: 0; }
 #ga-resultat th:first-child { overflow-wrap: normal; }
+
+/* Éditeur de mise en page (ED3) : listes à gauche, double page au centre, propriétés à droite ; chaque liste défile dans son cadre. */
+.zone-editeur { flex: 1 1 0; min-height: 0; display: grid; grid-template-columns: minmax(210px, 0.8fr) minmax(0, 2.2fr) clamp(250px, 21vw, 360px); gap: 12px; }
+.zone-editeur > .colonne { gap: 6px; }
+.barre { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.barre button.petit { margin: 0; }
+.barre select { padding: 2px 6px; font-size: 13px; }
+.barre.pages { justify-content: center; }
+.barre .titre-liste { margin: 0; flex: 1; }
+.zone-editeur .liste.modeles { flex: 0 1 auto; max-height: 30%; min-height: 40px; }
+.zone-editeur .liste.modeles table, .zone-editeur .elements table { margin-top: 0; }
+.zone-editeur .liste.modeles td { min-width: 0; vertical-align: top; }
+.zone-editeur .liste.modeles tr[aria-current="true"] td { font-weight: 600; }
+.zone-editeur .liste.modeles button.petit { margin: 0; }
+.zone-editeur .elements { min-height: 60px; }
+.zone-editeur .elements tr[data-element] { cursor: pointer; }
+.zone-editeur .elements tr[aria-current="true"] td { font-weight: 600; color: var(--action); }
+.zone-editeur .chaines-liste { flex: 0 1 auto; max-height: 22%; min-height: 40px; }
+ul.chaines { list-style: none; padding: 0; margin: 2px 0; }
+ul.chaines li { display: flex; align-items: center; gap: 4px; }
+ul.chaines li button.petit { margin: 0; }
+button[aria-pressed="true"] { background: var(--action); color: var(--carte); }
+.zone-editeur .cadre-apercu { flex: 1 1 0; }
+/* Hauteur fixe, même vide : des motifs qui arrivent ou partent ne changent pas la taille du cadre, ni l'échelle d'un geste en cours. */
+.motifs-editeur { flex: none; height: 56px; }
+.zone-editeur .liste.motifs-editeur:empty { display: block; }
+.zone-editeur .proprietes { min-height: 80px; }
+.zone-editeur .proprietes h3 { margin: 0 0 4px; }
+.zone-editeur .proprietes .grille.deux { gap: 4px 8px; margin-bottom: 4px; }
+.zone-editeur .proprietes .champ input, .zone-editeur .proprietes .champ select { padding: 2px 6px; }
+.zone-editeur .proprietes .large { grid-column: 1 / -1; }
+.zone-editeur .proprietes label.case { margin: 0; }
+.zone-editeur .proprietes .bords { display: flex; flex-wrap: wrap; gap: 2px 10px; align-items: center; }
+.zone-editeur .proprietes table input { width: 100%; padding: 1px 4px; }
+.zone-editeur .proprietes table td { min-width: 0; }
+.zone-editeur .resultat { flex: 0 1 auto; max-height: 34%; }
+.zone-editeur fieldset { flex: none; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+#sujet-mise-en-page > .tete .note { flex: 1 1 auto; }
+#mp-message:empty { display: none; }
+#mp-message { flex: none; max-height: 44px; overflow: auto; }
+.reperes.editeur .r-fond { fill: transparent; pointer-events: all; }
+.reperes.editeur .r-cible { fill: transparent; pointer-events: all; cursor: move; }
+.reperes.editeur .r-choix { fill: none; stroke: #1f5fa8; stroke-width: 0.5; pointer-events: none; }
+.reperes.editeur .r-poignee { fill: #ffffff; stroke: #1f5fa8; stroke-width: 0.4; pointer-events: all; }
+.reperes.editeur .r-poignee[data-handle="nw"], .reperes.editeur .r-poignee[data-handle="se"] { cursor: nwse-resize; }
+.reperes.editeur .r-poignee[data-handle="ne"], .reperes.editeur .r-poignee[data-handle="sw"] { cursor: nesw-resize; }
+.reperes.editeur .r-poignee[data-handle="n"], .reperes.editeur .r-poignee[data-handle="s"] { cursor: ns-resize; }
+.reperes.editeur .r-poignee[data-handle="e"], .reperes.editeur .r-poignee[data-handle="w"] { cursor: ew-resize; }
+.r-guide { stroke: #c2185b; stroke-width: 0.35; }
+.r-guide-texte { fill: #c2185b; font: 2.6px system-ui, sans-serif; }
+.r-colonne { fill: none; stroke: #7b4fc4; stroke-width: 0.25; stroke-dasharray: 1.5 1; }
+.r-bande { stroke: #1f5fa8; stroke-width: 0.3; stroke-dasharray: 1 1.5; }

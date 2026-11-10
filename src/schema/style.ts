@@ -15,6 +15,10 @@ export const BODY_MIN_PT = 13;
 /** Contraste minimum d'un texte sur son fond (WCAG AA). */
 export const MIN_CONTRAST = 4.5;
 
+/** Grille de l'éditeur quand `style.json` n'en donne pas (décision de David, ED3) : 3 colonnes, gouttière de 5 mm, dans la zone de sécurité. */
+export const DEFAULT_GRID = { colonnes: 3, gouttiereMm: 5 } as const;
+export const MAX_GRID_COLUMNS = 12;
+
 /** `#rrggbb` seulement : huit chiffres porteraient une transparence, interdite (C6). */
 const colorSchema = z.string().regex(/^#[0-9a-f]{6}$/, 'couleur : #rrggbb en minuscules, sans transparence');
 
@@ -81,6 +85,13 @@ export const styleSchema = z
     folio: z.strictObject({ show: z.boolean(), sizePt: z.number().min(7, 'numéro de page : 7 pt au moins (KDP)') }),
     /** Règles de variation (§4.4) : rotation des thèmes. Le miroir viendra avec les gabarits suivants. */
     variants: z.strictObject({ rotation: z.array(slugSchema).min(1, 'rotation : un thème au moins') }),
+    /** Grille de colonnes de l'éditeur (ED3, spec §24.8) : magnétisme et repères seulement, elle n'impose rien. Absente : `DEFAULT_GRID`. */
+    grille: z
+      .strictObject({
+        colonnes: z.number().int().min(1, 'grille : 1 colonne au moins').max(MAX_GRID_COLUMNS, `grille : ${MAX_GRID_COLUMNS} colonnes au plus`),
+        gouttiereMm: z.number().min(0, 'grille : gouttière positive ou nulle'),
+      })
+      .optional(),
   })
   .superRefine((s, ctx) => {
     const issue = (path: PropertyKey[], message: string) => ctx.addIssue({ code: 'custom', path, message });
@@ -100,3 +111,5 @@ export const styleSchema = z
     });
   });
 export type Style = z.infer<typeof styleSchema>;
+export type Grid = { colonnes: number; gouttiereMm: number };
+export const gridOf = (style: Pick<Style, 'grille'>): Grid => style.grille ?? DEFAULT_GRID;

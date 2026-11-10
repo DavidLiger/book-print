@@ -11,8 +11,11 @@ export interface MeasuredBox {
   page: number;
   zone: string;
   type: string;
-  /** `texte` : la boîte réelle des lignes ; `svg` : un pictogramme ou le QR ; `zone` : la zone entière. */
-  kind: 'texte' | 'svg' | 'zone';
+  /**
+   * `texte` : l'encre des lignes, les bornes réelles des glyphes (ED3), que C3 contrôle ; `lignes` : la boîte des lignes d'un texte, telle que la
+   * mise en page la pose (alignement, centrage) ; `svg` : un pictogramme ou le QR ; `zone` : la zone entière.
+   */
+  kind: 'texte' | 'lignes' | 'svg' | 'zone';
   rect: MeasuredRect;
 }
 export interface MeasuredText {
@@ -65,6 +68,53 @@ export const MEASURE_SCRIPT = `(() => {
   // Boîtes du texte mis en page : la boîte d'un glyphe dépasse sa ligne dans une police à grands jambages (Baloo 2), elle ne dit rien d'un débordement.
   const over = (inner, outer) => Math.max(outer.top - inner.top, inner.bottom - outer.bottom, outer.left - inner.left, inner.right - outer.right);
   const OVER_PX = 0.5;
+  // Encre d'un texte (ED3, C3) : les bornes réelles de chaque glyphe, et non la boîte des lignes, qui dépasse l'encre en haut d'une police à
+  // grands jambages et à gauche d'une lettre qui a une approche (lettrine). C'est l'encre que KDP coupe. Chaque glyphe garde la boîte que
+  // Chromium lui donne (sa place) ; ses bornes viennent de measureText, dans la même police, ramenées à la hauteur de cette boîte (une lettrine
+  // d'initial-letter est agrandie par Chromium sans que son corps calculé le dise).
+  const canvas = document.createElement('canvas').getContext('2d');
+  const metrics = new Map();
+  const measureGlyph = (font, glyph) => {
+    const key = font + '|' + glyph;
+    if (!metrics.has(key)) {
+      canvas.font = font;
+      metrics.set(key, canvas.measureText(glyph));
+    }
+    return metrics.get(key);
+  };
+  const fontOf = (cs) => [cs.fontStyle, cs.fontWeight, cs.fontSize, cs.fontFamily].join(' ');
+  const ink = (node) => {
+    const text = node.nodeValue;
+    const parent = node.parentElement;
+    const cs = getComputedStyle(parent);
+    // Première lettre d'un paragraphe à lettrine (ED2) : sa police est celle de ::first-letter.
+    const lettrine = parent.closest('.lettrine');
+    const firstText = lettrine ? document.createTreeWalker(lettrine, NodeFilter.SHOW_TEXT).nextNode() : null;
+    const firstAt = firstText === node ? text.search(/\S/) : -1;
+    const range = document.createRange();
+    let box = null;
+    for (let i = 0; i < text.length; ) {
+      const glyph = String.fromCodePoint(text.codePointAt(i));
+      const at = i;
+      i += glyph.length;
+      if (!glyph.trim()) continue;
+      range.setStart(node, at);
+      range.setEnd(node, i);
+      for (const r of range.getClientRects()) {
+        if (r.width === 0 && r.height === 0) continue;
+        const style = at === firstAt ? getComputedStyle(lettrine, '::first-letter') : cs;
+        const m = measureGlyph(fontOf(style), glyph);
+        const height = m.fontBoundingBoxAscent + m.fontBoundingBoxDescent;
+        const s = height > 0 ? r.height / height : 1;
+        const baseline = r.top + m.fontBoundingBoxAscent * s;
+        const g = { left: r.left - m.actualBoundingBoxLeft * s, right: r.left + m.actualBoundingBoxRight * s, top: baseline - m.actualBoundingBoxAscent * s, bottom: baseline + m.actualBoundingBoxDescent * s };
+        if (g.right <= g.left || g.bottom <= g.top) continue;
+        box = box ? { left: Math.min(box.left, g.left), top: Math.min(box.top, g.top), right: Math.max(box.right, g.right), bottom: Math.max(box.bottom, g.bottom) } : g;
+        break;
+      }
+    }
+    return box;
+  };
   for (const section of document.querySelectorAll('section.page')) {
     const number = Number(section.dataset.page);
     const base = section.getBoundingClientRect();
@@ -89,7 +139,9 @@ export const MEASURE_SCRIPT = `(() => {
         if (!n.nodeValue.trim()) continue;
         const range = document.createRange();
         range.selectNodeContents(n);
-        out.boxes.push({ page: number, zone: id, type, kind: 'texte', rect: rel(range.getBoundingClientRect()) });
+        out.boxes.push({ page: number, zone: id, type, kind: 'lignes', rect: rel(range.getBoundingClientRect()) });
+        const inked = ink(n);
+        if (inked) out.boxes.push({ page: number, zone: id, type, kind: 'texte', rect: rel(inked) });
         const cs = getComputedStyle(n.parentElement);
         out.texts.push({ page: number, zone: id, type, sizePt: parseFloat(cs.fontSize) * PT, family: cs.fontFamily });
       }

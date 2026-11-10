@@ -60,7 +60,9 @@ function outside(box: MeasuredBox, page: LayoutPage): string | null {
 export function c3Safety(measures: Measures, pages: LayoutPage[]): CheckResult {
   const details: string[] = [];
   for (const box of measures.boxes) {
-    // Un bandeau va au bord comme un fond : seul son titre est soumis à la zone de sécurité (ED1).
+    // Un bandeau va au bord comme un fond : seul son titre est soumis à la zone de sécurité (ED1). D'un texte, seule l'encre compte (ED3) :
+    // la boîte des lignes dépasse l'encre d'une police à grands jambages, KDP ne coupe que l'encre.
+    if (box.kind === 'lignes') continue;
     const kept = SAFE_TYPES.includes(box.type) || (box.type === 'bandeau' && box.kind === 'texte');
     if (!kept) continue;
     const page = pages.find((p) => p.number === box.page);

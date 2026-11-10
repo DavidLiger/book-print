@@ -145,6 +145,15 @@ await open();
   check('Gabarits : thème suivi par l’aperçu', (await page.getAttribute('#ga-apercu', 'src'))!.includes('theme=volcan'));
   await page.click('#ga-controler');
   await until(`!document.querySelector('#ga-controler').disabled && document.querySelector('#ga-resultat table') !== null`);
+  // Éditeur (ED3) : liste des éléments, propriétés de l'élément choisi, colonnes de la grille, double page.
+  const order = (await page.evaluate(`[...document.querySelectorAll('#ga-elements tr[data-element]')].map((r) => r.dataset.element).join()`)) as string;
+  check('Mises en page : éditeur, neuf éléments du dessus au dessous', order.split(',').length === 9 && order.endsWith(',bandeau') && order.startsWith('qr,'), order);
+  await page.click('#ga-elements tr[data-element="titre"]');
+  check('Mises en page : élément choisi, ses propriétés au dixième de mm', (await page.textContent('#ga-proprietes'))!.includes('titre') && /^\d+,\d$/.test(await page.inputValue('#ga-p-x-mm-')) && (await page.evaluate(`document.querySelector('#ga-reperes g[data-selection]').getAttribute('display')`)) === 'inline');
+  await page.keyboard.press('Escape');
+  await page.check('input[data-gabarit-layer="grille"]');
+  check('Mises en page : colonnes de la grille tracées (3 par page)', (await page.locator('#ga-reperes g[data-layer="grille"] rect').count()) === 6 && (await page.evaluate(`document.querySelector('#ga-reperes g[data-layer="grille"]').getAttribute('display')`)) === 'inline');
+  check('Mises en page : double page, navigation désactivée à 2 pages', (await text('#ga-pages-texte')).includes('Pages 1–2 sur 2') && await page.isDisabled('#ga-prec') && await page.isDisabled('#ga-suiv'));
   check('Gabarits : contrôle de 2A au texte maximal, sept contrôles affichés (C17 compris)', (await page.locator('#ga-resultat td .signe').count()) === 7 && (await text('#ga-resultat')).includes('C12') && (await text('#ga-resultat')).includes('C3'), await text('#ga-resultat'));
   await go('essai');
   await until(`document.querySelector('#apercu').src.includes('/apercu?')`);
@@ -337,6 +346,8 @@ const levels = () => page.evaluate(`[...document.querySelectorAll('#sa-resultat 
   check('Mise en page : aperçu au texte de remplissage', (await page.getAttribute('#mp-page', 'src'))!.startsWith('/apercu-mise-en-page?'));
   await page.click('#mp-controler');
   await until(`!document.querySelector('#mp-controler').disabled && document.querySelector('#mp-resultat table') !== null`);
+  check('Mise en page : éditeur du sujet, fichier écrit nommé, thème du sujet', (await text('#mp-fichier')).includes('subjects/alpha/layout.json') && (await text('#mp-theme')).includes('Thème du sujet'));
+  check('Mise en page : sans Miroir ni Nouvelle mise en page dans le sujet', (await page.locator('#sujet-mise-en-page button:has-text("Miroir")').count()) === 0);
   check('Mise en page : contrôle, sept contrôles dont C17', (await page.locator('#mp-resultat td .signe').count()) === 7 && (await text('#mp-resultat')).includes('C17'), await text('#mp-resultat'));
   await goSub('sujet-recherche');
   await page.click('#r-preparer');

@@ -33,6 +33,7 @@ import { BadRightsRequest, RIGHTS_ACTIONS } from './rights-actions';
 import { ACTION_HEADER, actionAllowed, hostAllowed, navigateurIntegre, uploadAllowed } from './rules';
 import { BadSubjectRequest, IMPORT_MAX_BYTES, SUBJECT_ACTIONS, subjectPreviewHtml } from './subject-actions';
 import { LAYOUT_ACTIONS, layoutPreviewHtml } from './layout-actions';
+import { LayoutConflict, LayoutRefused } from '../layout/files';
 import { StyleRefused } from '../styles/read';
 import { BadStyleRequest, depositEssai, depositReference, ESSAI_ROUTE, previewBytes, REFERENCE_ROUTE, styleActions } from './style-actions';
 
@@ -43,6 +44,8 @@ const STATIC: Record<string, { file: string; type: string }> = {
   '/': { file: 'index.html', type: 'text/html; charset=utf-8' },
   '/app.js': { file: 'app.js', type: 'text/javascript; charset=utf-8' },
   '/style.css': { file: 'style.css', type: 'text/css; charset=utf-8' },
+  // Éditeur de mise en page (ED3), chargé par la page avant `app.js`.
+  '/editeur.js': { file: 'editeur.js', type: 'text/javascript; charset=utf-8' },
 };
 const MAX_BODY = 64 * 1024;
 /** Limites propres à une route : toutes les autres restent à `MAX_BODY`. */
@@ -319,8 +322,10 @@ export function createPrintServer(configPath: string, comfy: ComfyRuntime = crea
         res.once('finish', () => req.destroy());
         return sendJson(res, 413, { error: e.message }, { Connection: 'close' });
       }
+      // Une mise en page changée ailleurs depuis sa lecture (ED3) : la page la relit et repart d'un historique vide.
+      if (e instanceof LayoutConflict) return sendJson(res, 409, { error: e.message, conflit: true });
       if (e instanceof BadPricingRequest || e instanceof BadEssaiRequest || e instanceof BadGabaritRequest || e instanceof BadSubjectRequest || e instanceof BadImageRequest || e instanceof BadRightsRequest || e instanceof BadComfyRequest || e instanceof BadStyleRequest) return sendJson(res, 400, { error: e.message });
-      if (e instanceof CreateRefused || e instanceof PricingRefused || e instanceof CollectionRefused || e instanceof RenderRefused || e instanceof GeometryRefused || e instanceof SubjectRefused || e instanceof ResearchRefused || e instanceof RightsRefused || e instanceof CreditsRefused || e instanceof ImageRefused || e instanceof WorkflowRefused || e instanceof QueueRefused || e instanceof ComfyError || e instanceof StyleRefused) {
+      if (e instanceof CreateRefused || e instanceof PricingRefused || e instanceof CollectionRefused || e instanceof RenderRefused || e instanceof GeometryRefused || e instanceof SubjectRefused || e instanceof ResearchRefused || e instanceof RightsRefused || e instanceof CreditsRefused || e instanceof ImageRefused || e instanceof WorkflowRefused || e instanceof QueueRefused || e instanceof ComfyError || e instanceof StyleRefused || e instanceof LayoutRefused) {
         return sendJson(res, 409, { error: e.message });
       }
       console.error('book-print :', e);
