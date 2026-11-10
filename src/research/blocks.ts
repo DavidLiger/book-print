@@ -22,6 +22,8 @@ export function expectedBlocks(template: MiseEnPage, fiche: Fiche, lang: Lang): 
   for (const zone of elementsOf(template)) {
     const { type } = zone;
     if (!isBlockType(type)) continue;
+    // Un cadre de chaîne n'attend aucun bloc avant ED4 : ses paragraphes viendront de la recherche par sorte (décision de David, ED2).
+    if (zone.chaine !== undefined) continue;
     if (type === 'fiche') {
       for (const item of fiche) out.push({ id: blockId(zone.id, item.id), zone: zone.id, type, item: item.id, label: item.label[lang], maxChars: zone.itemMaxChars ?? null });
     } else out.push({ id: zone.id, zone: zone.id, type, label: zone.id, maxChars: zone.maxChars ?? null });

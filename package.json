@@ -21,7 +21,8 @@
     "test:styles": "tsx scripts/test-styles.ts",
     "test:gabarits": "tsx scripts/test-gabarits.ts",
     "test:lanceur": "tsx scripts/test-lanceur.ts",
-    "test:mises-en-page": "tsx scripts/test-mises-en-page.ts"
+    "test:mises-en-page": "tsx scripts/test-mises-en-page.ts",
+    "test:texte-detoure": "tsx scripts/test-texte-detoure.ts"
   },
   "keywords": [],
   "author": "",

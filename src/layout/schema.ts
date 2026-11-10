@@ -32,8 +32,12 @@ export const EDGE_TOLERANCE_MM = 1e-6;
 
 const mmSchema = z.number().finite();
 const headingText = z.string().trim().min(1, 'titre de l\'encadré vide');
-/** Ce qui vient en ED2 est refusé avec un message clair (décision de David, ED1). */
-const ed2 = (what: string) => z.unknown().refine(() => false, `${what} : prévu en ED2`).optional();
+
+/** Côté où passe le texte autour d'un détouré (spec §24.6) ; `aucun` : pas d'habillage, le détouré ne peut alors couvrir aucun texte (C17). */
+export const HABILLAGES = ['gauche', 'droite', 'aucun'] as const;
+export type Habillage = (typeof HABILLAGES)[number];
+/** Colonnes d'un cadre de chaîne (spec §24.4). */
+export const MAX_COLONNES = 4;
 
 const elementShape = {
   id: slugSchema,
@@ -61,11 +65,12 @@ const elementShape = {
   image: slugSchema.optional(),
   consigne: z.string().trim().min(1, 'consigne vide').max(CONSIGNE_MAX, `consigne : ${CONSIGNE_MAX} caractères au plus`).optional(),
   fleche: z.strictObject({ x: mmSchema, y: mmSchema }).optional(),
-  chaine: ed2('chaine'),
-  colonnes: ed2('colonnes'),
-  gouttiereMm: ed2('gouttiereMm'),
-  detoure: ed2('detoure'),
-  habillage: ed2('habillage'),
+  // ED2 (spec §24.5 et §24.6) : cadre d'une chaîne et ses colonnes ; image détourée et son habillage.
+  chaine: slugSchema.optional(),
+  colonnes: z.number().int().min(1, 'colonnes : 1 à 4').max(MAX_COLONNES, `colonnes : 1 à ${MAX_COLONNES}`).optional(),
+  gouttiereMm: z.number().positive('gouttiereMm : positive').optional(),
+  detoure: z.boolean().optional(),
+  habillage: z.enum(HABILLAGES, { error: 'habillage : gauche, droite ou aucun' }).optional(),
 };
 export const elementSchema = z.strictObject(elementShape);
 export type LayoutElement = z.infer<typeof elementSchema>;
@@ -83,7 +88,28 @@ const OWN_FIELDS: { field: keyof LayoutElement; types: ElementType[] }[] = [
   { field: 'image', types: ['legende'] },
   { field: 'consigne', types: ['legende', 'etiquette'] },
   { field: 'fleche', types: ['etiquette'] },
+  { field: 'chaine', types: ['texte'] },
+  { field: 'colonnes', types: ['texte'] },
+  { field: 'gouttiereMm', types: ['texte'] },
+  { field: 'detoure', types: ['illustration'] },
+  { field: 'habillage', types: ['illustration'] },
 ];
+
+/** Un paragraphe d'une chaîne : sa longueur, et celle de son intertitre s'il en a un (spec §24.5). */
+export const paragraphSchema = z.strictObject({
+  id: slugSchema,
+  intertitre: z.boolean(),
+  maxChars: z.number().int().positive(),
+  headingMaxChars: z.number().int().positive().optional(),
+});
+/** Une chaîne : ses cadres dans l'ordre de lecture, la lettrine, ses paragraphes (spec §24.5). */
+export const chainSchema = z.strictObject({
+  id: slugSchema,
+  cadres: z.array(slugSchema).min(1, 'cadres : au moins un'),
+  lettrine: z.boolean().optional(),
+  paragraphes: z.array(paragraphSchema).min(1, 'paragraphes : au moins un'),
+});
+export type Chain = z.infer<typeof chainSchema>;
 
 const trimSchema = z.strictObject({ widthIn: z.number().positive(), heightIn: z.number().positive() });
 export const modeleSchema = z.strictObject({ id: z.string().regex(TEMPLATE_ID_PATTERN), empreinte: z.string().regex(/^[0-9a-f]{64}$/, 'empreinte : SHA-256 en hexadécimal'), date: z.iso.datetime() });
@@ -94,7 +120,7 @@ const layoutShape = {
   pages: z.number().int().min(2, 'pages : 2 au moins'),
   start: z.enum(['gauche', 'droite'], { error: 'start : gauche ou droite' }),
   trim: trimSchema,
-  chaines: ed2('chaines'),
+  chaines: z.array(chainSchema).optional(),
   elements: z.array(elementSchema),
 };
 
@@ -106,6 +132,7 @@ interface LayoutLike {
   pages: number;
   start: 'gauche' | 'droite';
   trim: { widthIn: number; heightIn: number };
+  chaines?: Chain[];
   elements: LayoutElement[];
 }
 
@@ -145,7 +172,30 @@ function refineLayout(l: LayoutLike, ctx: z.RefinementCtx): void {
     }
     if (e.type === 'encadre' && e.encadre === undefined) issue(`${name} : encadre attendu, une couleur de palette.boxes`, path);
     if (e.type === 'picto' && e.picto === undefined) issue(`${name} : picto attendu, un pictogramme de style.pictos`, path);
-    if (TEXT_ELEMENT_TYPES.includes(e.type) && e.maxChars === undefined) issue(`${name} : maxChars attendu pour un élément ${e.type}`, path);
+    // Un cadre de chaîne n'a pas de longueur : elle est donnée par paragraphe (décision de David, ED2).
+    if (e.type === 'texte' && e.chaine !== undefined) {
+      if (e.maxChars !== undefined) issue(`${name} : maxChars refusé sur un cadre de chaîne, les longueurs sont par paragraphe`, path);
+    } else if (TEXT_ELEMENT_TYPES.includes(e.type) && e.maxChars === undefined) issue(`${name} : maxChars attendu pour un élément ${e.type}`, path);
+    if (e.type === 'texte') {
+      if (e.chaine === undefined && (e.colonnes !== undefined || e.gouttiereMm !== undefined)) issue(`${name} : colonnes et gouttiereMm seulement sur un cadre de chaîne`, path);
+      const n = e.colonnes ?? 1;
+      if (n >= 2 && e.gouttiereMm === undefined) issue(`${name} : gouttiereMm attendue pour ${n} colonnes`, path);
+      if (n < 2 && e.gouttiereMm !== undefined) issue(`${name} : gouttiereMm seulement à partir de 2 colonnes`, path);
+      if (n >= 2 && e.gouttiereMm !== undefined && (e.w - (n - 1) * e.gouttiereMm) / n <= 0) issue(`${name} : ${n} colonnes et ${e.gouttiereMm} mm de gouttière ne tiennent pas dans ${e.w} mm`, path);
+      if (e.chaine !== undefined) {
+        const chain = (l.chaines ?? []).find((c) => c.id === e.chaine);
+        if (!chain) issue(`${name} : chaîne ${e.chaine} absente de chaines`, path);
+        else if (!chain.cadres.includes(e.id)) issue(`${name} : absent des cadres de la chaîne ${e.chaine}`, path);
+      }
+    }
+    if (e.type === 'illustration') {
+      if (e.detoure === true) {
+        if (e.habillage === undefined) issue(`${name} : habillage attendu pour un détouré (gauche, droite ou aucun)`, path);
+        // L'image détourée est entière dans sa boîte (décision de David, ED2).
+        if (e.double) issue(`${name} : un détouré n'est pas à cheval`, path);
+        if (e.fondPerdu !== undefined) issue(`${name} : un détouré n'a pas de fond perdu`, path);
+      } else if (e.habillage !== undefined) issue(`${name} : habillage seulement pour un détouré (detoure: true)`, path);
+    }
     if (e.heading !== undefined && e.headingMaxChars !== undefined) issue(`${name} : heading fixe ou headingMaxChars, pas les deux`, path);
     if (e.type === 'encadre' && e.sorte === 'question' && e.heading === undefined && e.headingMaxChars === undefined) issue(`${name} : question sans heading fixe, headingMaxChars attendu`, path);
     if (e.image !== undefined && byId.get(e.image)?.type !== 'illustration') issue(`${name} : image ${e.image}, aucune illustration de ce nom`, path);
@@ -167,6 +217,28 @@ function refineLayout(l: LayoutLike, ctx: z.RefinementCtx): void {
       if (!EDGE_TYPES.includes(e.type)) issue(`${name} : seuls les fonds, les bandeaux et les illustrations vont au bord`, path);
       const touched = touchedEdges(e, l);
       for (const side of e.fondPerdu) if (!touched.includes(side)) issue(`${name} : fond perdu ${side} sans toucher ce bord de la page rognée`, path);
+    }
+  });
+  const chains = l.chaines ?? [];
+  const chainIds = uniqueList(slugSchema, 'chaîne').safeParse(chains.map((c) => c.id));
+  if (!chainIds.success) issue(chainIds.error.issues[0]!.message, ['chaines']);
+  const seen = new Map<string, string>();
+  chains.forEach((c, index) => {
+    const path = ['chaines', index];
+    const paras = uniqueList(slugSchema, 'paragraphe').safeParse(c.paragraphes.map((p) => p.id));
+    if (!paras.success) issue(`chaîne ${c.id} : ${paras.error.issues[0]!.message}`, path);
+    c.paragraphes.forEach((p) => {
+      if (p.intertitre && p.headingMaxChars === undefined) issue(`chaîne ${c.id}, ${p.id} : headingMaxChars attendu pour un intertitre`, path);
+      if (!p.intertitre && p.headingMaxChars !== undefined) issue(`chaîne ${c.id}, ${p.id} : headingMaxChars seulement avec un intertitre`, path);
+    });
+    for (const cadre of c.cadres) {
+      const e = byId.get(cadre);
+      if (!e) issue(`chaîne ${c.id} : cadre ${cadre} absent des éléments`, path);
+      else if (e.type !== 'texte') issue(`chaîne ${c.id} : ${cadre} n'est pas un élément texte`, path);
+      else if (e.chaine !== c.id) issue(`chaîne ${c.id} : ${cadre} porte ${e.chaine === undefined ? 'aucune chaîne' : `la chaîne ${e.chaine}`}`, path);
+      const other = seen.get(cadre);
+      if (other !== undefined) issue(`chaîne ${c.id} : cadre ${cadre} déjà dans ${other === c.id ? 'cette chaîne' : `la chaîne ${other}`}`, path);
+      seen.set(cadre, c.id);
     }
   });
 }

@@ -1349,7 +1349,7 @@ async function controlNow(mark) {
 
 // Illustrations d'un sujet (spec §5.2, étape 6). Tout est écrit aussitôt par le serveur, qui renvoie zones, contrôles et registre.
 
-const KIND_LABELS = { 'modele-3d': 'Modèles 3D', 'modele-ia': 'Modèles d\'IA', lora: 'LoRA', controlnet: 'ControlNet', 'image-reference': 'Style : image de référence', upscaler: 'Agrandissement', police: 'Polices', picto: 'Pictogrammes', extension: 'Extensions' };
+const KIND_LABELS = { 'modele-3d': 'Modèles 3D', 'modele-ia': 'Modèles d\'IA', lora: 'LoRA', controlnet: 'ControlNet', 'image-reference': 'Style : image de référence', upscaler: 'Agrandissement', 'image-externe': 'Images externes', police: 'Polices', picto: 'Pictogrammes', extension: 'Extensions' };
 const COMMERCIAL_LABELS = { oui: 'oui', non: 'non', 'a-verifier': 'à vérifier' };
 const IMAGE_MAX = 64 * 1024 * 1024;
 const images = { view: null, stamp: Date.now(), pending: null, mode: 'depot' };
@@ -1384,12 +1384,18 @@ function fitThumb() {
 function showThumb(zone) {
   const box = $('il-vignette');
   box.hidden = !zone?.image;
-  for (const id of ['il-zoom', 'il-x', 'il-y']) $(id).disabled = !zone?.image;
+  // Un détouré est entier dans sa boîte, sans cadrage (ED2).
+  for (const id of ['il-zoom', 'il-x', 'il-y']) $(id).disabled = !zone?.image || zone.detoure;
+  $('il-visible').hidden = !zone?.crop;
   if (!zone?.image) return;
   const query = new URLSearchParams({ dir: dirOf(), subject: sujets.open, zone: zone.zone, t: String(images.stamp) });
   const src = `/illustration?${query}`;
   if ($('il-image').getAttribute('src') !== src) $('il-image').src = src;
   const { crop, image } = zone;
+  if (!crop) {
+    fitThumb();
+    return;
+  }
   const visible = $('il-visible').style;
   visible.left = `${(crop.left / image.width) * 100}%`;
   visible.top = `${(crop.top / image.height) * 100}%`;
@@ -1402,6 +1408,7 @@ function imagePairs(zone) {
   const file = zone.image ? `${zone.image.width} × ${zone.image.height} px` : zone.fault ?? 'aucune image';
   const pairs = [['Fichier', file]];
   if (zone.ppi !== null) pairs.push(['Résolution effective', `${Math.floor(zone.ppi)} ppp`]);
+  if (zone.detoure) pairs.push(['Détouré', zone.parts.length ? `${zone.parts.length} partie(s) détachée(s), coupée(s) par le contour` : 'image entière dans sa boîte, sans cadrage']);
   return pairs;
 }
 
@@ -1441,7 +1448,7 @@ function showImages() {
   if (view.zones.some((z) => z.zone === keep)) $('il-zone').value = keep;
   const zone = imageZone();
   if (!zone) return;
-  $('il-cible').textContent = `Taille cible à 300 ppp : ${zone.target.width} × ${zone.target.height} px.`;
+  $('il-cible').textContent = `Taille cible à 300 ppp : ${zone.target.width} × ${zone.target.height} px.${zone.detoure ? ' Détouré : PNG à fond transparent.' : ''}`;
   const framing = zone.illustration?.framing ?? { focusX: 0.5, focusY: 0.5, zoom: 1 };
   $('il-zoom').value = String(framing.zoom);
   $('il-zoom-valeur').textContent = framing.zoom.toFixed(2).replace('.', ',');
@@ -1470,6 +1477,7 @@ const currentFraming = () => ({ focusX: Number($('il-x').value) / 100, focusY: N
 const sendFraming = (change) => imageChange('/api/sujet/cadrage', { framing: { ...currentFraming(), ...change } });
 
 function clickThumb(event) {
+  if (imageZone()?.detoure) return;
   const box = $('il-image').getBoundingClientRect();
   sendFraming({ focusX: Math.min(1, Math.max(0, (event.clientX - box.left) / box.width)), focusY: Math.min(1, Math.max(0, (event.clientY - box.top) / box.height)) });
 }

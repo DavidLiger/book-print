@@ -248,7 +248,7 @@ async function handle(
   if (url === '/apercu-gabarit') {
     if (req.method !== 'GET') return sendJson(res, 405, { error: 'GET attendu' }, { Allow: 'GET' });
     const query = new URL(req.url ?? '/', 'http://local').searchParams;
-    const html = gabaritPreviewHtml(query.get('bookId'), query.get('id'), query.get('theme'), configured(loadConfig(configPath)).dataRoot);
+    const html = await gabaritPreviewHtml(query.get('bookId'), query.get('id'), query.get('theme'), configured(loadConfig(configPath)).dataRoot);
     return send(res, 200, html, 'text/html; charset=utf-8', { 'Content-Security-Policy': PREVIEW_CSP });
   }
 
@@ -256,7 +256,7 @@ async function handle(
   if (url === '/apercu-sujet') {
     if (req.method !== 'GET') return sendJson(res, 405, { error: 'GET attendu' }, { Allow: 'GET' });
     const query = new URL(req.url ?? '/', 'http://local').searchParams;
-    const html = subjectPreviewHtml(query.get('dir'), query.get('subject'), configured(loadConfig(configPath)));
+    const html = await subjectPreviewHtml(query.get('dir'), query.get('subject'), configured(loadConfig(configPath)));
     return send(res, 200, html, 'text/html; charset=utf-8', { 'Content-Security-Policy': PREVIEW_CSP });
   }
 
@@ -264,7 +264,7 @@ async function handle(
   if (url === '/apercu-mise-en-page') {
     if (req.method !== 'GET') return sendJson(res, 405, { error: 'GET attendu' }, { Allow: 'GET' });
     const query = new URL(req.url ?? '/', 'http://local').searchParams;
-    const html = layoutPreviewHtml(query.get('dir'), query.get('subject'), configured(loadConfig(configPath)));
+    const html = await layoutPreviewHtml(query.get('dir'), query.get('subject'), configured(loadConfig(configPath)));
     return send(res, 200, html, 'text/html; charset=utf-8', { 'Content-Security-Policy': PREVIEW_CSP });
   }
 

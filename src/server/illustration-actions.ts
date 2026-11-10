@@ -8,7 +8,7 @@ import { z } from 'zod';
 import { illustrationFile, illustrationName } from '../data/illustration-file';
 import { prepareIllustration, storeIllustration } from '../data/illustration-store';
 import { SubjectRefused, updateSubject } from '../data/subject-file';
-import { cleanPng, ImageRefused, MAX_UPLOAD_BYTES } from '../images/clean';
+import { cleanDetoure, cleanPng, ImageRefused, MAX_UPLOAD_BYTES } from '../images/clean';
 import { imageChecks, illustrationZones, subjectContext, type SubjectContext } from '../render/subject';
 import { allEntries, readBookRights, setIllustrationRights } from '../rights/registry';
 import { slugSchema } from '../schema/common';
@@ -87,12 +87,15 @@ export async function depositIllustration(query: URLSearchParams, req: http.Inco
     const folder = prepareIllustration(config.dataRoot, bookId, subject, zone);
     tmp = path.join(folder, `${zone}.${crypto.randomBytes(6).toString('hex')}.depot.tmp`);
     await receive(req, tmp);
-    // Le nettoyage d'abord : un fichier refusé l'est tout de suite, sans passer par la confirmation.
-    const cleaned = await cleanPng(fs.readFileSync(tmp));
+    // Le nettoyage d'abord : un fichier refusé l'est tout de suite, sans passer par la confirmation. Un détouré exige l'alpha et en tire
+    // son contour (ED2) ; une illustration rectangulaire garde le nettoyage de MP4, alpha aplati sur blanc.
+    const detoure = illustrationZones(ctx).find((z) => z.id === zone)?.detoure === true;
+    const bytes = fs.readFileSync(tmp);
+    const cleaned = detoure ? await cleanDetoure(bytes) : { image: await cleanPng(bytes), contour: undefined };
     const exists = fs.lstatSync(path.join(folder, illustrationName(zone)), { throwIfNoEntry: false });
     if ((exists || ctx.subject.illustrations.some((i) => i.zone === zone)) && !confirm) return { needsConfirm: true };
     // Un dépôt manuel n'a pas de traçabilité : `generation` disparaît, les droits restent.
-    const { width, height } = storeIllustration(config.dataRoot, bookId, subject, zone, cleaned);
+    const { width, height } = storeIllustration(config.dataRoot, bookId, subject, zone, cleaned.image, cleaned.contour ? { contour: cleaned.contour } : {});
     return { deposited: true, width, height, ...view(config, dir, subject) };
   } finally {
     depositing = false;

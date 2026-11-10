@@ -3,9 +3,12 @@
 import { z } from 'zod';
 import { schemaVersionSchema, slugSchema, uniqueList } from './common';
 
-export const RIGHTS_KINDS = ['modele-3d', 'police', 'picto', 'modele-ia', 'lora', 'controlnet', 'image-reference', 'upscaler', 'extension'] as const;
-/** Ce qu'une illustration peut citer. Une extension ne porte que sur du code ; polices et pictogrammes ne sont pas dans l'image. */
-export const ILLUSTRATION_KINDS: readonly (typeof RIGHTS_KINDS)[number][] = ['modele-3d', 'modele-ia', 'lora', 'controlnet', 'image-reference', 'upscaler'];
+export const RIGHTS_KINDS = ['modele-3d', 'police', 'picto', 'modele-ia', 'lora', 'controlnet', 'image-reference', 'upscaler', 'extension', 'image-externe'] as const;
+/**
+ * Ce qu'une illustration peut citer. Une extension ne porte que sur du code ; polices et pictogrammes ne sont pas dans l'image.
+ * `image-externe` (ED2, spec §24.11) : une image imprimée telle quelle (une carte, par exemple), avec son auteur, sa licence et son crédit.
+ */
+export const ILLUSTRATION_KINDS: readonly (typeof RIGHTS_KINDS)[number][] = ['modele-3d', 'modele-ia', 'lora', 'controlnet', 'image-reference', 'upscaler', 'image-externe'];
 export const COMMERCIAL_OK = ['oui', 'non', 'a-verifier'] as const;
 
 export const rightsEntrySchema = z.strictObject({

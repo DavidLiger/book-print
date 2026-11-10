@@ -4,7 +4,7 @@
 import { GeometryRefused, layoutTemplate, type LayoutPage, type Margins, type Trim } from '../templates/geometry';
 import { sideOf, type StartSide, type Template } from '../templates/model';
 import { placeLayout } from './place';
-import type { ElementType, Layout, LayoutElement } from './schema';
+import type { Chain, ElementType, Layout, LayoutElement } from './schema';
 
 export type MiseEnPage = Template | Layout;
 
@@ -24,6 +24,9 @@ export function elementsOf(m: MiseEnPage): ElementInfo[] {
     sheet.zones.map((z) => ({ id: z.id, type: z.type, page, ...z.constraints, encadre: z.encadre, heading: z.heading, picto: z.picto, sizePt: z.sizePt })),
   );
 }
+
+/** Chaînes d'une version 2 (ED2) ; une version 1 n'en a pas. */
+export const chainsOf = (m: MiseEnPage): Chain[] => (isLayout(m) ? (m.chaines ?? []) : []);
 
 /** Format d'une version 2 ; une version 1 n'en a pas : elle vaut pour tout format, comme en GB1. */
 export const formatOf = (m: MiseEnPage): Trim | null => (isLayout(m) ? m.trim : null);

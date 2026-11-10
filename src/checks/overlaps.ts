@@ -1,6 +1,7 @@
 // src/checks/overlaps.ts — C17, chevauchements interdits (ED1, spec §24.10). Pur, sans Chromium : il lit la géométrie posée d'une mise en
 // page, page par page. « Au-dessus » veut dire plus loin dans la liste des éléments. Les cas interdits sont exactement ceux de la spec ; tout
 // autre chevauchement est permis. Un folio sous le QR est permis (décision de David, ED1) : le QR est un cartouche opaque, le numéro est centré.
+import { polygonsOverlap, rectPolygon } from '../images/contour';
 import type { LayoutPage, LayoutZone, Rect } from '../templates/geometry';
 import type { CheckResult } from './rules';
 
@@ -18,6 +19,17 @@ function overlap(a: Rect, b: Rect): boolean {
   return w > OVERLAP_TOLERANCE_MM && h > OVERLAP_TOLERANCE_MM;
 }
 
+/** Une boîte rentrée de la tolérance : des bords qui se touchent, ou un recouvrement d'arrondi, ne comptent pas. */
+const inset = (r: Rect): Rect => ({ left: r.left + OVERLAP_TOLERANCE_MM, top: r.top + OVERLAP_TOLERANCE_MM, right: r.right - OVERLAP_TOLERANCE_MM, bottom: r.bottom - OVERLAP_TOLERANCE_MM });
+
+/** Recouvrement de deux éléments posés : par leurs boîtes, puis, pour un détouré qui a son image, par son contour (ED2). */
+export function zonesOverlap(a: LayoutZone, b: LayoutZone): boolean {
+  if (!overlap(a.rect, b.rect)) return false;
+  if (!a.outline && !b.outline) return true;
+  const shape = (z: LayoutZone) => z.outline?.points ?? rectPolygon(inset(z.rect));
+  return polygonsOverlap(shape(a), shape(b));
+}
+
 /** Faute d'un chevauchement, `below` sous `above` ; `null` s'il est permis. */
 export function overlapFault(below: LayoutZone, above: LayoutZone): string | null {
   const name = `${above.id} (${above.type}) sur ${below.id} (${below.type})`;
@@ -28,7 +40,11 @@ export function overlapFault(below: LayoutZone, above: LayoutZone): string | nul
     if (below.type === 'bandeau') return null;
     return above.type === 'encadre' && below.type === 'texte' ? `${name} : un encadré sur un cadre de texte` : `${name} : deux éléments à texte se chevauchent`;
   }
-  if (above.type === 'illustration' && TEXT_TYPES.includes(below.type)) return `${name} : une illustration sur un élément à texte`;
+  if (above.type === 'illustration' && TEXT_TYPES.includes(below.type)) {
+    // Un détouré avec habillage peut se poser sur un cadre de texte : le texte le contourne (ED2).
+    if (above.detoure && (above.habillage === 'gauche' || above.habillage === 'droite') && below.type === 'texte') return null;
+    return `${name} : une illustration sur un élément à texte`;
+  }
   return null;
 }
 
@@ -38,7 +54,7 @@ export function overlapFaults(pages: LayoutPage[]): string[] {
   for (const page of pages) {
     page.zones.forEach((above, j) => {
       for (const below of page.zones.slice(0, j)) {
-        if (!overlap(below.rect, above.rect)) continue;
+        if (!zonesOverlap(below, above)) continue;
         const fault = overlapFault(below, above);
         if (fault) out.add(fault);
       }

@@ -598,6 +598,29 @@ const framingOf = () => subjectFile().illustrations[0].framing;
   await untilSub('sujet-illustrations', 'validée');
   check('retour à 1 : vert', framingOf().zoom === 1 && Math.abs(framingOf().focusX - 0.5) < 0.001, framingOf());
 
+  // ED2 : un détouré n'a pas de cadrage. La réponse du serveur est retouchée pour la zone, le reste de la page est le vrai.
+  const asDetoure = async (route: Route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    for (const z of body.zones) Object.assign(z, { detoure: true, crop: null, parts: [{ pixels: 4, gauche: 1, haut: 2, droite: 3, bas: 4 }] });
+    await route.fulfill({ response, json: body });
+  };
+  await page.route('**/api/sujet/images', asDetoure);
+  await goSub('sujet-relecture');
+  await goSub('sujet-illustrations');
+  await until(`document.querySelector('#il-infos').textContent.includes('Détouré')`);
+  check('détouré : cadrage désactivé, aucun rectangle visible, partie détachée dite', await page.isDisabled('#il-zoom') && await page.isDisabled('#il-x') && await page.isDisabled('#il-y') && await page.isHidden('#il-visible') && (await text('#il-infos')).includes('1 partie(s) détachée(s)') && (await text('#il-cible')).includes('fond transparent'), await text('#il-infos'));
+  const framed = JSON.stringify(framingOf());
+  const thumb = (await page.locator('#il-image').boundingBox())!;
+  await page.mouse.click(thumb.x + thumb.width * 0.2, thumb.y + thumb.height * 0.2);
+  await page.waitForTimeout(300);
+  check('détouré : un clic sur la vignette ne change aucun cadrage', JSON.stringify(framingOf()) === framed);
+  await page.unroute('**/api/sujet/images', asDetoure);
+  await goSub('sujet-relecture');
+  await goSub('sujet-illustrations');
+  await until(`!document.querySelector('#il-infos').textContent.includes('Détouré') && document.querySelector('#il-infos').textContent !== ''`);
+  check('rectangle : cadrage actif, rectangle visible', !(await page.isDisabled('#il-zoom')) && await page.isVisible('#il-visible'));
+
   await deposit(png);
   await until(`!document.querySelector('#il-confirmation').hidden`);
   await page.click('#il-annuler');

@@ -57,6 +57,12 @@ export function effectivePpi(crop: Crop, zone: ZoneSizeMm): number {
   return Math.round(((crop.width * MM_PER_IN) / zone.widthMm) * 100) / 100;
 }
 
+/** Image entière dans sa boîte (détouré, ED2) : la plus grande taille qui tient, même résolution sur les deux axes, arrondie au centième. */
+export function containPpi(image: Size, zone: ZoneSizeMm): number {
+  const scale = Math.min(zone.widthMm / image.width, zone.heightMm / image.height);
+  return Math.round((MM_PER_IN / scale) * 100) / 100;
+}
+
 export function placement(image: Size, zone: ZoneSizeMm, crop: Crop): Placement {
   const scale = zone.widthMm / crop.width;
   return { leftMm: -crop.left * scale, topMm: -crop.top * scale, widthMm: image.width * scale, heightMm: image.height * scale };

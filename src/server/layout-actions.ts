@@ -11,8 +11,8 @@ import { fromV1 } from '../layout/from-v1';
 import { LAYOUT_FILE, layoutOf } from '../layout/files';
 import { elementsOf, isLayout, placeMiseEnPage, type MiseEnPage } from '../layout/model';
 import { subjectLayoutFacts } from '../parcours/facts';
-import { controlTemplate, templateContent, type TemplatePreview } from '../render/gabarit';
-import { applyBookFiche, renderHtml, RenderRefused } from '../render/html';
+import { controlTemplate, flowedPreview, previewOf, templateContent, type TemplatePreview } from '../render/gabarit';
+import { applyBookFiche, RenderRefused } from '../render/html';
 import { slugSchema } from '../schema/common';
 import { readTemplates, templateOf } from '../templates/files';
 import type { Config } from './config';
@@ -63,7 +63,7 @@ function view(config: Config, dir: string, subjectId: string): View {
   let preview: TemplatePreview | null = null;
   if (placeable) {
     const layout = placeMiseEnPage(model, trim, style.margins, firstPage);
-    preview = { html: renderHtml(layout, trim, style, templateContent(model, style.fiche, subject.variant.theme, trim), read.pictos), layout, trim, template: model };
+    preview = previewOf(layout, trim, model, style, templateContent(model, style.fiche, subject.variant.theme, trim), read.pictos);
   }
   return {
     model,
@@ -126,9 +126,9 @@ export const LAYOUT_ACTIONS: Record<string, (body: unknown, config: Config) => J
   },
 };
 
-export function layoutPreviewHtml(dir: string | null, subjectId: string | null, config: Config): string {
+export async function layoutPreviewHtml(dir: string | null, subjectId: string | null, config: Config): Promise<string> {
   const body = parse({ dir, subjectId });
   const v = view(config, body.dir, body.subjectId);
   if (!v.preview) throw new RenderRefused(v.errors.join(' '));
-  return v.preview.html;
+  return (await flowedPreview(v.preview)).html;
 }

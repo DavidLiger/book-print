@@ -1,5 +1,5 @@
 // src/checks/images.ts — C5 et C11 (spec §7), fonctions pures sur des faits. Ils ne demandent pas Chromium : le parcours les calcule à chaque lecture.
-import { effectivePpi, MAX_PPI, TARGET_PPI, visibleCrop, type Framing, type Size, type ZoneSizeMm } from '../images/crop';
+import { containPpi, effectivePpi, MAX_PPI, TARGET_PPI, visibleCrop, type Framing, type Size, type ZoneSizeMm } from '../images/crop';
 import type { RightsEntry } from '../schema/rights';
 import type { CheckResult, Level } from './rules';
 
@@ -9,11 +9,13 @@ export interface PlacedImage {
   image: Size;
   size: ZoneSizeMm;
   framing: Framing;
+  /** Détouré (ED2) : l'image entière, centrée dans sa boîte, sans cadrage ; la résolution est celle de cette taille affichée. */
+  contain?: boolean;
 }
 
 const fmt = (n: number) => n.toFixed(0);
 
-export const ppiOf = (p: PlacedImage) => effectivePpi(visibleCrop(p.image, p.size, p.framing), p.size);
+export const ppiOf = (p: PlacedImage) => (p.contain ? containPpi(p.image, p.size) : effectivePpi(visibleCrop(p.image, p.size, p.framing), p.size));
 
 export function c5Resolution(images: PlacedImage[]): CheckResult {
   const errors: string[] = [];

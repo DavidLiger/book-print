@@ -4,10 +4,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { cleanPng, ImageRefused, type CleanedPng } from '../images/clean';
+import type { Contour } from '../images/contour';
 import { DEFAULT_FRAMING } from '../images/crop';
 import { ensureIllustrationRights, readBookRights, setIllustrationRights } from '../rights/registry';
 import { illustrationFileName, type Generation, type Illustration } from '../schema/subject';
 import { writeAtomic } from './atomic';
+import { contourFile, contourName, writeContour } from './contour-file';
 import { illustrationFolder, illustrationName } from './illustration-file';
 import { SubjectRefused, updateSubject } from './subject-file';
 
@@ -37,11 +39,22 @@ export interface StoreOptions {
   generation?: Generation;
   /** Droits à rattacher à la place de ceux de la zone. */
   rights?: string[];
+  /** Contour d'un détouré (ED2) : écrit juste après le PNG, avec son empreinte. */
+  contour?: Contour;
 }
 
 export function storeIllustration(dataRoot: string, bookId: string, subjectId: string, zone: string, image: CleanedPng, options: StoreOptions = {}): Illustration {
   const folder = prepareIllustration(dataRoot, bookId, subjectId, zone);
   writeIllustrationPng(folder, zone, image.png);
+  if (options.contour) {
+    try {
+      writeContour(folder, zone, contourFile(options.contour, image.png));
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code === 'EPERM' || code === 'EBUSY' || code === 'EACCES') throw new ImageRefused(`${contourName(zone)} est ouvert dans un autre programme : le fermer, puis redéposer.`);
+      throw e;
+    }
+  }
   ensureIllustrationRights(dataRoot, bookId, subjectId, zone);
   if (options.rights) setIllustrationRights(dataRoot, bookId, subjectId, zone, options.rights);
   const entry: Illustration = { zone, file: illustrationFileName(subjectId, zone), width: image.width, height: image.height, framing: DEFAULT_FRAMING, ...(options.generation ? { generation: options.generation } : {}) };

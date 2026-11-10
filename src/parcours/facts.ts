@@ -23,6 +23,8 @@ import type { PrintBook } from '../schema/print-book';
 import type { ConfigState } from '../server/config';
 import { GeometryRefused } from '../templates/geometry';
 import { overlapFaults } from '../checks/overlaps';
+import { withOutlines } from '../data/contour-file';
+import type { Part } from '../images/contour';
 import { layoutOf } from '../layout/files';
 import { formatLabel, formatOf, placeMiseEnPage, previewFirstPage, sameFormat, type MiseEnPage } from '../layout/model';
 import { startFault } from '../layout/place';
@@ -241,7 +243,11 @@ export function subjectLayoutFacts(dataRoot: string, book: PrintBook, subject: S
         const first = firstPageOf(dataRoot, book, subject.id);
         const side = isLayout(model) ? startFault(model, first) : null;
         if (side) errors.push(`C16, ${side}`);
-        else errors.push(...overlapFaults(placeMiseEnPage(model, book.edition.trim, style.margins, first)).map((d) => `C17, ${d}`));
+        else {
+          // C17 sur le contour d'un détouré qui a son image (ED2), sur sa boîte sinon.
+          const placed = withOutlines(placeMiseEnPage(model, book.edition.trim, style.margins, first), dataRoot, book.bookId, subject.id, (zone) => subject.illustrations.some((i) => i.zone === zone));
+          errors.push(...overlapFaults(placed).map((d) => `C17, ${d}`));
+        }
       } catch (e) {
         if (e instanceof GeometryRefused) errors.push(e.message);
         else if (!(e instanceof SubjectRefused)) throw e;
@@ -256,12 +262,17 @@ export function subjectLayoutFacts(dataRoot: string, book: PrintBook, subject: S
   }
 }
 
+/** Une partie opaque que le contour d'un détouré découpe (ED2) : sa taille et sa place, en pixels de l'image. */
+export const partAlert = (zone: string, p: Part) => `${zone} : partie détachée de ${p.pixels} px, de (${p.gauche}, ${p.haut}) à (${p.droite}, ${p.bas}), coupée par le contour`;
+
 function illustrationFacts(dataRoot: string, bookId: string, id: string, scenes: SceneReading[]): SubjectFacts['illustrations'] {
   try {
     const ctx = subjectContext(dataRoot, bookId, id, scenes);
     const { zones, checks } = imageChecks(ctx);
     const details = (level: string) => checks.filter((c) => c.level === level).flatMap((c) => c.details.map((d) => `${c.id}, ${d}`));
-    return { error: null, zones: zones.length, missing: zones.filter((z) => !z.illustration).length, errors: [...strayIllustrations(ctx), ...zones.flatMap((z) => z.fault ?? []), ...details('erreur')], alerts: details('alerte') };
+    // Une partie opaque détachée est découpée par le contour (ED2) : l'alerte la nomme.
+    const parts = zones.flatMap((z) => z.parts.map((p) => partAlert(z.zone, p)));
+    return { error: null, zones: zones.length, missing: zones.filter((z) => !z.illustration).length, errors: [...strayIllustrations(ctx), ...zones.flatMap((z) => z.fault ?? []), ...details('erreur')], alerts: [...details('alerte'), ...parts] };
   } catch (e) {
     if (e instanceof RenderRefused || e instanceof GeometryRefused || e instanceof SubjectRefused || e instanceof CollectionRefused || e instanceof RightsRefused || e instanceof PricingRefused) return { error: e.message, zones: 0, missing: 0, errors: [], alerts: [] };
     throw e;

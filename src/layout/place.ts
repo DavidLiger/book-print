@@ -61,6 +61,11 @@ function placeElement(e: LayoutElement, layout: Layout, frame: PageFrame, part: 
     image: e.image,
     consigne: e.consigne,
     fleche: e.fleche && { x: frame.trim.left + e.fleche.x, y: frame.trim.top + e.fleche.y },
+    chaine: e.chaine,
+    colonnes: e.colonnes,
+    gouttiereMm: e.gouttiereMm,
+    detoure: e.detoure,
+    habillage: e.habillage,
   };
   const extra: Partial<LayoutZone> = Object.fromEntries(Object.entries(own).filter(([, v]) => v !== undefined));
   if (e.type === 'bandeau') {

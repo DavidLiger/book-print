@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { CollectionRefused, readCollection } from '../data/collection';
 import { bookFolder, readPrintBook } from '../data/pricing-file';
 import { readSubject, SubjectRefused } from '../data/subject-file';
-import { controlTemplate, templatePreview } from '../render/gabarit';
+import { controlTemplate, flowedPreview, templatePreview } from '../render/gabarit';
 import { RenderRefused } from '../render/html';
 import { slugSchema, TEMPLATE_ID_PATTERN } from '../schema/common';
 import { formatLabel, formatOf, sameFormat, versionOf } from '../layout/model';
@@ -93,8 +93,8 @@ export const GABARIT_ACTIONS: Record<string, (body: unknown, dataRoot: string) =
   },
 };
 
-export function gabaritPreviewHtml(bookId: string | null, id: string | null, theme: string | null, dataRoot: string): string {
+export async function gabaritPreviewHtml(bookId: string | null, id: string | null, theme: string | null, dataRoot: string): Promise<string> {
   const body = parse(templateBody, { bookId, id, ...(theme ? { theme } : {}) });
   requireBook(dataRoot, body.bookId);
-  return templatePreview(dataRoot, body.bookId, body.id, body.theme).html;
+  return (await flowedPreview(templatePreview(dataRoot, body.bookId, body.id, body.theme))).html;
 }

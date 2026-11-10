@@ -53,6 +53,22 @@ export interface LayoutZone {
   textRect?: Rect | null;
   /** Élément à cheval : posé sur sa page (`debut`) et sur la page qui lui fait face (`fin`), décalé. */
   double?: 'debut' | 'fin';
+  /** Cadre d'une chaîne (ED2) : la chaîne, ses colonnes et leur gouttière. */
+  chaine?: string;
+  colonnes?: number;
+  gouttiereMm?: number;
+  /** Image détourée (ED2) et le côté où passe le texte. */
+  detoure?: boolean;
+  habillage?: 'gauche' | 'droite' | 'aucun';
+  /** Détouré dont l'image est déposée (ED2) : la place de l'image entière et son contour, en mm sur la page du PDF. Absent : la boîte. */
+  outline?: Outline;
+}
+/** Contour d'un détouré posé : l'image entière, centrée dans sa boîte, et le polygone de découpe, en mm depuis le coin de la page du PDF. */
+export interface Outline {
+  image: Rect;
+  points: [number, number][];
+  /** Le même polygone en pourcentage de l'image, pour `clip-path`. */
+  percent: [number, number][];
 }
 export interface LayoutPage {
   number: number;

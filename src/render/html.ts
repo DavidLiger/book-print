@@ -5,6 +5,8 @@ import type { Placement } from '../images/crop';
 import type { PrintBook } from '../schema/print-book';
 import type { Style } from '../schema/style';
 import { pageSize, type LayoutPage, type LayoutZone, type Rect, type Trim } from '../templates/geometry';
+import { rectPolygon } from '../images/contour';
+import { boxMarkup, type ChainText } from './flow';
 import { FONT_PACK, fontFaces } from './fonts';
 
 export class RenderRefused extends Error {}
@@ -29,6 +31,10 @@ export interface RenderContent {
   qrLegend: string;
   /** En-tête d'un encadré écrit par la recherche (`headingMaxChars`, ED1 ; rempli par ED4). Vide ou absent : pas d'en-tête. */
   headings?: Record<string, string>;
+  /** Texte de chaque chaîne (ED2), par identifiant de chaîne. */
+  chains?: Record<string, ChainText>;
+  /** Coupures de la première passe (`render/flow.ts`) : fin de la tranche de chaque boîte. Absentes, les boîtes restent vides (première passe). */
+  cuts?: Record<string, number[]>;
 }
 
 /** Fiche d'un livre (P-30) : celle de `print-book.json` si elle existe, avec les mêmes contrôles que celle du style. */
@@ -67,6 +73,16 @@ function extraCss(style: Style, theme: string, pages: LayoutPage[], font: (f: St
   if (types.has('bandeau')) {
     rules.push(`.bandeau { background: ${theme}; }`);
     rules.push(`.bandeau .bandeau-texte { position: absolute; display: flex; align-items: flex-end; margin: 0; ${font(fonts.title)}; font-weight: 700; color: ${palette.paper}; }`);
+  }
+  // ED2 : écrites seulement si les pages portent une chaîne, comme en GB1.
+  if (zones.some((z) => z.chaine !== undefined)) {
+    rules.push('.chaine .colonne { position: absolute; }');
+    rules.push('.chaine .flux { display: block; min-width: 0; overflow-wrap: break-word; }');
+    rules.push('.chaine p { margin: 0; }');
+    rules.push('.chaine p.retrait { text-indent: 1em; }');
+    rules.push(`.chaine .intertitre { margin: 2mm 0 0; ${font(fonts.lead)}; font-weight: 700; color: ${theme}; }`);
+    rules.push('.chaine .intertitre.tete { margin-top: 0; }');
+    rules.push(`.chaine p.lettrine::first-letter { initial-letter: 3; margin-right: 1mm; font-family: '${FONT_PACK[fonts.title.pack].family}'; font-weight: 700; color: ${theme}; }`);
   }
   if (zones.some((z) => z.icone !== undefined)) rules.push(`.encadre .icone { float: left; width: 8mm; height: 8mm; margin: 0 2mm 1mm 0; color: ${theme}; }`, '.encadre .icone svg { display: block; width: 100%; height: 100%; }');
   return rules.map((r) => `${r}\n`).join('');
@@ -160,7 +176,101 @@ function arrowMarkup(zone: LayoutZone, color: string): string {
   return `<svg class="fleche" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${num(width)} ${num(height)}" style="position:absolute;left:${mm(left - r.left)};top:${mm(top - r.top)};width:${mm(width)};height:${mm(height)};overflow:visible" aria-hidden="true">${line}<polygon points="${corners.map(([x, y]) => at(x, y)).join(' ')}" fill="${color}"/></svg>`;
 }
 
-function zoneMarkup(zone: LayoutZone, page: LayoutPage, style: Style, content: RenderContent, pictos: Record<string, string>): string {
+/** Marge entre le texte et le contour d'un détouré (spec §24.6). */
+export const SHAPE_MARGIN_MM = 2;
+
+/** Un détouré qui habille : le côté où passe le texte, son contour (sa boîte sans image) et l'étendue de ce contour, en mm sur la page. */
+interface Shape {
+  side: 'gauche' | 'droite';
+  points: [number, number][];
+  bounds: Rect;
+}
+
+function shapesOf(page: LayoutPage): Shape[] {
+  return page.zones.flatMap((z) => {
+    if (z.type !== 'illustration' || !z.detoure || (z.habillage !== 'gauche' && z.habillage !== 'droite')) return [];
+    const points = z.outline?.points ?? rectPolygon(z.rect);
+    const xs = points.map((p) => p[0]);
+    const ys = points.map((p) => p[1]);
+    return [{ side: z.habillage, points, bounds: { left: Math.min(...xs), top: Math.min(...ys), right: Math.max(...xs), bottom: Math.max(...ys) } }];
+  });
+}
+
+const pt = (n: number) => `${Math.round(n * 100) / 100}mm`;
+
+/**
+ * Habillage d'une boîte de texte (cadre seul ou colonne) par les détourés qui la croisent (spec §24.6). Pour chaque détouré, un flottant vide
+ * en tête de la boîte, du côté opposé au texte, de la hauteur qui va du haut de la boîte (ou du flottant précédent du même côté) au bas du
+ * contour, avec `shape-outside: polygon(…)` (le contour ramené au flottant) et `shape-margin` : au-dessus du contour, le texte passe sur
+ * toute la largeur. Un seul côté par détouré : Chromium n'a pas d'exclusions CSS. Aucun flottant sans détouré : le HTML ne change pas.
+ */
+export function wrapFloats(box: Rect, shapes: Shape[]): string {
+  const m = SHAPE_MARGIN_MM;
+  const cursor = { gauche: 0, droite: 0 };
+  const items: { top: number; html: string }[] = [];
+  for (const shape of [...shapes].sort((a, b) => a.bounds.top - b.bounds.top)) {
+    const bottom = Math.min(shape.bounds.bottom + m, box.bottom) - box.top;
+    const reach = Math.max(shape.bounds.top - m, box.top) - box.top;
+    // Le texte passe à gauche : le flottant est à droite, du bord gauche du contour au bord droit de la boîte ; et inversement.
+    const float = shape.side === 'gauche' ? 'right' : 'left';
+    const left = shape.side === 'gauche' ? Math.max(shape.bounds.left - m, box.left) : box.left;
+    const right = shape.side === 'gauche' ? box.right : Math.min(shape.bounds.right + m, box.right);
+    const top = cursor[shape.side];
+    if (bottom <= reach || bottom <= top || right <= left) continue;
+    cursor[shape.side] = bottom;
+    const origin = { x: left, y: box.top + top };
+    const polygon = shape.points.map(([x, y]) => `${pt(x - origin.x)} ${pt(y - origin.y)}`).join(',');
+    items.push({ top, html: `<span class="habillage" style="float:${float};clear:${float};width:${mm(right - left)};height:${mm(bottom - top)};shape-outside:polygon(${polygon});shape-margin:${SHAPE_MARGIN_MM}mm"></span>` });
+  }
+  return items.sort((a, b) => a.top - b.top).map((i) => i.html).join('');
+}
+
+/** Rang de la première boîte de chaque cadre dans sa chaîne : cadres dans l'ordre de la chaîne, colonnes de gauche à droite. */
+function boxRanks(pages: LayoutPage[], content: RenderContent): Map<string, number> {
+  const columns = new Map(pages.flatMap((p) => p.zones).map((z) => [z.id, z.colonnes ?? 1]));
+  const out = new Map<string, number>();
+  for (const chain of Object.values(content.chains ?? {})) {
+    let rank = 0;
+    for (const cadre of chain.cadres) {
+      out.set(cadre, rank);
+      rank += columns.get(cadre) ?? 1;
+    }
+  }
+  return out;
+}
+
+/** Un cadre de chaîne : une boîte par colonne, chacune avec ses flottants d'habillage et sa tranche de la chaîne (vide en première passe). */
+function chainMarkup(zone: LayoutZone, page: LayoutPage, content: RenderContent, rank: number | undefined): string {
+  const id = zone.chaine!;
+  const chain = content.chains?.[id];
+  if (!chain || rank === undefined) throw new RenderRefused(`${zone.id} : chaîne ${id} sans texte.`);
+  const n = zone.colonnes ?? 1;
+  const gap = zone.gouttiereMm ?? 0;
+  const width = zone.rect.right - zone.rect.left;
+  const col = (width - (n - 1) * gap) / n;
+  const height = zone.rect.bottom - zone.rect.top;
+  const cuts = content.cuts?.[id];
+  const shapes = shapesOf(page);
+  const boxes = Array.from({ length: n }, (_, c) => {
+    const at = rank + c;
+    const left = c * (col + gap);
+    const box: Rect = { left: zone.rect.left + left, right: zone.rect.left + left + col, top: zone.rect.top, bottom: zone.rect.bottom };
+    const text = cuts ? boxMarkup(chain, at === 0 ? 0 : cuts[at - 1]!, cuts[at]!) : '';
+    return `<div class="colonne" data-cadre data-chaine="${esc(id)}" data-boite="${at}" style="left:${mm(left)};top:0;width:${mm(col)};height:${mm(height)}"><div class="flux" data-fill>${wrapFloats(box, shapes)}${text}</div></div>`;
+  });
+  return `<div class="zone texte chaine" data-zone="${zone.id}" data-type="${zone.type}" style="${boxStyle(zone.rect)}">${boxes.join('')}</div>`;
+}
+
+/** Détouré (ED2, spec §24.6) : l'image RVB entière, centrée dans sa boîte, découpée par son contour. Sans contour, l'aplat remplit la boîte. */
+function detoureMarkup(zone: LayoutZone, attrs: string, src: string): string {
+  const o = zone.outline;
+  if (!o) return `<img ${attrs} src="${src}" alt="">`;
+  const r = zone.rect;
+  const polygon = o.percent.map(([x, y]) => `${Math.round(x * 1e4) / 1e4}% ${Math.round(y * 1e4) / 1e4}%`).join(',');
+  return `<div ${attrs}><img src="${src}" alt="" style="left:${mm(o.image.left - r.left)};top:${mm(o.image.top - r.top)};width:${mm(o.image.right - o.image.left)};height:${mm(o.image.bottom - o.image.top)};clip-path:polygon(${polygon})"></div>`;
+}
+
+function zoneMarkup(zone: LayoutZone, page: LayoutPage, style: Style, content: RenderContent, pictos: Record<string, string>, ranks: Map<string, number>): string {
   const attrs = `class="zone ${zone.type}" data-zone="${zone.id}" data-type="${zone.type}" style="${boxStyle(zone.rect)}"`;
   const text = () => {
     const t = content.texts[zone.id];
@@ -173,13 +283,18 @@ function zoneMarkup(zone: LayoutZone, page: LayoutPage, style: Style, content: R
     case 'titre':
       return `<h1 ${attrs}><span data-fill>${text()}</span></h1>`;
     case 'chapeau':
-    case 'texte':
       return `<p ${attrs}><span data-fill>${text()}</span></p>`;
+    case 'texte': {
+      if (zone.chaine !== undefined) return chainMarkup(zone, page, content, ranks.get(zone.id));
+      // Un cadre seul est habillé comme une colonne (ED2) ; sans détouré qui le croise, rien n'est ajouté.
+      return `<p ${attrs}><span data-fill>${wrapFloats(zone.rect, shapesOf(page))}${text()}</span></p>`;
+    }
     case 'fiche':
       return `<div ${attrs}>${ficheMarkup(zone, style, content, pictos)}</div>`;
     case 'illustration': {
       const src = content.images[zone.id];
       if (!src) throw new RenderRefused(`Zone ${zone.id} sans image.`);
+      if (zone.detoure) return detoureMarkup(zone, attrs, src);
       const place = content.placements?.[zone.id];
       if (!place) return `<img ${attrs} src="${src}" alt="">`;
       // Une boîte qui coupe : aucune transformation, rien qui puisse créer de la transparence (C6).
@@ -240,8 +355,9 @@ function zoneMarkup(zone: LayoutZone, page: LayoutPage, style: Style, content: R
 export function renderHtml(pages: LayoutPage[], trim: Trim, style: Style, content: RenderContent, pictos: Record<string, string>): string {
   const theme = style.palette.themes[content.theme];
   if (!theme) throw new RenderRefused(`Thème inconnu : ${content.theme}.`);
+  const ranks = boxRanks(pages, content);
   const sections = pages.map(
-    (p) => `<section class="page ${p.side}" data-page="${p.number}" data-side="${p.side}">${p.zones.map((z) => zoneMarkup(z, p, style, content, pictos)).join('')}</section>`,
+    (p) => `<section class="page ${p.side}" data-page="${p.number}" data-side="${p.side}">${p.zones.map((z) => zoneMarkup(z, p, style, content, pictos, ranks)).join('')}</section>`,
   );
   return `<!doctype html><html lang="${content.lang}"><head><meta charset="utf-8"><title>${esc(content.title)}</title><style>${css(style, trim, theme, pages)}</style></head><body>${sections.join('\n')}</body></html>`;
 }

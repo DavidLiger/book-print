@@ -121,11 +121,12 @@ const snapshot = (root: string): Record<string, string> => {
   refused('fond perdu sur un texte', (l) => (el(l, 'chapeau').fondPerdu = ['haut']), 'vont au bord');
   refused('fond perdu sans toucher le bord', (l) => (el(l, 'bandeau').fondPerdu = ['bas']), 'sans toucher');
   refused('fond perdu en double', (l) => (el(l, 'bandeau').fondPerdu = ['exterieur', 'exterieur']), 'en double');
-  refused('chaîne de texte : prévu en ED2', (l) => (el(l, 'texte').chaine = 'corps'), 'prévu en ED2');
-  refused('colonnes : prévu en ED2', (l) => (el(l, 'texte').colonnes = 2), 'prévu en ED2');
-  refused('détouré : prévu en ED2', (l) => (el(l, 'panorama').detoure = true), 'prévu en ED2');
-  refused('habillage : prévu en ED2', (l) => (el(l, 'panorama').habillage = 'gauche'), 'prévu en ED2');
-  refused('chaines : prévu en ED2', (l) => (l.chaines = []), 'prévu en ED2');
+  // Les champs d'ED2 sont admis depuis ED2 (test:texte-detoure) ; ici, chacun sans ce qui le rend valable.
+  refused('cadre d’une chaîne absente (ED2)', (l) => Object.assign(el(l, 'texte'), { chaine: 'corps', maxChars: undefined }), 'absente de chaines');
+  refused('colonnes hors d’une chaîne (ED2)', (l) => (el(l, 'texte').colonnes = 2), 'seulement sur un cadre de chaîne');
+  refused('détouré à cheval (ED2)', (l) => Object.assign(el(l, 'panorama'), { detoure: true, habillage: 'gauche' }), 'pas à cheval');
+  refused('habillage sans détouré (ED2)', (l) => (el(l, 'panorama').habillage = 'gauche'), 'seulement pour un détouré');
+  refused('chaîne vers un cadre absent (ED2)', (l) => (l.chaines = [{ id: 'corps', cadres: ['absent'], paragraphes: [{ id: 'p1', intertitre: false, maxChars: 10 }] }]), 'absent des éléments');
   refused('champ inconnu', (l) => (el(l, 'texte').couleur = 'rouge'), 'couleur');
   check('schéma : capsule sans en-tête admise (comme GB1)', layoutSchema.safeParse({ ...synthese(), elements: synthese().elements.map((e) => (e.id === 'capsule' ? { ...e, headingMaxChars: undefined } : e)) }).success);
   check('schéma : question à en-tête fixe admise', layoutSchema.safeParse({ ...synthese(), elements: synthese().elements.map((e) => (e.id === 'question' ? { ...e, headingMaxChars: undefined, heading: { fr: 'Pourquoi ?', en: 'Why?', es: '¿Por qué?' } } : e)) }).success);

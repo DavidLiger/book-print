@@ -14,7 +14,7 @@ import { researchPrompt } from '../research/prompt';
 import { applyBlockAction, applyClaimAction, touched } from '../research/state';
 import { checkUrls, defaultUrlDeps, type UrlDeps } from '../research/url-check';
 import { applyBookFiche, RenderRefused } from '../render/html';
-import { controlSubject, subjectContext, subjectHtml, type SubjectContext } from '../render/subject';
+import { controlSubject, subjectContext, subjectPage, type SubjectContext } from '../render/subject';
 import { slugSchema } from '../schema/common';
 import type { StoredResearch } from '../schema/research';
 import { templateFits } from '../templates';
@@ -261,8 +261,8 @@ export const SUBJECT_ACTIONS: Record<string, (body: unknown, config: Config) => 
   },
 };
 
-export function subjectPreviewHtml(dir: string | null, subjectId: string | null, config: Config): string {
+export async function subjectPreviewHtml(dir: string | null, subjectId: string | null, config: Config): Promise<string> {
   const body = parse(subjectBody, { dir, subjectId });
   const read = reading(config, body.dir);
-  return subjectHtml(subjectContext(config.dataRoot, read.bookId, body.subjectId, read.scenes));
+  return (await subjectPage(subjectContext(config.dataRoot, read.bookId, body.subjectId, read.scenes))).html;
 }
