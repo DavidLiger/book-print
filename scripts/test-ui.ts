@@ -983,6 +983,17 @@ await page.unrouteAll({ behavior: 'ignoreErrors' });
   while (!(await second.evaluate(`document.querySelector('#veille').open`)) && Date.now() < limite) await page.waitForTimeout(25);
   check('« Utiliser cet onglet » : le premier reprend, le second passe en veille', !(await page.evaluate(`document.querySelector('#veille').open`)) && (await second.evaluate(`document.querySelector('#veille').open`)) === true);
   await second.close();
+  // LC2 : un onglet du navigateur intégré de Claude Desktop (User-Agent Claude/…) ne met pas l'onglet du navigateur en veille, ni l'inverse.
+  const integre = await browser.newPage({ viewport: SIZES[1]!, userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Claude/4.23118.0 Chrome/152.0.7977.167 Safari/537.36' });
+  await integre.goto(url);
+  await integre.waitForSelector('#etapes li');
+  await page.waitForTimeout(500);
+  check('onglet du navigateur intégré : aucun des deux onglets en veille', !(await page.evaluate(`document.querySelector('#veille').open`)) && !(await integre.evaluate(`document.querySelector('#veille').open`)));
+  await page.reload();
+  await page.waitForSelector('#etapes li');
+  await page.waitForTimeout(500);
+  check('onglet du navigateur rechargé : l\'onglet intégré reste actif', !(await integre.evaluate(`document.querySelector('#veille').open`)) && !(await page.evaluate(`document.querySelector('#veille').open`)));
+  await integre.close();
 }
 
 // « Tout arrêter et quitter » (LC1) : confirmation, arrêt demandé au serveur, page réduite à un message.

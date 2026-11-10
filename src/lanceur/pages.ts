@@ -1,6 +1,7 @@
 // src/lanceur/pages.ts — pages du Studio et de Print, ouvertes par le lanceur unique (LC1, décision de David du 09/11/2026). Le Studio
-// (`--no-open`) et Print (`--no-open`) n'ouvrent plus leur page eux-mêmes. Le lanceur compte leurs onglets connectés ; s'il en
-// manque et que le navigateur par défaut est fermé, il l'ouvre sans adresse pour qu'il restaure ses onglets, attend qu'ils se
+// (`--no-open`) et Print (`--no-open`) n'ouvrent plus leur page eux-mêmes. Le lanceur compte leurs onglets connectés (ceux du
+// navigateur intégré de Claude Desktop exclus par Print, LC2) ; s'il en manque et que le navigateur par défaut est fermé, il l'ouvre
+// directement sur les pages qui manquent (LC2 : Brave rouvert sans adresse ne restaurait rien) ; s'il tourne, il attend que ses onglets se
 // reconnectent, puis n'ouvre que les pages qui manquent. Parties pures (lecture du registre, pages manquantes) et appels au système.
 import { spawn, spawnSync } from 'node:child_process';
 import http from 'node:http';
@@ -11,9 +12,10 @@ import { PORT as PRINT_PORT } from '../server/rules';
 
 export type OutilPage = Extract<Outil, 'studio' | 'print'>;
 export const URLS: Record<OutilPage, string> = { studio: `http://${LOOPBACK}:${STUDIO_PORT}/`, print: `http://${LOOPBACK}:${PRINT_PORT}/` };
-/** Attente des onglets restaurés quand le lanceur vient d'ouvrir le navigateur, et des onglets qui se reconnectent sinon. */
-export const ATTENTE_RESTAURATION_MS = 15_000;
+/** Attente des onglets qui se reconnectent, navigateur ouvert (ou inconnu). */
 export const ATTENTE_RECONNEXION_MS = 4_000;
+/** Attente des onglets ouverts avec le navigateur fermé (LC2), pour le journal et pour un second double-clic. */
+export const ATTENTE_OUVERTURE_MS = 15_000;
 
 /** Valeur d'une ligne `reg query` : ce qui suit `REG_SZ` ou `REG_EXPAND_SZ` (nom de valeur en toute langue, « (par défaut) » compris). */
 export function valeurReg(sortie: string): string | null {
@@ -55,12 +57,18 @@ export function navigateurLance(image: string): boolean {
   return out.toLowerCase().includes(`"${image.toLowerCase()}"`);
 }
 
+/** Commande `start` du navigateur fermé, ouvert directement sur les pages (LC2) : adresses du lanceur seulement (`URLS`). */
+export function commandeNavigateur(exe: string, urls: string[]): string {
+  return `start "" "${exe}" ${urls.map((u) => `"${u}"`).join(' ')}`;
+}
+
 /**
- * Navigateur ouvert sans adresse : il restaure ses onglets (réglage « Reprendre là où vous en étiez »). Par `cmd /c start`, qui se
- * termine aussitôt : le navigateur n'est pas dans l'arbre du lanceur, « Tout arrêter » ne le ferme jamais.
+ * Navigateur fermé, ouvert sur les pages qui manquent (LC2) : ses onglets ne sont pas attendus (Brave rouvert sans adresse affichait sa
+ * page de démarrage, sans rien restaurer). Par `cmd /c start`, qui se termine aussitôt : le navigateur n'est pas dans l'arbre du lanceur,
+ * « Tout arrêter » ne le ferme jamais.
  */
-export function demarrerNavigateur(exe: string): void {
-  const p = spawn('cmd.exe', ['/d', '/s', '/c', `start "" "${exe}"`], { windowsVerbatimArguments: true, stdio: 'ignore', windowsHide: true });
+export function demarrerNavigateur(exe: string, urls: string[]): void {
+  const p = spawn('cmd.exe', ['/d', '/s', '/c', commandeNavigateur(exe, urls)], { windowsVerbatimArguments: true, stdio: 'ignore', windowsHide: true });
   p.on('error', () => undefined);
 }
 
@@ -104,19 +112,22 @@ export async function compterOnglets(outil: OutilPage): Promise<number | null> {
   return typeof r?.onglets === 'number' ? r.onglets : null;
 }
 
-/** Pages du Studio et de Print : rien si leurs onglets sont là, sinon navigateur restauré puis pages manquantes. */
+/** Pages du Studio et de Print : rien si leurs onglets sont là ; navigateur fermé : ouvert sur les pages manquantes ; sinon attente puis pages manquantes. */
 export async function ouvrirPages(outils: OutilPage[], note: (m: string) => void): Promise<void> {
   const compter = async () => Object.fromEntries(await Promise.all(outils.map(async (o) => [o, await compterOnglets(o)] as const))) as Partial<Record<OutilPage, number | null>>;
   const avant = await compter();
   if (!pagesManquantes(avant).length) return note(`pages : onglets déjà connectés (${outils.map((o) => `${LABELS[o]} ${avant[o] ?? 'sans réponse'}`).join(', ')})`);
   const nav = navigateurParDefaut();
-  let attente = ATTENTE_RECONNEXION_MS;
   if (!nav) note('pages : navigateur par défaut illisible dans le registre');
   else if (!navigateurLance(nav.image)) {
-    note(`pages : navigateur fermé (${nav.image}) : ouvert sans adresse pour qu'il restaure ses onglets`);
-    demarrerNavigateur(nav.exe);
-    attente = ATTENTE_RESTAURATION_MS;
+    const manquent = pagesManquantes(avant);
+    note(`pages : navigateur fermé (${nav.image}) : ouvert sur ${manquent.map((o) => `${LABELS[o]} (${URLS[o]})`).join(', ')}`);
+    demarrerNavigateur(nav.exe, manquent.map((o) => URLS[o]));
+    // Le verrou de lancement reste tenu jusqu'ici : un second double-clic retrouve ces onglets au lieu d'en rouvrir.
+    const connectes = await attendre(async () => pagesManquantes(await compter()).length === 0, ATTENTE_OUVERTURE_MS, 500);
+    return note(`pages : ${connectes ? 'onglets connectés' : `onglets pas encore connectés après ${ATTENTE_OUVERTURE_MS / 1000} s`}`);
   }
+  const attente = ATTENTE_RECONNEXION_MS;
   let apres = avant;
   await attendre(
     async () => {

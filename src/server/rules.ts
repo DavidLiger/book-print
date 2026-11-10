@@ -32,6 +32,12 @@ export const uploadAllowed = (h: ActionHeaders, port: number, jpeg = false): boo
 
 /** Attente d'un onglet déjà ouvert au démarrage, comme le studio (LC1) : il se reconnecte en une seconde environ. */
 export const TAB_WAIT_MS = 3_000;
+/**
+ * Onglet du navigateur intégré de Claude Desktop (LC2) : son `User-Agent` porte `Claude/<version>` (relevé le 10/11/2026 :
+ * `… Claude/4.23118.0 Chrome/152…`), ou `Electron/` pour une autre version. Il ne compte pas comme un onglet ouvert pour le lanceur ni
+ * pour l'attente de `print.cmd`, et n'est pas mis en veille par un onglet du navigateur de David (ni l'inverse).
+ */
+export const navigateurIntegre = (userAgent: string | undefined): boolean => /\b(?:Claude|Electron)\/\d/.test(userAgent ?? '');
 /** Page à ouvrir au démarrage : seulement si aucun onglet ne s'est connecté depuis le démarrage. */
 export const pageAOuvrir = (ongletVuA: number, demarreA: number): boolean => ongletVuA < demarreA;
 /** `npm run print -- --no-open` (LC1) : le lanceur unique ouvre lui-même les pages ; sans option, Print ouvre la sienne (print.cmd). */

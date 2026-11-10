@@ -172,6 +172,18 @@ export const montrer = (l: { file: string; args: string[] }): string =>
 /**
  * Studio fermé par son bouton « Tout arrêter et quitter » (décision de David, 09/11/2026) : le Studio lancé par le lanceur, prêt, qui
  * se termine de lui-même avec le code 0, entraîne l'arrêt de tout ce que le lanceur a démarré. Un Studio tombé (autre code) ou arrêté
- * par « Tout arrêter » (arrêt déjà en cours) ne le déclenche pas.
+ * par « Tout arrêter » (arrêt déjà en cours) ne le déclenche pas. LC2 : seulement si son journal montre que c'est bien ce bouton
+ * (`quitteParBouton`) ; un Studio qui sort seul avec le code 0 (« déjà lancé… cette fenêtre se ferme dans 5 s ») n'arrête rien.
  */
-export const toutArreterApres = (outil: Outil, code: number | null, pret: boolean): boolean => outil === 'studio' && code === 0 && pret;
+export const toutArreterApres = (outil: Outil, code: number | null, pret: boolean, parBouton: boolean): boolean => outil === 'studio' && code === 0 && pret && parBouton;
+
+/** Ligne écrite par le Studio de GLBInterpreter quand son bouton « Tout arrêter et quitter » l'arrête (`shutdown`), inchangé (R-1). */
+export const LIGNE_BOUTON_STUDIO = 'studio : arrêt (« Tout arrêter et quitter »)';
+/**
+ * Studio fermé par son bouton (LC2) : `.lanceur/journaux/studio.log` est celui de ce superviseur (en-tête « lancé par le lanceur
+ * (PID <superviseur>) », écrit par `demarrer`) et contient la ligne du bouton. Journal remplacé par un autre lancement : faux.
+ */
+export function quitteParBouton(journal: string, pidSuperviseur: number): boolean {
+  const entete = journal.split(/\r?\n/, 1)[0] ?? '';
+  return entete.startsWith('=== ') && entete.includes(`lancé par le lanceur (PID ${pidSuperviseur}) ===`) && journal.includes(LIGNE_BOUTON_STUDIO);
+}

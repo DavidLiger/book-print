@@ -8,8 +8,10 @@
 // arrête ses enfants directs quand il se termine, et un enfant « détaché » ouvrirait ses propres fenêtres de commande. Un outil qui ne
 // répond pas dans son délai, ou une configuration à corriger : fenêtre de message qui nomme l'outil et le journal. Tout va bien : rien.
 // Pages du Studio et de Print ouvertes par le lanceur, à chaque double-clic (`pages.ts`) : onglets existants d'abord, navigateur fermé
-// rouvert pour qu'il les restaure, nouvelles pages seulement s'il en manque. Studio fermé par son bouton « Tout arrêter et quitter » :
-// arrêt de tout (`toutArreterApres`).
+// ouvert directement sur les pages qui manquent (LC2), nouvelles pages seulement s'il en manque. Studio fermé par son bouton « Tout
+// arrêter et quitter », vu dans son journal (LC2) : arrêt de tout (`toutArreterApres`), aussitôt.
+// Un seul lancement à la fois (LC2) : verrou `.lanceur/lancement.json`, tenu de la sonde jusqu'à ce que tout soit prêt ; un second
+// double-clic attend, puis ne fait que retrouver ou ouvrir les pages. Un « Tout arrêter » en cours est attendu avant de lancer.
 //
 // arreter : arrête ce que les superviseurs notés dans `.lanceur/etat.json` ont lancé, et seulement eux : le Studio par son action
 // « quitter » (comme son bouton), puis l'arbre de chaque superviseur (`taskkill /T /F`). Un échec : fenêtre de message.
@@ -17,8 +19,8 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { aArreter, arbre, arretEnCours, lireEtat, lireMarque, modifierEtat, portsAVerifier, type Superviseur } from './etat';
-import { aLancer, LABELS, montrer, planLancement, toutArreterApres, type Lancement, type Outil } from './outils';
+import { aArreter, ARRET_MAX_MS, arbre, arretEnCours, LANCEMENT_MAX_MS, lireEtat, lireMarque, modifierEtat, portsAVerifier, prendreLancement, rendreLancement, type MarqueArret, type Superviseur } from './etat';
+import { aLancer, LABELS, montrer, planLancement, quitteParBouton, toutArreterApres, type Lancement, type Outil } from './outils';
 import { ouvrirPages, type OutilPage } from './pages';
 import { afficherMessage, attendre, lancerArret, listerProcessus, quitterStudio, repond, tuerArbre, vivant } from './systeme';
 
@@ -27,6 +29,7 @@ const LANCEUR_DIR = path.join(TOOL_ROOT, '.lanceur');
 const JOURNAUX = path.join(LANCEUR_DIR, 'journaux');
 const ETAT = path.join(LANCEUR_DIR, 'etat.json');
 const ARRET = path.join(LANCEUR_DIR, 'arret.json');
+const LANCEMENT = path.join(LANCEUR_DIR, 'lancement.json');
 const VBS = path.join(TOOL_ROOT, 'lanceur', 'lanceur.vbs');
 const JOURNAL = path.join(JOURNAUX, 'lanceur.log');
 const JOURNAL_MAX = 1024 * 1024;
@@ -64,8 +67,34 @@ function demarrer(l: Lancement): ChildProcess {
 }
 
 async function lancer(configPath: string): Promise<void> {
-  const plan = planLancement(configPath, TOOL_ROOT, process.execPath);
   note(`lancer (configuration : ${configPath})`);
+  const debut = Math.round(Date.now() - process.uptime() * 1000);
+  const moi: MarqueArret = { pid: process.pid, debut };
+  // Un seul lancement à la fois (LC2) : un second double-clic attend la fin du premier, puis sonde (tout répond : rien n'est lancé).
+  if (!prendreLancement(LANCEMENT, moi, Date.now(), vivant)) {
+    note(`lancement déjà en cours (${JSON.stringify(lireMarque(LANCEMENT))}) : attente de sa fin, rien n'est relancé`);
+    if (!(await attendre(async () => prendreLancement(LANCEMENT, moi, Date.now(), vivant), LANCEMENT_MAX_MS + 10_000, 1_000))) {
+      return message(['Lancement : un autre lancement ne se termine pas.', `Fichier : ${LANCEMENT}`, `Journal : ${JOURNAL}`]);
+    }
+    note('lancement précédent terminé : suite');
+  }
+  let suite: (() => Promise<void>) | null = null;
+  try {
+    suite = await demarrerTout(configPath, debut);
+  } finally {
+    rendreLancement(LANCEMENT, moi);
+  }
+  await suite?.();
+}
+
+/** Le lancement proprement dit, verrou tenu ; rend la supervision (attente de la fin des outils lancés), faite verrou rendu. */
+async function demarrerTout(configPath: string, debut: number): Promise<(() => Promise<void>) | null> {
+  // « Tout arrêter » en cours (LC2) : attendu, sinon il arrêterait ce qui va être lancé.
+  if (arretEnCours(lireMarque(ARRET), Date.now(), vivant)) {
+    note('« Tout arrêter » en cours : attente de sa fin avant de lancer');
+    await attendre(async () => !arretEnCours(lireMarque(ARRET), Date.now(), vivant), ARRET_MAX_MS, 500);
+  }
+  const plan = planLancement(configPath, TOOL_ROOT, process.execPath);
   for (const r of plan.refus) note(`refus : ${LABELS[r.outil]} : ${r.message}`);
   if (plan.refus.length) message(['Lancement : configuration à corriger.', ...plan.refus.map((r) => `${LABELS[r.outil]} : ${r.message}`), `Journal : ${JOURNAL}`]);
 
@@ -76,7 +105,6 @@ async function lancer(configPath: string): Promise<void> {
   /** Outil prêt (il répond sur son port) : tout de suite pour ceux qui tournaient déjà. */
   const pret = new Map<Outil, Promise<boolean>>([...deja].map((o) => [o, Promise.resolve(true)]));
 
-  const debut = Math.round(Date.now() - process.uptime() * 1000);
   const enCours = todo.map((l) => {
     const child = demarrer(l);
     let fini = false;
@@ -103,7 +131,9 @@ async function lancer(configPath: string): Promise<void> {
       return false;
     });
     pret.set(l.outil, estPret);
-    return { l, child, fin, estPret };
+    // Fin d'un outil vue aussitôt (LC2), même si les autres ne sont pas encore prêts : le 10/11, elle ne l'était qu'une fois ComfyUI prêt.
+    const reaction = fin.then((code) => finOutil(l.outil, code, estPret));
+    return { l, child, reaction };
   });
   if (enCours.length) {
     const moi: Superviseur = {
@@ -119,21 +149,34 @@ async function lancer(configPath: string): Promise<void> {
   for (const o of ['studio', 'print'] as const) if (pret.has(o) && (await pret.get(o))) avecPage.push(o);
   if (avecPage.length) await ouvrirPages(avecPage, note);
   await Promise.all(pret.values());
-  if (!enCours.length) return;
+  if (!enCours.length) return null;
+  return async () => {
+    await Promise.all(enCours.map((e) => e.reaction));
+    modifierEtat(ETAT, (s) => s.filter((x) => x.pid !== process.pid));
+    note('superviseur terminé : plus aucun outil lancé');
+  };
+}
 
-  await Promise.all(
-    enCours.map((e) =>
-      e.fin.then(async (code) => {
-        note(`${LABELS[e.l.outil]} terminé (code ${code})`);
-        if (!toutArreterApres(e.l.outil, code, await e.estPret)) return;
-        if (arretEnCours(lireMarque(ARRET), Date.now(), vivant)) return note('Studio fermé pendant « Tout arrêter » : rien de plus');
-        note('Studio fermé par « Tout arrêter et quitter » : arrêt de tout ce que le lanceur a démarré');
-        lancerArret(VBS);
-      }),
-    ),
-  );
-  modifierEtat(ETAT, (s) => s.filter((x) => x.pid !== process.pid));
-  note('superviseur terminé : plus aucun outil lancé');
+/** Fin d'un outil lancé : le Studio fermé par son bouton « Tout arrêter et quitter » (vu dans son journal) arrête tout, aussitôt. */
+async function finOutil(outil: Outil, code: number | null, estPret: Promise<boolean>): Promise<void> {
+  note(`${LABELS[outil]} terminé (code ${code})`);
+  if (outil !== 'studio') return;
+  let journal = '';
+  try {
+    journal = fs.readFileSync(journalDe('studio'), 'utf8');
+  } catch {
+    // journal illisible : pas le bouton
+  }
+  const parBouton = quitteParBouton(journal, process.pid);
+  if (!toutArreterApres(outil, code, await estPret, parBouton)) {
+    if (code === 0 && !parBouton) note('Studio fermé sans son bouton « Tout arrêter et quitter » (journal) : rien de plus');
+    return;
+  }
+  if (arretEnCours(lireMarque(ARRET), Date.now(), vivant)) return note('Studio fermé pendant « Tout arrêter » : rien de plus');
+  note('Studio fermé par « Tout arrêter et quitter » : arrêt de tout ce que le lanceur a démarré');
+  // Marque posée aussitôt (le processus d'arrêt la remplace en démarrant) : un double-clic dans l'intervalle attend l'arrêt.
+  fs.writeFileSync(ARRET, JSON.stringify({ pid: process.pid, debut: Date.now() }));
+  if (!lancerArret(VBS)) fs.rmSync(ARRET, { force: true });
 }
 
 async function arreter(): Promise<void> {

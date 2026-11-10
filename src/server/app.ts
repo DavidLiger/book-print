@@ -30,7 +30,7 @@ import { BadComfyRequest, candidateBytes, comfyActions, createComfyRuntime, depo
 import { BadImageRequest, depositIllustration, DEPOSIT_ROUTE, ILLUSTRATION_ACTIONS, illustrationBytes, UploadTooLarge } from './illustration-actions';
 import { BadPricingRequest, PRICING_ACTIONS } from './pricing-actions';
 import { BadRightsRequest, RIGHTS_ACTIONS } from './rights-actions';
-import { ACTION_HEADER, actionAllowed, hostAllowed, uploadAllowed } from './rules';
+import { ACTION_HEADER, actionAllowed, hostAllowed, navigateurIntegre, uploadAllowed } from './rules';
 import { BadSubjectRequest, IMPORT_MAX_BYTES, SUBJECT_ACTIONS, subjectPreviewHtml } from './subject-actions';
 import { LAYOUT_ACTIONS, layoutPreviewHtml } from './layout-actions';
 import { StyleRefused } from '../styles/read';
@@ -60,11 +60,14 @@ export const QUIT_ROUTE = '/api/quitter';
  * recharge. Un seul onglet actif, comme le studio (ST2) : un onglet qui se connecte remplace les autres, qui reçoivent `remplace`
  * et se mettent en veille. `onglet` est appelé à chaque connexion : `main.ts` n'ouvre pas de page si un onglet s'est reconnecté.
  * `TABS_ROUTE` donne le nombre d'onglets actifs au lanceur unique, qui ouvre lui-même les pages.
+ * LC2 : un onglet du navigateur intégré de Claude Desktop (`navigateurIntegre`) n'est pas compté (ni `onglet`, ni `TABS_ROUTE`), et
+ * un seul onglet actif par sorte de navigateur : il ne remplace que les onglets du navigateur intégré, les autres que les autres.
  */
 export const EVENTS_ROUTE = '/evenements';
 export const TABS_ROUTE = '/api/onglets';
 export type PrintServerOptions = { quitter?: () => void; onglet?: () => void };
-type Onglets = { instance: string; clients: Set<http.ServerResponse> };
+/** Clients du flux, avec leur sorte : navigateur intégré de Claude Desktop (`true`) ou autre navigateur (`false`). */
+type Onglets = { instance: string; clients: Map<http.ServerResponse, boolean> };
 const parcoursBody = z.strictObject({ dir: z.string().nullable() });
 
 type Json = Record<string, unknown>;
@@ -182,14 +185,16 @@ async function handle(
     if (req.method !== 'GET') return sendJson(res, 405, { error: 'GET attendu' }, { Allow: 'GET' });
     res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
     res.write(`retry: 1000\nevent: instance\ndata: ${onglets.instance}\n\n`);
-    for (const autre of onglets.clients) {
+    const integre = navigateurIntegre(req.headers['user-agent']);
+    for (const [autre, sorte] of [...onglets.clients]) {
+      if (sorte !== integre) continue;
       autre.write('event: remplace\ndata: {}\n\n');
       autre.end();
+      onglets.clients.delete(autre);
     }
-    onglets.clients.clear();
-    onglets.clients.add(res);
+    onglets.clients.set(res, integre);
     req.on('close', () => onglets.clients.delete(res));
-    options.onglet?.();
+    if (!integre) options.onglet?.();
     return;
   }
 
@@ -201,7 +206,7 @@ async function handle(
     );
     if (!allowed) return sendJson(res, 403, { error: `action refusée : POST JSON avec ${ACTION_HEADER}: 1 attendu` });
     if (!quitBody.safeParse(await readBody(req, MAX_BODY)).success) throw new HttpError(400, 'corps attendu : {}');
-    return sendJson(res, 200, { onglets: onglets.clients.size });
+    return sendJson(res, 200, { onglets: [...onglets.clients.values()].filter((integre) => !integre).length });
   }
 
   if (url === QUIT_ROUTE) {
@@ -300,7 +305,7 @@ async function handle(
 /** Le port vient du serveur lui-même, pour que les tests puissent écouter sur un port libre. La file de ComfyUI vit avec le serveur. */
 export function createPrintServer(configPath: string, comfy: ComfyRuntime = createComfyRuntime(), options: PrintServerOptions = {}): http.Server {
   const comfyRoutes = { ...comfyActions(comfy), ...styleActions(comfy) };
-  const onglets: Onglets = { instance: crypto.randomUUID(), clients: new Set() };
+  const onglets: Onglets = { instance: crypto.randomUUID(), clients: new Map() };
   const server = http.createServer((req, res) => {
     // Serveur fermé (LC1 : relance, « Tout arrêter et quitter ») : une connexion encore ouverte peut porter une dernière requête.
     const address = server.address() as AddressInfo | null;
@@ -325,7 +330,7 @@ export function createPrintServer(configPath: string, comfy: ComfyRuntime = crea
   // Les flux des onglets ne finissent jamais d'eux-mêmes : fermés avec le serveur.
   const close = server.close.bind(server);
   server.close = ((cb?: (err?: Error) => void) => {
-    for (const c of onglets.clients) c.end();
+    for (const c of onglets.clients.keys()) c.end();
     onglets.clients.clear();
     const r = close(cb);
     server.closeIdleConnections();

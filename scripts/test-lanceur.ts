@@ -6,13 +6,13 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { aArreter, arbre, arretEnCours, ecrireEtat, estUnSuperviseur, lireEtat, lireMarque, modifierEtat, parseEtat, portsAVerifier, type Proc, type Superviseur } from '../src/lanceur/etat';
-import { exeDe, pagesManquantes, URLS, valeurReg } from '../src/lanceur/pages';
-import { aLancer, COMFY_PYTHON, comfyArgsSchema, DEFAULT_COMFY_ARGS, DELAIS_MS, npmCliOf, planLancement, STUDIO_PORT, toutArreterApres, type Outil } from '../src/lanceur/outils';
+import { aArreter, arbre, arretEnCours, ecrireEtat, estUnSuperviseur, LANCEMENT_MAX_MS, lancementEnCours, lireEtat, lireMarque, modifierEtat, parseEtat, portsAVerifier, prendreLancement, rendreLancement, type Proc, type Superviseur } from '../src/lanceur/etat';
+import { commandeNavigateur, exeDe, pagesManquantes, URLS, valeurReg } from '../src/lanceur/pages';
+import { aLancer, COMFY_PYTHON, comfyArgsSchema, DEFAULT_COMFY_ARGS, DELAIS_MS, LIGNE_BOUTON_STUDIO, npmCliOf, planLancement, quitteParBouton, STUDIO_PORT, toutArreterApres, type Outil } from '../src/lanceur/outils';
 import { attendre, quitterStudio, repond, SONDE, texteMessage } from '../src/lanceur/systeme';
 import { createPrintServer, EVENTS_ROUTE, QUIT_ROUTE, TABS_ROUTE } from '../src/server/app';
 import { loadConfig } from '../src/server/config';
-import { pageAOuvrir, printOptions, PORT as PRINT_PORT, TAB_WAIT_MS } from '../src/server/rules';
+import { navigateurIntegre, pageAOuvrir, printOptions, PORT as PRINT_PORT, TAB_WAIT_MS } from '../src/server/rules';
 import { put, tempDir } from './fixtures/make-glbi';
 import { check, finish } from './test-lib';
 
@@ -386,14 +386,14 @@ await new Promise<void>((r) => fake.close(() => r()));
   check('pages manquantes : aucun pour un outil sans réponse ou absent', pagesManquantes({ studio: null, print: 2 }).length === 0 && pagesManquantes({}).length === 0);
   check('pages : adresses du Studio et de Print', URLS.studio === 'http://127.0.0.1:4000/' && URLS.print === 'http://127.0.0.1:4200/');
   const src = fs.readFileSync(path.join(TOOL_ROOT, 'src', 'lanceur', 'pages.ts'), 'utf8');
-  check('navigateur ouvert hors de l\'arbre du lanceur (cmd /c start), jamais fermé par l\'arrêt', src.includes('`start "" "${exe}"`') && src.includes("spawn('rundll32', ['url.dll,FileProtocolHandler', url]"));
+  check('navigateur ouvert hors de l\'arbre du lanceur (cmd /c start), jamais fermé par l\'arrêt', src.includes('`start "" "${exe}" ${') && src.includes("spawn('cmd.exe', ['/d', '/s', '/c', commandeNavigateur(exe, urls)]") && src.includes("spawn('rundll32', ['url.dll,FileProtocolHandler', url]"));
 }
 
 // Studio fermé par son bouton : tout s'arrête (LC1)
 {
-  check('Studio prêt, code 0 : tout s\'arrête', toutArreterApres('studio', 0, true));
-  check('Studio tombé (code 1), arrêté par taskkill, ou jamais prêt : rien de plus', !toutArreterApres('studio', 1, true) && !toutArreterApres('studio', null, true) && !toutArreterApres('studio', 0, false));
-  check('Print ou ComfyUI qui se ferment : rien de plus', !toutArreterApres('print', 0, true) && !toutArreterApres('comfyui', 0, true));
+  check('Studio prêt, code 0, fermé par son bouton : tout s\'arrête', toutArreterApres('studio', 0, true, true));
+  check('Studio tombé (code 1), arrêté par taskkill, ou jamais prêt : rien de plus', !toutArreterApres('studio', 1, true, true) && !toutArreterApres('studio', null, true, true) && !toutArreterApres('studio', 0, false, true));
+  check('Print ou ComfyUI qui se ferment : rien de plus', !toutArreterApres('print', 0, true, true) && !toutArreterApres('comfyui', 0, true, true));
   const vivants = new Set([42]);
   const vit = (pid: number) => vivants.has(pid);
   check('arrêt en cours : marque vivante et récente', arretEnCours({ pid: 42, debut: 1_000 }, 2_000, vit));
@@ -403,7 +403,108 @@ await new Promise<void>((r) => fake.close(() => r()));
   check('marque d\'arrêt : absente ou illisible, nulle ; lue sinon', lireMarque(f) === null && (fs.writeFileSync(f, '{'), lireMarque(f) === null) && (fs.writeFileSync(f, JSON.stringify({ pid: 3, debut: 4 })), json(lireMarque(f)) === json({ pid: 3, debut: 4 })));
   const main = fs.readFileSync(path.join(TOOL_ROOT, 'src', 'lanceur', 'main.ts'), 'utf8');
   check('Tout arrêter : marque posée pendant tout le travail, retirée à la fin', /fs\.writeFileSync\(ARRET,[\s\S]*try \{\s*await arreterTout\(\);\s*\} finally \{\s*fs\.rmSync\(ARRET/.test(main));
-  check('superviseur : Studio fermé hors d\'un arrêt en cours, arrêt de tout lancé', /toutArreterApres\(e\.l\.outil, code, await e\.estPret\)[\s\S]*arretEnCours\(lireMarque\(ARRET\), Date\.now\(\), vivant\)[\s\S]*lancerArret\(VBS\)/.test(main));
+  check('superviseur : Studio fermé hors d\'un arrêt en cours, arrêt de tout lancé', /toutArreterApres\(outil, code, await estPret, parBouton\)[\s\S]*arretEnCours\(lireMarque\(ARRET\), Date\.now\(\), vivant\)[\s\S]*lancerArret\(VBS\)/.test(main));
+}
+
+// LC2, défaut 1 : onglet du navigateur intégré de Claude Desktop, ni compté ni mis en veille par le navigateur de David (ni l'inverse)
+{
+  const UA_INTEGRE = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Claude/4.23118.0 Chrome/152.0.7977.167 Safari/537.36';
+  const UA_BRAVE = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
+  check('navigateur intégré : reconnu à Claude/<version> ou Electron/<version>', navigateurIntegre(UA_INTEGRE) && navigateurIntegre('x Electron/38.1.0 y'));
+  check('navigateur de David (Brave, Chrome) ou sans User-Agent : pas le navigateur intégré', !navigateurIntegre(UA_BRAVE) && !navigateurIntegre(undefined) && !navigateurIntegre('') && !navigateurIntegre('ClaudeBot'));
+  const d = decor(({ glbRoot, bat }) => ({ glbRoot, comfyLauncher: bat }));
+  let vus = 0;
+  const s = createPrintServer(d.configPath, undefined, { onglet: () => void vus++ });
+  await new Promise<void>((r) => s.listen(0, '127.0.0.1', r));
+  const port = (s.address() as AddressInfo).port;
+  type Flux = { res: http.IncomingMessage; texte: () => string; fini: () => boolean };
+  const ouvrir = (ua: string) =>
+    new Promise<Flux>((resolve, reject) => {
+      const r = http.request({ host: '127.0.0.1', port, path: EVENTS_ROUTE, headers: { host: `127.0.0.1:${port}`, 'user-agent': ua } }, (res) => {
+        let t = '';
+        let f = false;
+        res.setEncoding('utf8');
+        res.on('data', (x: string) => (t += x));
+        res.once('end', () => (f = true));
+        res.once('data', () => resolve({ res, texte: () => t, fini: () => f }));
+      });
+      r.on('error', reject);
+      r.end();
+    });
+  const compte = () =>
+    new Promise<number>((resolve, reject) => {
+      const r = http.request({ host: '127.0.0.1', port, path: TABS_ROUTE, method: 'POST', headers: { host: `127.0.0.1:${port}`, origin: `http://127.0.0.1:${port}`, 'content-type': 'application/json', 'x-book-print': '1' } }, (res) => {
+        let b = '';
+        res.on('data', (x) => (b += x));
+        res.on('end', () => resolve(JSON.parse(b).onglets));
+      });
+      r.on('error', reject);
+      r.end('{}');
+    });
+  const pause = () => new Promise((r) => setTimeout(r, 150));
+  const integre1 = await ouvrir(UA_INTEGRE);
+  check('onglet du navigateur intégré seul : compté 0 pour le lanceur, connexion non signalée (attente de print.cmd)', (await compte()) === 0 && vus === 0);
+  const brave1 = await ouvrir(UA_BRAVE);
+  await pause();
+  check('onglet de Brave ouvert ensuite : compté 1, signalé ; l\'onglet intégré reste connecté, sans veille', (await compte()) === 1 && vus === 1 && !integre1.fini() && !integre1.texte().includes('remplace'));
+  const integre2 = await ouvrir(UA_INTEGRE);
+  await pause();
+  check('second onglet intégré : remplace le premier intégré seulement, Brave reste actif', integre1.fini() && integre1.texte().includes('event: remplace') && !brave1.fini() && (await compte()) === 1 && vus === 1);
+  const brave2 = await ouvrir(UA_BRAVE);
+  await pause();
+  check('second onglet de Brave : remplace le premier de Brave seulement, l\'intégré reste connecté', brave1.fini() && brave1.texte().includes('event: remplace') && !integre2.fini() && (await compte()) === 1 && vus === 2);
+  brave2.res.destroy();
+  await pause();
+  check('onglet de Brave fermé : compte 0 même avec l\'onglet intégré ouvert', (await compte()) === 0 && !integre2.fini());
+  await new Promise<void>((r) => s.close(() => r()));
+}
+
+// LC2, défaut 2 : navigateur fermé, ouvert directement sur les pages qui manquent (plus de restauration attendue)
+{
+  const exe = 'C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe';
+  check('navigateur fermé : une seule commande, le programme et chaque page manquante entre guillemets', commandeNavigateur(exe, [URLS.studio, URLS.print]) === `start "" "${exe}" "http://127.0.0.1:4000/" "http://127.0.0.1:4200/"`);
+  const src = fs.readFileSync(path.join(TOOL_ROOT, 'src', 'lanceur', 'pages.ts'), 'utf8');
+  check('navigateur fermé : ouvert sur les pages manquantes, sans attente de restauration', /navigateurLance\(nav\.image\)\) \{\s*const manquent = pagesManquantes\(avant\);[\s\S]*demarrerNavigateur\(nav\.exe, manquent\.map\(\(o\) => URLS\[o\]\)\);[\s\S]*return note\(/.test(src) && !src.includes('ATTENTE_RESTAURATION_MS') && !src.includes('sans adresse pour'));
+}
+
+// LC2, défaut 3 : Studio fermé par son bouton vu dans son journal ; un seul lancement à la fois ; « Tout arrêter » attendu ; fin vue aussitôt
+{
+  const journal = (pid: number, bouton: boolean) =>
+    `=== Studio de GLBInterpreter — 10/11/2026 11:03:13 — lancé par le lanceur (PID ${pid}) ===\r\n"node.exe" npm-cli.js run studio\r\n\r\nstudio : http://127.0.0.1:4000/ (repo D:\\x, PID 1316)\r\n${bouton ? `${LIGNE_BOUTON_STUDIO} : arrêt des processus gérés…\r\nstudio : arrêté\r\n` : ''}`;
+  check('bouton du Studio : ligne du bouton dans le journal de ce superviseur', quitteParBouton(journal(13908, true), 13908));
+  check('Studio sorti seul (code 0 sans le bouton, par exemple « déjà lancé ») : pas le bouton', !quitteParBouton(journal(13908, false), 13908) && !quitteParBouton('', 13908));
+  check('journal remplacé par un autre lancement (autre PID) : pas le bouton de ce Studio', !quitteParBouton(journal(13712, true), 13908) && !quitteParBouton(journal(139080, true), 13908));
+  check('Studio prêt, code 0, sans le bouton : rien de plus', !toutArreterApres('studio', 0, true, false));
+
+  const vivants = new Set([42, 43]);
+  const vit = (pid: number) => vivants.has(pid);
+  check('lancement en cours : marque vivante et récente ; sinon non', lancementEnCours({ pid: 42, debut: 1_000 }, 2_000, vit) && !lancementEnCours(null, 2_000, vit) && !lancementEnCours({ pid: 7, debut: 1_000 }, 2_000, vit) && !lancementEnCours({ pid: 42, debut: 0 }, LANCEMENT_MAX_MS + 1, vit));
+  const dir = tempDir();
+  const f = path.join(dir, '.lanceur', 'lancement.json');
+  const now = Date.now();
+  const a = { pid: 42, debut: now };
+  const b = { pid: 43, debut: now + 5 };
+  check('verrou : pris par le premier lancement, marque écrite', prendreLancement(f, a, now, vit) && json(lireMarque(f)) === json(a));
+  check('verrou : refusé au second pendant le premier (second double-clic)', !prendreLancement(f, b, now + 1_000, vit) && json(lireMarque(f)) === json(a));
+  rendreLancement(f, b);
+  check('verrou : un autre lancement ne le rend pas', json(lireMarque(f)) === json(a));
+  rendreLancement(f, a);
+  check('verrou : rendu par son lancement, repris ensuite', !fs.existsSync(f) && prendreLancement(f, b, now + 2_000, vit) && json(lireMarque(f)) === json(b));
+  vivants.delete(43);
+  check('verrou : lancement mort, repris', prendreLancement(f, a, now + 3_000, vit) && json(lireMarque(f)) === json(a));
+  check('verrou : lancement trop long (plus de 5 min), repris', prendreLancement(f, { pid: 42, debut: now + 1 }, now + LANCEMENT_MAX_MS + 10, vit));
+  fs.writeFileSync(f, '');
+  check('verrou : marque illisible récente (en cours d\'écriture), refusé', !prendreLancement(f, a, Date.now(), vit));
+  const vieux = new Date(Date.now() - 60_000);
+  fs.utimesSync(f, vieux, vieux);
+  check('verrou : marque illisible depuis plus de 5 s, reprise', prendreLancement(f, a, Date.now(), vit) && json(lireMarque(f)) === json(a));
+
+  const main = fs.readFileSync(path.join(TOOL_ROOT, 'src', 'lanceur', 'main.ts'), 'utf8');
+  check('lancer : verrou pris avant la sonde, attente du lancement précédent, rendu à la fin du démarrage', /if \(!prendreLancement\(LANCEMENT, moi, Date\.now\(\), vivant\)\) \{[\s\S]*await attendre\(async \(\) => prendreLancement\(LANCEMENT, moi, Date\.now\(\), vivant\)[\s\S]*try \{\s*suite = await demarrerTout\(configPath, debut\);\s*\} finally \{\s*rendreLancement\(LANCEMENT, moi\);\s*\}\s*await suite\?\.\(\);/.test(main) && main.indexOf('const sondes =') > main.indexOf('async function demarrerTout'));
+  check('lancer : « Tout arrêter » en cours attendu avant la sonde', /async function demarrerTout[\s\S]*if \(arretEnCours\(lireMarque\(ARRET\), Date\.now\(\), vivant\)\) \{[\s\S]*await attendre\(async \(\) => !arretEnCours\(lireMarque\(ARRET\), Date\.now\(\), vivant\), ARRET_MAX_MS, 500\);[\s\S]*const sondes =/.test(main));
+  const iReaction = main.indexOf('const reaction = fin.then((code) => finOutil(l.outil, code, estPret));');
+  check('superviseur : fin d\'un outil vue aussitôt, avant que les autres soient prêts', iReaction > 0 && iReaction < main.indexOf('await Promise.all(pret.values());') && main.includes('await Promise.all(enCours.map((e) => e.reaction));'));
+  check('superviseur : bouton du Studio lu dans son journal, marque d\'arrêt posée avant l\'arrêt', /const parBouton = quitteParBouton\(journal, process\.pid\);/.test(main) && /fs\.writeFileSync\(ARRET, JSON\.stringify\(\{ pid: process\.pid, debut: Date\.now\(\) \}\)\);\s*if \(!lancerArret\(VBS\)\) fs\.rmSync\(ARRET/.test(main));
 }
 
 finish('lanceur');

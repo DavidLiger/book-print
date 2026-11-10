@@ -108,6 +108,43 @@ export const ARRET_MAX_MS = 120_000;
 export function arretEnCours(marque: MarqueArret | null, maintenant: number, vivant: (pid: number) => boolean): boolean {
   return !!marque && maintenant - marque.debut < ARRET_MAX_MS && vivant(marque.pid);
 }
+/**
+ * Lancement en cours (LC2) : `.lanceur/lancement.json`, même forme que la marque d'arrêt, tenu par un seul `lancer` à la fois, de la
+ * sonde des ports jusqu'à ce que tous ses outils soient prêts et les pages ouvertes. Un second double-clic attend qu'il soit rendu,
+ * puis sonde : tout répond, il ne lance rien et ne fait que retrouver ou ouvrir les pages. Marque d'un processus mort ou plus vieille
+ * que `LANCEMENT_MAX_MS` (délai de ComfyUI, pages, marge) : reprise.
+ */
+export const LANCEMENT_MAX_MS = 300_000;
+export function lancementEnCours(marque: MarqueArret | null, maintenant: number, vivant: (pid: number) => boolean): boolean {
+  return !!marque && maintenant - marque.debut < LANCEMENT_MAX_MS && vivant(marque.pid);
+}
+/**
+ * Prise du verrou de lancement : création exclusive du fichier. Occupé par un lancement en cours : `false`. Marque périmée, ou illisible
+ * depuis plus de 5 s : retirée, puis une seule nouvelle tentative (deux reprises simultanées : une seule gagne).
+ */
+export function prendreLancement(file: string, moi: MarqueArret, maintenant: number, vivant: (pid: number) => boolean): boolean {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  for (let essai = 0; essai < 2; essai++) {
+    try {
+      fs.writeFileSync(file, JSON.stringify(moi), { flag: 'wx' });
+      return true;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
+    }
+    if (essai > 0) return false;
+    const marque = lireMarque(file);
+    // Illisible : peut-être en cours d'écriture par un autre lancement ; périmée seulement au bout de 5 s.
+    const age = maintenant - (fs.statSync(file, { throwIfNoEntry: false })?.mtimeMs ?? 0);
+    if (marque ? lancementEnCours(marque, maintenant, vivant) : age < ECART_DEBUT_MS) return false;
+    fs.rmSync(file, { force: true });
+  }
+  return false;
+}
+/** Verrou rendu : seulement s'il est encore le sien (même PID, même heure de départ). */
+export function rendreLancement(file: string, moi: MarqueArret): void {
+  const m = lireMarque(file);
+  if (m && m.pid === moi.pid && m.debut === moi.debut) fs.rmSync(file, { force: true });
+}
 export function lireMarque(file: string): MarqueArret | null {
   try {
     const v = JSON.parse(fs.readFileSync(file, 'utf8')) as Partial<MarqueArret>;
