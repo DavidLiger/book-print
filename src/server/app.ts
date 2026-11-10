@@ -32,6 +32,7 @@ import { BadPricingRequest, PRICING_ACTIONS } from './pricing-actions';
 import { BadRightsRequest, RIGHTS_ACTIONS } from './rights-actions';
 import { ACTION_HEADER, actionAllowed, hostAllowed, uploadAllowed } from './rules';
 import { BadSubjectRequest, IMPORT_MAX_BYTES, SUBJECT_ACTIONS, subjectPreviewHtml } from './subject-actions';
+import { LAYOUT_ACTIONS, layoutPreviewHtml } from './layout-actions';
 import { StyleRefused } from '../styles/read';
 import { BadStyleRequest, depositEssai, depositReference, ESSAI_ROUTE, previewBytes, REFERENCE_ROUTE, styleActions } from './style-actions';
 
@@ -142,7 +143,7 @@ const ACTIONS: Record<string, (body: unknown, configPath: string) => Json | Prom
   ...Object.fromEntries(
     Object.entries({ ...PRICING_ACTIONS, ...ESSAI_ACTIONS, ...GABARIT_ACTIONS }).map(([route, run]) => [route, (body: unknown, configPath: string) => run(body, configured(loadConfig(configPath)).dataRoot)]),
   ),
-  ...Object.fromEntries(Object.entries({ ...SUBJECT_ACTIONS, ...ILLUSTRATION_ACTIONS, ...RIGHTS_ACTIONS }).map(([route, run]) => [route, (body: unknown, configPath: string) => run(body, configured(loadConfig(configPath)))])),
+  ...Object.fromEntries(Object.entries({ ...SUBJECT_ACTIONS, ...LAYOUT_ACTIONS, ...ILLUSTRATION_ACTIONS, ...RIGHTS_ACTIONS }).map(([route, run]) => [route, (body: unknown, configPath: string) => run(body, configured(loadConfig(configPath)))])),
 };
 
 async function handle(
@@ -251,6 +252,14 @@ async function handle(
     if (req.method !== 'GET') return sendJson(res, 405, { error: 'GET attendu' }, { Allow: 'GET' });
     const query = new URL(req.url ?? '/', 'http://local').searchParams;
     const html = subjectPreviewHtml(query.get('dir'), query.get('subject'), configured(loadConfig(configPath)));
+    return send(res, 200, html, 'text/html; charset=utf-8', { 'Content-Security-Policy': PREVIEW_CSP });
+  }
+
+  // Mise en page d'un sujet (ED1) : le même HTML que le PDF, au texte de remplissage maximal, comme l'aperçu d'un gabarit.
+  if (url === '/apercu-mise-en-page') {
+    if (req.method !== 'GET') return sendJson(res, 405, { error: 'GET attendu' }, { Allow: 'GET' });
+    const query = new URL(req.url ?? '/', 'http://local').searchParams;
+    const html = layoutPreviewHtml(query.get('dir'), query.get('subject'), configured(loadConfig(configPath)));
     return send(res, 200, html, 'text/html; charset=utf-8', { 'Content-Security-Policy': PREVIEW_CSP });
   }
 

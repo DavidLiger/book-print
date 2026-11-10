@@ -258,7 +258,7 @@ function pngPixels(buf: Buffer): Buffer {
   check('chiffre-clé : 40 pt mesurés', measures.texts.filter((t) => t.zone === 'chiffre').every((t) => Math.abs(t.sizePt - 40) < 0.05));
   check('pictogramme : boîte SVG mesurée pour C3', measures.boxes.some((b) => b.zone === 'picto' && b.kind === 'svg'));
   const control = Object.fromEntries((await controlTemplate(preview)).map((c) => [c.id, c]));
-  check('contrôle d’un gabarit : C3, C4, C6, C7, C8, C12, tous verts', Object.keys(control).join() === 'C3,C4,C6,C7,C8,C12' && Object.values(control).every((c) => c.level === 'ok'), control);
+  check('contrôle d’un gabarit : C3, C4, C6, C7, C8, C12, C17, tous verts', Object.keys(control).join() === 'C3,C4,C6,C7,C8,C12,C17' && Object.values(control).every((c) => c.level === 'ok'), control);
   // Refus mesurés
   const t = fiveTypes() as Dict;
   t.sheets[0].zones[4].constraints.maxChars = 2000;
@@ -326,6 +326,8 @@ function pngPixels(buf: Buffer): Buffer {
   const merged = mergeImport(makeResearch(), null, subject, expectedBlocks(TEMPLATE_2A, read.style.fiche, 'fr'));
   updateSubject(dataRoot, BOOK_ID, 'alpha', () => ({ subject: merged.subject, research: merged.research }));
   storeIllustration(dataRoot, BOOK_ID, 'alpha', 'illustration', await cleanPng(makePng(60, 90, 3, () => [10, 20, 30])));
+  // Sujet d'avant ED1, comme le raptor : sans sa copie, il suit le gabarit de la collection (GB1). Un sujet créé depuis ED1 a sa copie (MP-24).
+  fs.rmSync(path.join(dataRoot, BOOK_ID, 'subjects', 'alpha', 'layout.json'));
   const facts = () => readFacts({ ok: true, config: { glbRoot, dataRoot } }, BOOK_DIR);
   const subjectOf = (f: ParcoursFacts) => f.subjects[0]!;
   const sujetStep = (f: ParcoursFacts, id: string) => computeParcours(f).subjects[0]!.steps.find((s) => s.id === id)!;
@@ -361,7 +363,7 @@ function pngPixels(buf: Buffer): Buffer {
   // Gabarit invalide, puis absent.
   fs.writeFileSync(gabarit(dataRoot, '2A.json'), '{ "id": "2A" }');
   f = facts();
-  check('gabarit invalide : le sujet en erreur, gabarit nommé', subjectOf(f).templateError!.includes('Gabarit 2A invalide') && sujetStep(f, 'sujet-recherche').state === 'erreur');
+  check('gabarit invalide : le sujet en erreur, gabarit nommé', subjectOf(f).templateError!.includes('Gabarit 2A invalide') && sujetStep(f, 'sujet-mise-en-page').state === 'erreur' && sujetStep(f, 'sujet-recherche').state === 'verrouillee');
   check('gabarit invalide : Gabarits en erreur, fichier nommé', bookStep(f, 'gabarits').state === 'erreur' && bookStep(f, 'gabarits').reasons[0]!.startsWith('collection/gabarits/2A.json'));
   check('gabarit invalide : Sujets en erreur', bookStep(f, 'sujets').state === 'erreur' && bookStep(f, 'sujets').reasons[0]!.includes('Gabarit 2A invalide'));
   fs.rmSync(gabarit(dataRoot, '2A.json'));
@@ -388,7 +390,7 @@ function pngPixels(buf: Buffer): Buffer {
     folder: { exists: true, error: null, printBook: 'ok', printBookError: null },
     pricing: { error: null, retained: true, retainedErrors: [], deviation: [], bookAlert: null },
     collection: { exists: true, error: null },
-    gabarits: { error: null, valid: 2, invalid: [], orphans: [] },
+    gabarits: { error: null, valid: 2, invalid: [], orphans: [], overlaps: [] },
     essai: { renderError: null, control: { dateMs: 2 * LONG_AGO, errors: [], alerts: [] }, controlError: null, styleMs: LONG_AGO, printBookMs: LONG_AGO, templateMs: LONG_AGO, bookChanged: null },
     droits: { error: null, missing: 0, faults: [], toCheck: [] },
     workflows: { error: null, todo: [], faults: [] },
@@ -406,7 +408,7 @@ function pngPixels(buf: Buffer): Buffer {
   check('Gabarits : validée', at(run(), 'gabarits').state === 'validee');
   const none = run((f) => { f.gabarits.valid = 0; });
   check('Gabarits : aucun gabarit, à faire, motif', at(none, 'gabarits').state === 'a-faire' && at(none, 'gabarits').reasons[0]!.includes('Ajouter les gabarits livrés'));
-  check('Gabarits à faire : Essai et Sujets verrouillés, renvoi à Gabarits', ['essai', 'sujets'].every((id) => at(none, id).state === 'verrouillee' && at(none, id).reasons[0] === 'Valider d\'abord « Gabarits ».'));
+  check('Gabarits à faire : Essai et Sujets verrouillés, renvoi à Mises en page', ['essai', 'sujets'].every((id) => at(none, id).state === 'verrouillee' && at(none, id).reasons[0] === 'Valider d\'abord « Mises en page ».'));
   check('Gabarits à faire : Droits reste ouvert', at(none, 'droits').state === 'validee');
   const invalid = run((f) => { f.gabarits.invalid = ['collection/gabarits/4A.json : JSON invalide']; });
   check('Gabarits : un fichier invalide, erreur, fichier nommé', at(invalid, 'gabarits').state === 'erreur' && at(invalid, 'gabarits').reasons[0]!.includes('4A.json') && at(invalid, 'essai').state === 'verrouillee');
@@ -480,7 +482,7 @@ function pngPixels(buf: Buffer): Buffer {
   check('route : GET d’une action, 405', (await request({ method: 'GET', path: '/api/gabarits/state' })).status === 405);
   const control = await post('/api/gabarits/controle', { bookId: BOOK_ID, id: '2A' });
   const ids = JSON.parse(control.body).checks?.map((c: Dict) => c.id).join();
-  check('route : contrôle, six contrôles, rien écrit', control.status === 200 && ids === 'C3,C4,C6,C7,C8,C12' && fs.readdirSync(path.join(dataRoot, BOOK_ID, 'export')).length === 0, control.body.slice(0, 300));
+  check('route : contrôle, sept contrôles, rien écrit', control.status === 200 && ids === 'C3,C4,C6,C7,C8,C12,C17' && fs.readdirSync(path.join(dataRoot, BOOK_ID, 'export')).length === 0, control.body.slice(0, 300));
   check('aucune écriture dans GLBInterpreter', !fs.readdirSync(glbRoot, { recursive: true, encoding: 'utf8' }).some((n) => n.includes('gabarit')));
   await new Promise((resolve) => server.close(resolve));
 }

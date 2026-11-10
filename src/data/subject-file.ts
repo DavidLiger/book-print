@@ -9,7 +9,11 @@ import { glbiIdSchema, slugSchema, WINDOWS_RESERVED } from '../schema/common';
 import { printBookSchema, type PrintBook } from '../schema/print-book';
 import { storedResearchSchema, type StoredResearch } from '../schema/research';
 import { subjectSchema, type Subject } from '../schema/subject';
+import { copyModel, LAYOUT_FILE } from '../layout/files';
+import { formatLabel, formatOf, sameFormat } from '../layout/model';
+import { subjectLayoutSchema, type SubjectLayout } from '../layout/schema';
 import { FIRST_SUBJECT_PAGE, templateFits } from '../templates';
+import { GeometryRefused } from '../templates/geometry';
 import { readTemplates, templateOf } from '../templates/files';
 import { readCollection } from './collection';
 import { writeAtomic } from './atomic';
@@ -83,6 +87,16 @@ export function readSubject(dataRoot: string, bookId: string, id: string): Subje
   return subject;
 }
 
+/** `layout.json` du sujet (ED1) : `null` pour un sujet créé avant ED1, qui garde le gabarit de sa collection. */
+export function readSubjectLayout(dataRoot: string, bookId: string, id: string): SubjectLayout | null {
+  const dir = subjectFolder(dataRoot, bookId, id);
+  if (!dir) return null;
+  const label = `${bookId}/subjects/${id}/${LAYOUT_FILE}`;
+  const layout = readJsonFile(path.join(dir, LAYOUT_FILE), label, subjectLayoutSchema);
+  if (layout && layout.pages !== readSubject(dataRoot, bookId, id).pages) throw new SubjectRefused(`${label} a ${layout.pages} pages, le sujet en a ${readSubject(dataRoot, bookId, id).pages}. Le fichier est conservé tel quel.`);
+  return layout;
+}
+
 export function readResearch(dataRoot: string, bookId: string, id: string): StoredResearch | null {
   const dir = subjectFolder(dataRoot, bookId, id);
   if (!dir) return null;
@@ -116,7 +130,7 @@ export interface NewSubject {
 }
 
 /** `scenes` : les scènes lues dans GLBInterpreter. Le sujet d'abord, la liste du livre ensuite : une coupure laisse un dossier, jamais une entrée sans dossier. */
-export function createSubject(dataRoot: string, bookId: string, input: NewSubject, scenes: string[], themes: string[]): Subject {
+export function createSubject(dataRoot: string, bookId: string, input: NewSubject, scenes: string[], themes: string[], now = new Date()): Subject {
   const { dir, book } = requirePrintBook(dataRoot, bookId);
   if (!scenes.includes(input.sceneId)) throw new SubjectRefused(`Scène inconnue de GLBInterpreter : ${input.sceneId}.`);
   const id = subjectIdFor(input.sceneId);
@@ -127,9 +141,12 @@ export function createSubject(dataRoot: string, bookId: string, input: NewSubjec
   }
   if (!themes.includes(input.theme)) throw new SubjectRefused(`Thème inconnu : ${input.theme}.`);
   // Les gabarits sont relus dans la collection (GB1) : un gabarit absent ou invalide est refusé, nommé.
-  const found = templateOf(readTemplates(dataRoot, readCollection(dataRoot)?.style ?? null), input.template);
+  const collection = readCollection(dataRoot);
+  const found = templateOf(readTemplates(dataRoot, collection?.style ?? null), input.template);
   if ('error' in found) throw new SubjectRefused(found.error);
   const { template } = found;
+  const format = formatOf(template);
+  if (format && !sameFormat(template, book.edition.trim)) throw new SubjectRefused(`La mise en page ${input.template} est faite pour ${formatLabel(format)} : le livre est en ${formatLabel(book.edition.trim)}.`);
   if (template.pages !== input.pages) throw new SubjectRefused(`Le gabarit ${input.template} a ${template.pages} pages, pas ${input.pages}.`);
   const firstPage = firstPageOf(dataRoot, book, id);
   if (!templateFits(template, firstPage)) throw new SubjectRefused(`Le gabarit ${input.template} ne peut pas commencer en page ${firstPage}.`);
@@ -153,7 +170,16 @@ export function createSubject(dataRoot: string, bookId: string, input: NewSubjec
     illustrations: [],
     status: 'brouillon',
   });
+  // La copie de la mise en page d'abord (ED1) : un sujet n'existe jamais sans elle. Une version 1 y est convertie, au format du livre.
+  let copy;
+  try {
+    copy = copyModel(template, found.sha256, book.edition.trim, collection!.style.margins, firstPage, now);
+  } catch (e) {
+    if (e instanceof GeometryRefused) throw new SubjectRefused(e.message);
+    throw e;
+  }
   fs.mkdirSync(folder);
+  writeAtomic(folder, LAYOUT_FILE, json(copy));
   writeAtomic(folder, SUBJECT_FILE, json(subject));
   const updated = printBookSchema.parse({ ...book, subjects: [...book.subjects, id] });
   writeAtomic(dir, 'print-book.json', json(updated));

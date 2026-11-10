@@ -8,6 +8,7 @@ import { readSubject, SubjectRefused } from '../data/subject-file';
 import { controlTemplate, templatePreview } from '../render/gabarit';
 import { RenderRefused } from '../render/html';
 import { slugSchema, TEMPLATE_ID_PATTERN } from '../schema/common';
+import { formatLabel, formatOf, sameFormat, versionOf } from '../layout/model';
 import { addDeliveredTemplates, readTemplates, TEMPLATES_DIR } from '../templates/files';
 
 export class BadGabaritRequest extends Error {}
@@ -49,7 +50,21 @@ function state(dataRoot: string, bookId: string): Json {
     folder: `collection/${TEMPLATES_DIR}/`,
     present: library.present,
     error: library.error,
-    templates: library.entries.map((e) => ({ id: e.id, file: e.file, pages: e.template?.pages ?? null, start: e.template?.start ?? null, error: e.error, subjects: uses.get(e.id) ?? [] })),
+    templates: library.entries.map((e) => {
+      const format = e.template ? formatOf(e.template) : null;
+      return {
+        id: e.id,
+        file: e.file,
+        pages: e.template?.pages ?? null,
+        start: e.template?.start ?? null,
+        error: e.error,
+        subjects: uses.get(e.id) ?? [],
+        version: e.template ? versionOf(e.template) : null,
+        format: format ? formatLabel(format) : null,
+        // Une mise en page d'un autre format est listée, sans être en erreur ni proposée pour ce livre (ED1).
+        otherFormat: e.template ? !sameFormat(e.template, book.edition.trim) : false,
+      };
+    }),
     themes: Object.keys(collection.style.palette.themes),
     theme: collection.style.variants.rotation[0],
   };

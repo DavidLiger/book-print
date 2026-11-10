@@ -80,7 +80,9 @@ export const MEASURE_SCRIPT = `(() => {
       for (const fill of zone.querySelectorAll('[data-fill]')) {
         const info = fill.closest('[data-item]');
         const r = fill.getBoundingClientRect();
-        overflow(info ? info.dataset.item : null, Math.max(over(r, zoneRect), info ? over(r, info.getBoundingClientRect()) : 0, fill.scrollWidth - fill.clientWidth));
+        // Un cadre de texte plus petit que sa zone (le titre d'un bandeau, ED1) est la vraie limite du texte.
+        const holder = fill.closest('[data-cadre]');
+        overflow(info ? info.dataset.item : null, Math.max(over(r, holder && zone.contains(holder) ? holder.getBoundingClientRect() : zoneRect), info ? over(r, info.getBoundingClientRect()) : 0, fill.scrollWidth - fill.clientWidth));
       }
       const walker = document.createTreeWalker(zone, NodeFilter.SHOW_TEXT);
       for (let n = walker.nextNode(); n; n = walker.nextNode()) {

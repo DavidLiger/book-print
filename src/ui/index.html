@@ -114,8 +114,8 @@
 
     <section id="gabarits" class="panneau" aria-labelledby="t-gabarits" hidden>
       <div class="tete">
-        <h2 id="t-gabarits">Gabarits</h2>
-        <p class="note">Un fichier par gabarit dans <code>collection/gabarits/</code>, créé, modifié ou retiré à la main. Aperçu avec un texte de remplissage à la longueur maximale de chaque zone.</p>
+        <h2 id="t-gabarits">Mises en page</h2>
+        <p class="note">Un fichier par mise en page modèle dans <code>collection/gabarits/</code>, créé, modifié ou retiré à la main. Aperçu avec un texte de remplissage à la longueur maximale de chaque élément.</p>
         <button id="ga-ajouter" type="button" class="secondaire">Ajouter les gabarits livrés</button>
         <button id="ga-recharger" type="button" class="secondaire">Recharger</button>
       </div>
@@ -138,7 +138,7 @@
             <label><input type="checkbox" data-gabarit-layer="zones"> Zones</label>
           </fieldset>
           <div class="boutons"><button id="ga-controler" type="button">Contrôler</button></div>
-          <p class="note">C3, C4, C6, C7, C8 et le débordement, sur le texte de remplissage. Résultat non conservé.</p>
+          <p class="note">C3, C4, C6, C7, C8, le débordement et C17, sur le texte de remplissage. Résultat non conservé.</p>
           <div id="ga-resultat" class="liste"></div>
         </div>
       </div>
@@ -334,6 +334,35 @@
         </div>
         <div id="sujet-motifs" class="liste" hidden></div>
         <div id="sujet-erreur"></div>
+
+        <div id="sujet-mise-en-page" class="sous-panneau" hidden>
+          <div class="zone-gabarits">
+            <div id="mp-elements" class="liste"></div>
+            <div id="mp-cadre" class="cadre-apercu">
+              <div id="mp-echelle" class="echelle-apercu">
+                <iframe id="mp-page" class="cadre-page" title="Mise en page du sujet" sandbox scrolling="no"></iframe>
+                <svg id="mp-reperes" class="reperes" aria-hidden="true"></svg>
+              </div>
+            </div>
+            <div class="colonne">
+              <p id="mp-fichier" class="note"></p>
+              <fieldset>
+                <legend>Repères</legend>
+                <label><input type="checkbox" data-mise-layer="bleed"> Fond perdu</label>
+                <label><input type="checkbox" data-mise-layer="safe"> Zone de sécurité</label>
+                <label><input type="checkbox" data-mise-layer="fold"> Pli</label>
+                <label><input type="checkbox" data-mise-layer="zones"> Éléments</label>
+              </fieldset>
+              <div class="boutons">
+                <button id="mp-controler" type="button">Contrôler</button>
+                <button id="mp-recharger" type="button" class="secondaire">Recharger</button>
+              </div>
+              <p class="note">Texte de remplissage à la longueur maximale. La mise en page se modifie dans son fichier, à la main ; « Recharger » la relit.</p>
+              <div id="mp-message"></div>
+              <div id="mp-resultat" class="liste"></div>
+            </div>
+          </div>
+        </div>
 
         <div id="sujet-recherche" class="sous-panneau colonnes" hidden>
           <div class="colonne">

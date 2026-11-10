@@ -12,10 +12,10 @@ import { readCollection, type Collection } from '../data/collection';
 import { bookFolder, readPrintBook } from '../data/pricing-file';
 import type { PrintBook } from '../schema/print-book';
 import { readTemplates, templateOf, TEMPLATES_DIR } from '../templates/files';
-import type { Template } from '../templates/model';
-import { layoutTemplate, pageSize, type LayoutPage, type Trim } from '../templates/geometry';
+import { placeMiseEnPage, type MiseEnPage } from '../layout/model';
+import { pageSize, type LayoutPage, type Trim } from '../templates/geometry';
 import { FONT_PACK } from './fonts';
-import { fillerImages, fillerTexts } from './gabarit';
+import { fillerHeadings, fillerImages, fillerTexts } from './gabarit';
 import { applyBookFiche, renderHtml, RenderRefused } from './html';
 import { renderPdf } from './pdf';
 
@@ -43,12 +43,13 @@ export interface Essai {
 export const ESSAI_TEMPLATE_FILE = `collection/${TEMPLATES_DIR}/${ESSAI_TEMPLATE}.json`;
 
 /** `template` : le 2A de la collection. Une zone que le sujet d'essai ne connaît pas (2A modifié par David) reçoit le remplissage de l'aperçu d'un gabarit. */
-export function buildEssai(trim: Trim, collection: Collection, theme: string, template: Template): Essai {
+export function buildEssai(trim: Trim, collection: Collection, theme: string, template: MiseEnPage): Essai {
   const subject = essaiSubject(theme);
   if (subject.variant.mirror) throw new RenderRefused('Miroir : pas encore rendu, il viendra avec les gabarits suivants.');
-  const layout = layoutTemplate(template, trim, collection.style.margins, ESSAI_FIRST_PAGE);
+  const layout = placeMiseEnPage(template, trim, collection.style.margins, ESSAI_FIRST_PAGE);
   const content = essaiContent(theme, trim);
-  const filled = { ...content, texts: { ...fillerTexts(template), ...content.texts }, images: { ...fillerImages(template, trim), ...content.images } };
+  const headings = fillerHeadings(template);
+  const filled = { ...content, texts: { ...fillerTexts(template), ...content.texts }, images: { ...fillerImages(template, trim), ...content.images }, ...(Object.keys(headings).length ? { headings } : {}) };
   return { html: renderHtml(layout, trim, collection.style, filled, collection.pictos), layout, trim, theme };
 }
 

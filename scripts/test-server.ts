@@ -278,9 +278,9 @@ await new Promise((resolve) => server.close(resolve));
   const done = await json('/api/sujet/import', { ...body, content: JSON.stringify(makeResearch()) });
   check('import : écrit', done.imported === true && done.summary.claimsChanged === 3 && done.kept.length === 0, done);
   const again = await json('/api/sujet/import', { ...body, content: JSON.stringify(makeResearch()) });
-  check('second import : confirmation, rien d’écrit', again.needsConfirm === true && again.same === true && fs.readdirSync(path.join(data, BOOK_ID, 'subjects', 'alpha')).length === 2, again);
+  check('second import : confirmation, rien d’écrit', again.needsConfirm === true && again.same === true && fs.readdirSync(path.join(data, BOOK_ID, 'subjects', 'alpha')).length === 3, again);
   const replaced = await json('/api/sujet/import', { ...body, content: JSON.stringify(makeResearch()), confirm: true });
-  check('second import confirmé : anciens fichiers datés', replaced.kept.length === 2 && fs.readdirSync(path.join(data, BOOK_ID, 'subjects', 'alpha')).length === 4, replaced);
+  check('second import confirmé : anciens fichiers datés', replaced.kept.length === 2 && fs.readdirSync(path.join(data, BOOK_ID, 'subjects', 'alpha')).length === 5, replaced);
 
   // Relecture
   const view = await json('/api/sujet/state', body);

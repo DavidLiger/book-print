@@ -21,7 +21,7 @@ import { check, finish } from './test-lib';
 const LONG_AGO = 1_000_000;
 const goodSubject = (over: Partial<SubjectFacts> = {}): SubjectFacts => ({
   id: 'alpha', title: 'Alpha', error: null, status: 'relu', pages: 2, template: '2A', theme: 'foret',
-  templateError: null, blocksGap: { missing: [], extra: [] },
+  templateError: null, blocksGap: { missing: [], extra: [] }, miseEnPage: { source: 'layout.json', errors: [] },
   research: { state: 'ok', error: null }, blocks: { total: 7, valide: 7, aRelire: 0, aReprendre: 0 }, claims: { total: 3, propose: 0 },
   illustrations: { error: null, zones: 1, missing: 0, errors: [], alerts: [] }, ...over,
 });
@@ -31,7 +31,7 @@ const good = (): ParcoursFacts => ({
   folder: { exists: true, error: null, printBook: 'ok', printBookError: null },
   pricing: { error: null, retained: true, retainedErrors: [], deviation: [], bookAlert: null },
   collection: { exists: true, error: null },
-  gabarits: { error: null, valid: 1, invalid: [], orphans: [] },
+  gabarits: { error: null, valid: 1, invalid: [], orphans: [], overlaps: [] },
   essai: { renderError: null, control: { dateMs: 2 * LONG_AGO, errors: [], alerts: [] }, controlError: null, styleMs: LONG_AGO, printBookMs: LONG_AGO, templateMs: LONG_AGO, bookChanged: null },
   droits: { error: null, missing: 0, faults: [], toCheck: [] },
   workflows: { error: null, todo: [], faults: [] },
@@ -60,11 +60,12 @@ check('registre : Workflows exige Droits', STEPS.find((s) => s.id === 'workflows
 check('registre : Prix, Collection et Essai dépendent de l’étape précédente', bookSteps.slice(0, 4).every((s, i) => s.requires.join() === (bookSteps[i - 1]?.id ?? '')));
 check('registre : Sujets exige Gabarits et non Essai', STEPS.find((s) => s.id === 'sujets')!.requires.join() === 'gabarits');
 check('registre : Droits exige Collection', STEPS.find((s) => s.id === 'droits')!.requires.join() === 'collection');
-check('registre : second niveau, Illustrations entre Relecture et Aperçu', subjectSteps.map((s) => s.label).join() === 'Recherche,Relecture,Illustrations,Aperçu');
-check('registre : Illustrations exige Recherche', subjectSteps[2]!.requires.join() === 'sujet-recherche');
-check('registre : Aperçu exige Recherche, pas Relecture', subjectSteps[3]!.requires.join() === 'sujet-recherche');
+check('registre : second niveau, Mise en page d’abord, Illustrations entre Relecture et Aperçu', subjectSteps.map((s) => s.label).join() === 'Mise en page,Recherche,Relecture,Illustrations,Aperçu');
+check('registre : Recherche exige Mise en page (ED1)', subjectSteps[1]!.requires.join() === 'sujet-mise-en-page');
+check('registre : Illustrations exige Recherche', subjectSteps[3]!.requires.join() === 'sujet-recherche');
+check('registre : Aperçu exige Recherche, pas Relecture', subjectSteps[4]!.requires.join() === 'sujet-recherche');
 check('numéros 1 à 9', run().steps.map((s) => s.number).join() === '1,2,3,4,5,6,7,8,9');
-check('second niveau : numéroté à part', run().subjects[0]!.steps.map((s) => s.number).join() === '1,2,3,4');
+check('second niveau : numéroté à part', run().subjects[0]!.steps.map((s) => s.number).join() === '1,2,3,4,5');
 
 // Tout au vert
 check('tout est validé', states() === 'validee,validee,validee,validee,validee,validee,validee,validee,validee', states());
@@ -197,7 +198,7 @@ check('sans recherche : Relecture et Aperçu verrouillés', sub(noResearch, 'suj
 check('sans recherche : ouverture sur Recherche', levelOf(noResearch).open === 'sujet-recherche');
 const badResearch: Partial<SubjectFacts> = { research: { state: 'invalide', error: 'research.json invalide' } };
 check('Recherche : fichier invalide, erreur', sub(badResearch, 'sujet-recherche').state === 'erreur' && sub(badResearch, 'sujet-recherche').reasons[0] === 'research.json invalide');
-check('sujet illisible : Recherche en erreur', sub({ error: 'illisible' }, 'sujet-recherche').state === 'erreur');
+check('sujet illisible : Mise en page en erreur, Recherche verrouillée', sub({ error: 'illisible' }, 'sujet-mise-en-page').state === 'erreur' && sub({ error: 'illisible' }, 'sujet-recherche').state === 'verrouillee');
 const toRead: Partial<SubjectFacts> = { status: 'brouillon', blocks: { total: 7, valide: 4, aRelire: 2, aReprendre: 1 } };
 check('Relecture : blocs à relire et à reprendre', sub(toRead, 'sujet-relecture').state === 'a-faire' && sub(toRead, 'sujet-relecture').reasons[0] === '2 blocs à relire, 1 bloc à reprendre.', sub(toRead, 'sujet-relecture'));
 check('blocs à relire : Aperçu reste ouvert, pour voir un débordement', sub(toRead, 'sujet-apercu').state === 'a-faire');
@@ -337,11 +338,11 @@ check('fichiers : aucun sujet, Sujets à faire', stateOf('sujets').state === 'a-
   // Faits d'un sujet, lus sur les fichiers
   const facts = () => onDisk().subjects[0]!;
   check('sujet lu : titre de la scène, brouillon', facts().title === 'alpha fr' && facts().status === 'brouillon' && facts().template === '2A');
-  check('sujet lu : recherche absente', facts().steps[0]!.state === 'a-faire' && facts().steps[2]!.state === 'verrouillee');
+  check('sujet lu : mise en page validée, recherche absente', facts().steps[0]!.state === 'validee' && facts().steps[1]!.state === 'a-faire' && facts().steps[2]!.state === 'verrouillee', facts().steps);
   check('sujet lu : Sujets à faire', stateOf('sujets').state === 'a-faire');
   const research = path.join(dataRoot, BOOK_ID, 'subjects', 'alpha', 'research.json');
   put(dataRoot, `${BOOK_ID}/subjects/alpha/research.json`, '{');
-  check('research.json illisible : Recherche en erreur, Sujets non bloqué', facts().steps[0]!.state === 'erreur' && facts().error === null, facts());
+  check('research.json illisible : Recherche en erreur, Sujets non bloqué', facts().steps[1]!.state === 'erreur' && facts().error === null, facts());
   fs.rmSync(research);
   updateSubject(dataRoot, BOOK_ID, 'alpha', (d) => ({ ...d, subject: { ...d.subject, status: 'relu' } }));
   check('sujet relu : Sujets validé', stateOf('sujets').state === 'validee');
@@ -445,7 +446,7 @@ const post = (body: unknown, h: Record<string, string> = headers) => request(por
 
 const reply = await post({ dir: BOOK_DIR });
 const view = JSON.parse(reply.body);
-check('route : étapes et ouverture', reply.status === 200 && view.steps.length === 9 && view.open === 'workflows' && view.steps[6].reasons.join().includes('Déposer le workflow de génération') && view.steps[3].stateLabel === 'validée' && view.steps[4].stateLabel === 'validée' && view.subjects.length === 1 && view.subjects[0].steps.length === 4, view);
+check('route : étapes et ouverture', reply.status === 200 && view.steps.length === 9 && view.open === 'workflows' && view.steps[6].reasons.join().includes('Déposer le workflow de génération') && view.steps[3].stateLabel === 'validée' && view.steps[4].stateLabel === 'validée' && view.subjects.length === 1 && view.subjects[0].steps.length === 5, view);
 check('route : livre non choisi', JSON.parse((await post({ dir: null })).body).open === 'livre');
 check('route : GET refusé', (await request(port, { method: 'GET', path: '/api/parcours', headers })).status === 405);
 const { 'x-book-print': _h, ...noHeader } = headers;

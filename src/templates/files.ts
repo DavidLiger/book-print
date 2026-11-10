@@ -2,6 +2,7 @@
 // relu à chaque action comme `style.json` : David le crée, le modifie ou le retire à la main, sans patch ni redémarrage. Un gabarit invalide
 // est refusé seul, avec son erreur, et n'est jamais réécrit. Les gabarits livrés viennent de `src/templates/defaults/gabarits/` et ne sont
 // copiés que là où le fichier manque.
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,6 +11,8 @@ import { collectionFolder, CollectionRefused } from '../data/collection';
 import { ensureDir, writeNew, type WriteReport } from '../data/create-book';
 import type { Style } from '../schema/style';
 import { templatePages } from '../schema/common';
+import { elementsOf, isLayout, type MiseEnPage } from '../layout/model';
+import { layoutSchema } from '../layout/schema';
 import { templateSchema, type Template } from './model';
 
 export const TEMPLATES_DIR = 'gabarits';
@@ -20,9 +23,12 @@ export interface TemplateEntry {
   /** Le nom du fichier sans `.json` : l'identifiant attendu. */
   id: string;
   file: string;
-  template: Template | null;
+  /** Version 1 (GB1) ou version 2 (ED1). */
+  template: MiseEnPage | null;
   /** `null` : gabarit valide. */
   error: string | null;
+  /** SHA-256 des octets lus : l'empreinte notée dans la copie d'un sujet (ED1, `modele`). `null` pour un fichier qui n'est pas lu. */
+  sha256: string | null;
 }
 
 export interface TemplateLibrary {
@@ -34,24 +40,29 @@ export interface TemplateLibrary {
 }
 
 /** Ce que le style doit connaître : la couleur d'un encadré, un pictogramme. Vérifié à la lecture, le style étant relu lui aussi. */
-export function templateStyleFaults(template: Template, style: Pick<Style, 'palette' | 'pictos'>): string[] {
+export function templateStyleFaults(template: MiseEnPage, style: Pick<Style, 'palette' | 'pictos'>): string[] {
   const faults: string[] = [];
-  for (const zone of template.sheets.flatMap((s) => s.zones)) {
+  for (const zone of elementsOf(template)) {
     if (zone.encadre !== undefined && !Object.hasOwn(style.palette.boxes, zone.encadre)) faults.push(`${zone.id} : couleur d'encadré inconnue de palette.boxes, ${zone.encadre}`);
     if (zone.picto !== undefined && !Object.hasOwn(style.pictos, zone.picto)) faults.push(`${zone.id} : pictogramme inconnu de style.pictos, ${zone.picto}`);
+    if (zone.icone !== undefined && !Object.hasOwn(style.pictos, zone.icone)) faults.push(`${zone.id} : icône inconnue de style.pictos, ${zone.icone}`);
   }
   return faults;
 }
 
-/** Fichier lu, validé, comparé à son nom. `style` absent : seul le schéma est vérifié (gabarits livrés). */
-function parseTemplate(text: string, id: string, style: Pick<Style, 'palette' | 'pictos'> | null): { template: Template | null; error: string | null } {
+/**
+ * Fichier lu, validé, comparé à son nom. `style` absent : seul le schéma est vérifié (gabarits livrés). Un fichier qui porte `schemaVersion`
+ * est une mise en page version 2 (ED1) ; sans lui, un gabarit de GB1, lu par le chemin de GB1.
+ */
+export function parseTemplate(text: string, id: string, style: Pick<Style, 'palette' | 'pictos'> | null): { template: MiseEnPage | null; error: string | null } {
   let value: unknown;
   try {
     value = JSON.parse(text.replace(/^﻿/, ''));
   } catch (e) {
     return { template: null, error: `JSON invalide : ${(e as Error).message}` };
   }
-  const parsed = templateSchema.safeParse(value);
+  const v2 = typeof value === 'object' && value !== null && !Array.isArray(value) && Object.hasOwn(value, 'schemaVersion');
+  const parsed = v2 ? layoutSchema.safeParse(value) : templateSchema.safeParse(value);
   if (!parsed.success) return { template: null, error: issues(parsed.error) };
   // Casse comprise : Windows ne distingue pas `2a.json` de `2A.json`, un sujet qui cite `2A` doit trouver exactement ce fichier.
   if (parsed.data.id !== id) return { template: null, error: `id ${parsed.data.id} : le fichier doit s'appeler ${parsed.data.id}.json` };
@@ -90,25 +101,26 @@ export function readTemplates(dataRoot: string, style: Pick<Style, 'palette' | '
       const id = name.slice(0, -'.json'.length);
       const file = `collection/${TEMPLATES_DIR}/${name}`;
       const stat = fs.lstatSync(path.join(dir, name));
-      if (!stat.isFile()) return { id, file, template: null, error: 'n\'est pas un fichier réel' };
-      return { id, file, ...parseTemplate(fs.readFileSync(path.join(dir, name), 'utf8'), id, style) };
+      if (!stat.isFile()) return { id, file, template: null, error: 'n\'est pas un fichier réel', sha256: null };
+      const bytes = fs.readFileSync(path.join(dir, name));
+      return { id, file, ...parseTemplate(bytes.toString('utf8'), id, style), sha256: crypto.createHash('sha256').update(bytes).digest('hex') };
     })
     .sort((a, b) => byPages(a.id, b.id));
   return { present: true, error: null, entries };
 }
 
 /** Gabarits valides, par identifiant. */
-export function validTemplates(library: TemplateLibrary): Record<string, Template> {
+export function validTemplates(library: TemplateLibrary): Record<string, MiseEnPage> {
   return Object.fromEntries(library.entries.flatMap((e) => (e.template ? [[e.id, e.template]] : [])));
 }
 
 /** Le gabarit `id` de la collection, ou ce qui l'empêche : absent ou invalide, nommé. */
-export function templateOf(library: TemplateLibrary, id: string): { template: Template } | { error: string } {
+export function templateOf(library: TemplateLibrary, id: string): { template: MiseEnPage; sha256: string } | { error: string } {
   if (library.error) return { error: library.error };
   const entry = library.entries.find((e) => e.id === id);
   if (!entry) return { error: `Gabarit ${id} absent de collection/${TEMPLATES_DIR}/.` };
   if (!entry.template) return { error: `Gabarit ${id} invalide : ${entry.error}` };
-  return { template: entry.template };
+  return { template: entry.template, sha256: entry.sha256! };
 }
 
 /** Noms des gabarits livrés avec l'outil. */
@@ -117,7 +129,7 @@ export const deliveredNames = () => fs.readdirSync(DELIVERED).filter((n) => n.en
 /** Un gabarit livré, validé par le schéma : un fichier livré invalide est une faute du code. */
 export function deliveredTemplate(id: string): Template {
   const { template, error } = parseTemplate(fs.readFileSync(path.join(DELIVERED, `${id}.json`), 'utf8'), id, null);
-  if (!template) throw new Error(`Gabarit livré ${id} invalide : ${error}`);
+  if (!template || isLayout(template)) throw new Error(`Gabarit livré ${id} invalide : ${error ?? 'version 1 attendue'}`);
   return template;
 }
 

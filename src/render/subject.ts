@@ -7,7 +7,10 @@ import type { CheckResult } from '../checks/rules';
 import { c5Resolution, c11Rights, ppiOf, type PlacedImage } from '../checks/images';
 import { readCollection, type Collection } from '../data/collection';
 import { illustrationFile } from '../data/illustration-file';
-import { firstPageOf, QR_LEGEND_DEFAULT, readSubject } from '../data/subject-file';
+import { firstPageOf, QR_LEGEND_DEFAULT, readSubject, readSubjectLayout } from '../data/subject-file';
+import { layoutOf } from '../layout/files';
+import { elementsOf, placeMiseEnPage, type MiseEnPage } from '../layout/model';
+import type { SubjectLayout } from '../layout/schema';
 import { readPrintBook } from '../data/pricing-file';
 import type { SceneReading } from '../glbi/read';
 import { placement, targetPixels, visibleCrop, type Crop, type Placement, type Size, type ZoneSizeMm } from '../images/crop';
@@ -17,8 +20,7 @@ import type { PrintBook } from '../schema/print-book';
 import type { StoredResearch } from '../schema/research';
 import type { Illustration, Subject } from '../schema/subject';
 import { readTemplates, templateOf } from '../templates/files';
-import { layoutTemplate, type LayoutPage, type LayoutZone, type Trim } from '../templates/geometry';
-import type { Template } from '../templates/model';
+import type { LayoutPage, LayoutZone, Trim } from '../templates/geometry';
 import { applyBookFiche, RenderRefused, renderHtml, type RenderContent } from './html';
 import { measureHtml } from './pdf';
 
@@ -30,7 +32,12 @@ export interface SubjectContext {
   lang: Lang;
   collection: Collection;
   subject: Subject;
-  template: Template;
+  /** La mise en page du sujet : sa copie (`layout.json`, ED1), ou le gabarit de la collection pour un sujet créé avant ED1. */
+  template: MiseEnPage;
+  /** D'où vient la mise en page. */
+  source: 'layout.json' | 'gabarit';
+  /** Origine de la copie, `null` pour un sujet créé avant ED1. */
+  modele: SubjectLayout['modele'] | null;
   layout: LayoutPage[];
   trim: Trim;
   firstPage: number;
@@ -65,10 +72,15 @@ export function subjectContext(dataRoot: string, bookId: string, subjectId: stri
   const collection = { ...read, style: applyBookFiche(read.style, book) };
   const subject = readSubject(dataRoot, bookId, subjectId);
   if (subject.variant.mirror) throw new RenderRefused('Miroir : pas encore rendu, il viendra avec les gabarits suivants.');
-  // Gabarit relu dans la collection (GB1) : absent ou invalide, le sujet est en erreur, le gabarit nommé.
-  const found = templateOf(readTemplates(dataRoot, collection.style), subject.template);
-  if ('error' in found) throw new RenderRefused(found.error);
-  const { template } = found;
+  // La copie du sujet d'abord (ED1) ; sans elle, le gabarit relu dans la collection (GB1) : absent ou invalide, le sujet est en erreur, nommé.
+  const copy = readSubjectLayout(dataRoot, bookId, subjectId);
+  let template: MiseEnPage;
+  if (copy) template = layoutOf(copy);
+  else {
+    const found = templateOf(readTemplates(dataRoot, collection.style), subject.template);
+    if ('error' in found) throw new RenderRefused(found.error);
+    template = found.template;
+  }
   if (!(subject.variant.theme in collection.style.palette.themes)) throw new RenderRefused(`Thème inconnu : ${subject.variant.theme}.`);
   const firstPage = firstPageOf(dataRoot, book, subjectId);
   const trim = book.edition.trim;
@@ -81,7 +93,9 @@ export function subjectContext(dataRoot: string, bookId: string, subjectId: stri
     collection,
     subject,
     template,
-    layout: layoutTemplate(template, trim, collection.style.margins, firstPage),
+    source: copy ? 'layout.json' : 'gabarit',
+    modele: copy?.modele ?? null,
+    layout: placeMiseEnPage(template, trim, collection.style.margins, firstPage),
     trim,
     firstPage,
     title: subjectTitle(subject, scene, lang),
@@ -91,7 +105,8 @@ export function subjectContext(dataRoot: string, bookId: string, subjectId: stri
   };
 }
 
-export const illustrationZones = (ctx: SubjectContext): LayoutZone[] => ctx.layout.flatMap((p) => p.zones).filter((z) => z.type === 'illustration');
+/** Une illustration à cheval est posée sur deux pages : elle n'est comptée qu'une fois, sur sa première page, à sa taille entière. */
+export const illustrationZones = (ctx: SubjectContext): LayoutZone[] => ctx.layout.flatMap((p) => p.zones).filter((z) => z.type === 'illustration' && z.double !== 'fin');
 const sizeOf = (zone: LayoutZone): ZoneSizeMm => ({ widthMm: zone.rect.right - zone.rect.left, heightMm: zone.rect.bottom - zone.rect.top });
 
 export interface ZoneImage {
@@ -165,8 +180,8 @@ function subjectImages(ctx: SubjectContext): { images: Record<string, string>; p
 export function subjectContent(ctx: SubjectContext): RenderContent {
   const texts: Record<string, string> = {};
   const fiche: Record<string, string> = {};
-  for (const zone of ctx.template.sheets.flatMap((s) => s.zones)) if (zone.type !== 'fiche') texts[zone.id] = '';
-  for (const zone of ctx.template.sheets.flatMap((s) => s.zones)) if (zone.type === 'titre') texts[zone.id] = ctx.title;
+  for (const zone of elementsOf(ctx.template)) if (zone.type !== 'fiche') texts[zone.id] = '';
+  for (const zone of elementsOf(ctx.template)) if (zone.type === 'titre' || zone.type === 'bandeau') texts[zone.id] = ctx.title;
   for (const block of ctx.subject.blocks) {
     const text = block.text[ctx.lang] ?? '';
     if (block.item) fiche[block.item] = text;

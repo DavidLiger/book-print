@@ -22,6 +22,12 @@ import { missingDefaults, readBookRights, readCollectionRights, RightsRefused } 
 import type { PrintBook } from '../schema/print-book';
 import type { ConfigState } from '../server/config';
 import { GeometryRefused } from '../templates/geometry';
+import { overlapFaults } from '../checks/overlaps';
+import { layoutOf } from '../layout/files';
+import { formatLabel, formatOf, placeMiseEnPage, previewFirstPage, sameFormat, type MiseEnPage } from '../layout/model';
+import { startFault } from '../layout/place';
+import { isLayout } from '../layout/model';
+import { firstPageOf, readSubjectLayout } from '../data/subject-file';
 import { readWorkflows } from '../comfy/workflow-file';
 import { WORKFLOW_KINDS, WORKFLOW_LABELS, WorkflowRefused } from '../comfy/workflow';
 import { allEntries } from '../rights/registry';
@@ -158,27 +164,42 @@ function styleFacts(dataRoot: string, book: PrintBook): ParcoursFacts['styles'] 
 }
 
 /** Étape Gabarits (GB1) : les fichiers de `collection/gabarits/`, et les sujets du livre posés sur un gabarit absent. */
+/** C17 d'une mise en page du format du livre, posée comme dans son aperçu. Une mise en page qui ne se pose pas n'a pas de C17 ici. */
+function modelOverlaps(model: MiseEnPage, book: PrintBook, margins: Parameters<typeof placeMiseEnPage>[2]): string[] {
+  try {
+    return overlapFaults(placeMiseEnPage(model, book.edition.trim, margins, previewFirstPage(model))).map((d) => `${model.id} : C17, ${d}`);
+  } catch (e) {
+    if (e instanceof GeometryRefused) return [];
+    throw e;
+  }
+}
+
 function gabaritFacts(dataRoot: string, book: PrintBook): ParcoursFacts['gabarits'] {
-  const empty = { error: null, valid: 0, invalid: [], orphans: [] };
+  const empty = { error: null, valid: 0, invalid: [], orphans: [], overlaps: [] };
   try {
     const style = readCollection(dataRoot)?.style ?? null;
     const library = readTemplates(dataRoot, style);
     if (library.error) return { ...empty, error: library.error };
     const ids = new Set(library.entries.map((e) => e.id));
+    // Un sujet qui a sa copie (ED1) ne dépend plus de son modèle (MP-24) : seuls les sujets d'avant ED1 peuvent être orphelins.
     const orphans = book.subjects.flatMap((id) => {
       try {
         const subject = readSubject(dataRoot, book.bookId, id);
+        if (readSubjectLayout(dataRoot, book.bookId, id)) return [];
         return ids.has(subject.template) ? [] : [`${id} : gabarit ${subject.template} absent de collection/${TEMPLATES_DIR}/.`];
       } catch (e) {
         if (e instanceof SubjectRefused) return [];
         throw e;
       }
     });
+    // Une mise en page d'un autre format n'est ni comptée ni en erreur : `collection/` est commune à tous les livres (décision de David, ED1).
+    const usable = library.entries.flatMap((e) => (e.template && sameFormat(e.template, book.edition.trim) ? [e.template] : []));
     return {
       error: null,
-      valid: library.entries.filter((e) => e.template).length,
+      valid: usable.length,
       invalid: library.entries.filter((e) => e.error).map((e) => `${e.file} : ${e.error}`),
       orphans,
+      overlaps: style ? usable.flatMap((m) => modelOverlaps(m, book, style.margins)) : [],
     };
   } catch (e) {
     if (e instanceof CollectionRefused) return { ...empty, error: e.message };
@@ -186,17 +207,49 @@ function gabaritFacts(dataRoot: string, book: PrintBook): ParcoursFacts['gabarit
   }
 }
 
-/** Gabarit d'un sujet (GB1) : absent ou invalide, ou modifié depuis l'import, ce qui change les blocs attendus. */
-function subjectTemplateFacts(dataRoot: string, book: PrintBook, subject: Subject): Pick<SubjectFacts, 'templateError' | 'blocksGap'> {
-  const none: Pick<SubjectFacts, 'templateError' | 'blocksGap'> = { templateError: null, blocksGap: { missing: [], extra: [] } };
+type LayoutFacts = Pick<SubjectFacts, 'templateError' | 'blocksGap' | 'miseEnPage'>;
+
+/**
+ * Mise en page d'un sujet : sa copie (`layout.json`, ED1), sinon le gabarit de la collection (GB1) ; absente ou invalide, ou modifiée depuis
+ * l'import, ce qui change les blocs attendus. Format du livre, côté de départ (C16) et C17 pour l'étape Mise en page.
+ */
+export function subjectLayoutFacts(dataRoot: string, book: PrintBook, subject: Subject): LayoutFacts {
+  const none: LayoutFacts = { templateError: null, blocksGap: { missing: [], extra: [] }, miseEnPage: { source: null, errors: [] } };
   try {
     const read = readCollection(dataRoot);
     if (!read) return none;
     const style = applyBookFiche(read.style, book);
-    const found = templateOf(readTemplates(dataRoot, style), subject.template);
-    if ('error' in found) return { ...none, templateError: found.error };
-    if (subject.blocks.length === 0) return none;
-    return { ...none, blocksGap: blocksGap(subject.blocks, expectedBlocks(found.template, style.fiche, book.edition.lang)) };
+    let copy;
+    try {
+      copy = readSubjectLayout(dataRoot, book.bookId, subject.id);
+    } catch (e) {
+      if (e instanceof SubjectRefused) return { ...none, templateError: e.message };
+      throw e;
+    }
+    let model: MiseEnPage;
+    if (copy) model = layoutOf(copy);
+    else {
+      const found = templateOf(readTemplates(dataRoot, style), subject.template);
+      if ('error' in found) return { ...none, templateError: found.error };
+      model = found.template;
+    }
+    const errors: string[] = [];
+    const format = formatOf(model);
+    if (format && !sameFormat(model, book.edition.trim)) errors.push(`Mise en page faite pour ${formatLabel(format)} : le livre est en ${formatLabel(book.edition.trim)}.`);
+    else {
+      try {
+        const first = firstPageOf(dataRoot, book, subject.id);
+        const side = isLayout(model) ? startFault(model, first) : null;
+        if (side) errors.push(`C16, ${side}`);
+        else errors.push(...overlapFaults(placeMiseEnPage(model, book.edition.trim, style.margins, first)).map((d) => `C17, ${d}`));
+      } catch (e) {
+        if (e instanceof GeometryRefused) errors.push(e.message);
+        else if (!(e instanceof SubjectRefused)) throw e;
+      }
+    }
+    const miseEnPage = { source: copy ? ('layout.json' as const) : ('gabarit' as const), errors };
+    if (subject.blocks.length === 0) return { ...none, miseEnPage };
+    return { ...none, miseEnPage, blocksGap: blocksGap(subject.blocks, expectedBlocks(model, style.fiche, book.edition.lang)) };
   } catch (e) {
     if (e instanceof CollectionRefused || e instanceof RenderRefused) return none;
     throw e;
@@ -218,7 +271,7 @@ function illustrationFacts(dataRoot: string, bookId: string, id: string, scenes:
 function subjectFacts(dataRoot: string, book: PrintBook, id: string, scenes: SceneReading[]): SubjectFacts {
   const empty: SubjectFacts = {
     id, title: id, error: null, status: null, pages: 0, template: null, theme: null,
-    templateError: null, blocksGap: { missing: [], extra: [] },
+    templateError: null, blocksGap: { missing: [], extra: [] }, miseEnPage: { source: null, errors: [] },
     research: { state: 'absent', error: null }, blocks: { total: 0, valide: 0, aRelire: 0, aReprendre: 0 }, claims: { total: 0, propose: 0 },
     illustrations: { error: null, zones: 0, missing: 0, errors: [], alerts: [] },
   };
@@ -239,7 +292,7 @@ function subjectFacts(dataRoot: string, book: PrintBook, id: string, scenes: Sce
     theme: subject.variant.theme,
     blocks: { total: subject.blocks.length, valide: count('valide'), aRelire: count('a-relire'), aReprendre: count('a-reprendre') },
     illustrations: illustrationFacts(dataRoot, book.bookId, id, scenes),
-    ...subjectTemplateFacts(dataRoot, book, subject),
+    ...subjectLayoutFacts(dataRoot, book, subject),
   };
   try {
     const research = readResearch(dataRoot, book.bookId, id);
@@ -258,7 +311,7 @@ export function readFacts(state: ConfigState, dir: string | null): ParcoursFacts
     folder: { exists: false, error: null, printBook: 'absent', printBookError: null },
     pricing: { error: null, retained: false, retainedErrors: [], deviation: [], bookAlert: null },
     collection: { exists: false, error: null },
-    gabarits: { error: null, valid: 0, invalid: [], orphans: [] },
+    gabarits: { error: null, valid: 0, invalid: [], orphans: [], overlaps: [] },
     essai: { renderError: null, control: null, controlError: null, styleMs: null, printBookMs: null, templateMs: null, bookChanged: null },
     droits: { error: null, missing: 0, faults: [], toCheck: [] },
     workflows: { error: null, todo: [], faults: [] },

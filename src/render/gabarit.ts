@@ -5,9 +5,10 @@ import { readPdfFacts } from '../checks/pdf-facts';
 import { runChecks, type CheckResult } from '../checks/rules';
 import { readCollection } from '../data/collection';
 import { readPrintBook } from '../data/pricing-file';
+import { c17Overlaps } from '../checks/overlaps';
+import { elementsOf, placeMiseEnPage, previewFirstPage, type MiseEnPage } from '../layout/model';
 import { readTemplates, templateOf } from '../templates/files';
-import { layoutTemplate, type LayoutPage, type Trim } from '../templates/geometry';
-import type { Template } from '../templates/model';
+import type { LayoutPage, Trim } from '../templates/geometry';
 import { FONT_PACK } from './fonts';
 import { applyBookFiche, renderHtml, RenderRefused, type RenderContent } from './html';
 import { renderPdf } from './pdf';
@@ -22,27 +23,32 @@ export function fillerText(n: number): string {
   return out.endsWith(' ') ? `${out.slice(0, -1)}.` : out;
 }
 
-const zonesOf = (template: Template) => template.sheets.flatMap((s) => s.zones);
+const zonesOf = (template: MiseEnPage) => elementsOf(template);
 
 /** Textes de remplissage de toutes les zones à texte, à leur longueur maximale. */
-export function fillerTexts(template: Template): Record<string, string> {
+export function fillerTexts(template: MiseEnPage): Record<string, string> {
   const out: Record<string, string> = {};
   for (const zone of zonesOf(template)) {
-    const max = zone.constraints?.maxChars;
+    const max = zone.maxChars;
     if (zone.type !== 'qr' && zone.type !== 'fiche' && max !== undefined) out[zone.id] = fillerText(max);
   }
   return out;
 }
 
 /** L'image d'essai dans chaque zone d'illustration. */
-export function fillerImages(template: Template, trim: Trim): Record<string, string> {
+/** En-têtes d'encadré écrits par la recherche (ED1, `headingMaxChars`), à leur longueur maximale. */
+export function fillerHeadings(template: MiseEnPage): Record<string, string> {
+  return Object.fromEntries(zonesOf(template).flatMap((z) => (z.headingMaxChars === undefined ? [] : [[z.id, fillerText(z.headingMaxChars)]])));
+}
+
+export function fillerImages(template: MiseEnPage, trim: Trim): Record<string, string> {
   return Object.fromEntries(zonesOf(template).filter((z) => z.type === 'illustration').map((z) => [z.id, essaiImage(trim)]));
 }
 
 /** Contenu de l'aperçu d'un gabarit : remplissage partout, valeurs de fiche et légende du QR à leur longueur maximale. */
-export function templateContent(template: Template, fiche: { id: string }[], theme: string, trim: Trim): RenderContent {
+export function templateContent(template: MiseEnPage, fiche: { id: string }[], theme: string, trim: Trim): RenderContent {
   const fiches = zonesOf(template).filter((z) => z.type === 'fiche');
-  const itemMax = Math.max(1, ...fiches.map((z) => z.constraints?.itemMaxChars ?? 1));
+  const itemMax = Math.max(1, ...fiches.map((z) => z.itemMaxChars ?? 1));
   const qr = zonesOf(template).find((z) => z.type === 'qr');
   return {
     title: 'Gabarit',
@@ -53,7 +59,8 @@ export function templateContent(template: Template, fiche: { id: string }[], the
     ficheMissing: '',
     images: fillerImages(template, trim),
     qrSvg: fakeQr(),
-    qrLegend: fillerText(qr?.constraints?.maxChars ?? 20),
+    qrLegend: fillerText(qr?.maxChars ?? 20),
+    headings: fillerHeadings(template),
   };
 }
 
@@ -61,7 +68,7 @@ export interface TemplatePreview {
   html: string;
   layout: LayoutPage[];
   trim: Trim;
-  template: Template;
+  template: MiseEnPage;
 }
 
 /** Le format vient du livre, le style de la collection. Un gabarit `droite` commence en p. 7, sinon en p. 6. */
@@ -77,7 +84,7 @@ export function templatePreview(dataRoot: string, bookId: string, id: string, th
   const chosen = theme ?? style.variants.rotation[0]!;
   if (!Object.hasOwn(style.palette.themes, chosen)) throw new RenderRefused(`Thème inconnu : ${chosen}.`);
   const trim = book.edition.trim;
-  const layout = layoutTemplate(template, trim, style.margins, template.start === 'droite' ? 7 : 6);
+  const layout = placeMiseEnPage(template, trim, style.margins, previewFirstPage(template));
   return { html: renderHtml(layout, trim, style, templateContent(template, style.fiche, chosen, trim), read.pictos), layout, trim, template };
 }
 
@@ -89,5 +96,5 @@ export async function controlTemplate(preview: TemplatePreview): Promise<CheckRe
   const facts = await readPdfFacts(pdf);
   const checks = runChecks({ facts, measures, pages: preview.layout, pack: Object.values(FONT_PACK).map(({ family, pdfName }) => ({ family, pdfName })) }).filter((c) => KEPT.includes(c.id));
   const over = measures.overflows.map((o) => `page ${o.page}, ${o.item ? `fiche, ${o.item}` : o.zone} : déborde de ${o.overMm.toFixed(2).replace('.', ',')} mm`);
-  return [...checks, { id: 'C12', label: 'Texte à la longueur maximale, sans débordement', level: over.length ? 'erreur' : 'ok', details: over }];
+  return [...checks, { id: 'C12', label: 'Texte à la longueur maximale, sans débordement', level: over.length ? 'erreur' : 'ok', details: over }, c17Overlaps(preview.layout)];
 }

@@ -20,6 +20,8 @@ export interface SubjectFacts {
   templateError: string | null;
   /** Blocs attendus par le gabarit et absents, blocs en trop : un gabarit modifié depuis l'import (GB1). */
   blocksGap: { missing: string[]; extra: string[] };
+  /** Mise en page du sujet (ED1) : sa copie (`layout.json`) ou le gabarit d'un sujet d'avant ED1 ; format, côté de départ (C16) et C17. */
+  miseEnPage: { source: 'layout.json' | 'gabarit' | null; errors: string[] };
   research: { state: 'absent' | 'ok' | 'invalide'; error: string | null };
   blocks: { total: number; valide: number; aRelire: number; aReprendre: number };
   claims: { total: number; propose: number };
@@ -52,6 +54,8 @@ export interface ParcoursFacts {
     invalid: string[];
     /** Sujets du livre posés sur un gabarit absent. */
     orphans: string[];
+    /** C17 sur chaque mise en page du format du livre (ED1). */
+    overlaps: string[];
   };
   essai: {
     /** Le livre et la collection ne se rendent pas : l'export est impossible. */
@@ -177,7 +181,7 @@ function collection({ collection: c }: ParcoursFacts): StepVerdict {
 
 function gabarits({ gabarits: g }: ParcoursFacts): StepVerdict {
   if (g.error) return { state: 'erreur', reasons: [g.error] };
-  if (g.invalid.length + g.orphans.length > 0) return { state: 'erreur', reasons: [...g.invalid, ...g.orphans] };
+  if (g.invalid.length + g.orphans.length + g.overlaps.length > 0) return { state: 'erreur', reasons: [...g.invalid, ...g.orphans, ...g.overlaps] };
   if (g.valid === 0) return { state: 'a-faire', reasons: ['Ajouter les gabarits livrés, ou poser un gabarit dans collection/gabarits/.'] };
   return { state: 'validee', reasons: [] };
 }
@@ -245,6 +249,15 @@ function sujets({ subjects }: ParcoursFacts): StepVerdict {
 
 const unreadable = (s: SubjectFacts | undefined): StepVerdict | null => (s?.error ? { state: 'erreur', reasons: [s.error] } : null);
 
+/** Mise en page du sujet (ED1) : lisible, au format du livre, sur le bon côté (C16), sans chevauchement interdit (C17). */
+function sujetMiseEnPage(_f: ParcoursFacts, s?: SubjectFacts): StepVerdict {
+  const fault = unreadable(s);
+  if (fault) return fault;
+  if (s?.templateError) return { state: 'erreur', reasons: [s.templateError] };
+  if (s && s.miseEnPage.errors.length > 0) return { state: 'erreur', reasons: s.miseEnPage.errors };
+  return { state: 'validee', reasons: [] };
+}
+
 function sujetRecherche(_f: ParcoursFacts, s?: SubjectFacts): StepVerdict {
   const fault = unreadable(s);
   if (fault) return fault;
@@ -286,19 +299,21 @@ function sujetApercu(_f: ParcoursFacts, s?: SubjectFacts): StepVerdict {
  * Workflows exige Droits : ses cases viennent du registre. Sujets ne l'exige pas : le dépôt manuel d'une image reste possible sans ComfyUI.
  * Styles exige Workflows : le style de base en vient, et un aperçu passe par eux. Sujets ne l'exige pas non plus.
  * Illustrations exige Recherche et ne touche pas `relu`, qui porte sur le texte.
+ * Mises en page (ex-Gabarits, ED1) garde l'identifiant `gabarits`. Recherche exige Mise en page (ED1) : les blocs attendus en viennent.
  * Aperçu exige Recherche et non Relecture : un bloc allongé repasse à relire, et c'est justement dans l'aperçu que se voit son débordement.
  */
 export const STEPS: StepDef[] = [
   { id: 'livre', label: 'Livre', scope: 'livre', requires: [], evaluate: livre },
   { id: 'prix', label: 'Prix', scope: 'livre', requires: ['livre'], evaluate: prix },
   { id: 'collection', label: 'Collection', scope: 'livre', requires: ['prix'], evaluate: collection },
-  { id: 'gabarits', label: 'Gabarits', scope: 'livre', requires: ['collection'], evaluate: gabarits },
+  { id: 'gabarits', label: 'Mises en page', scope: 'livre', requires: ['collection'], evaluate: gabarits },
   { id: 'essai', label: 'Essai', scope: 'livre', requires: ['gabarits'], evaluate: essai },
   { id: 'droits', label: 'Droits', scope: 'livre', requires: ['collection'], evaluate: droits },
   { id: 'workflows', label: 'Workflows', scope: 'livre', requires: ['droits'], evaluate: workflows },
   { id: 'styles', label: 'Styles', scope: 'livre', requires: ['workflows'], evaluate: styles },
   { id: 'sujets', label: 'Sujets', scope: 'livre', requires: ['gabarits'], evaluate: sujets },
-  { id: 'sujet-recherche', label: 'Recherche', scope: 'sujet', requires: [], evaluate: sujetRecherche },
+  { id: 'sujet-mise-en-page', label: 'Mise en page', scope: 'sujet', requires: [], evaluate: sujetMiseEnPage },
+  { id: 'sujet-recherche', label: 'Recherche', scope: 'sujet', requires: ['sujet-mise-en-page'], evaluate: sujetRecherche },
   { id: 'sujet-relecture', label: 'Relecture', scope: 'sujet', requires: ['sujet-recherche'], evaluate: sujetRelecture },
   { id: 'sujet-illustrations', label: 'Illustrations', scope: 'sujet', requires: ['sujet-recherche'], evaluate: sujetIllustrations },
   { id: 'sujet-apercu', label: 'Aperçu', scope: 'sujet', requires: ['sujet-recherche'], evaluate: sujetApercu },

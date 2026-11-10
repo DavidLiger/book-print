@@ -29,7 +29,8 @@ export type BleedEdge = 'outer' | 'top' | 'bottom';
 
 export interface LayoutZone {
   id: string;
-  type: ZoneType;
+  /** `bandeau` : type de la version 2 (ED1). */
+  type: ZoneType | 'bandeau';
   rect: Rect;
   bleedEdges: BleedEdge[];
   constraints: Zone['constraints'];
@@ -38,6 +39,20 @@ export interface LayoutZone {
   heading?: Zone['heading'];
   picto?: string;
   sizePt?: number;
+  /** Mise en page version 2 (ED1) : champs propres, repris tels quels de l'élément. */
+  icone?: string;
+  sorte?: 'capsule' | 'question';
+  /** Bandeau, encadré, étiquette : alignement vertical du contenu ; absent, le rendu de GB1. */
+  alignement?: 'haut' | 'milieu' | 'bas';
+  headingMaxChars?: number;
+  image?: string;
+  consigne?: string;
+  /** Étiquette : point visé, en mm depuis le coin haut gauche de la page du PDF. */
+  fleche?: { x: number; y: number };
+  /** Bandeau : la partie du bandeau dans la zone de sécurité, où se pose le titre ; `null` sur la seconde page d'un bandeau à cheval. */
+  textRect?: Rect | null;
+  /** Élément à cheval : posé sur sa page (`debut`) et sur la page qui lui fait face (`fin`), décalé. */
+  double?: 'debut' | 'fin';
 }
 export interface LayoutPage {
   number: number;
@@ -63,7 +78,9 @@ export function pageSize(trim: Trim): { widthIn: number; heightIn: number } {
 /** Une page paire est une page gauche, une page impaire une page droite (§4.1). */
 export const sideOfPage = (pageNumber: number): Side => (pageNumber % 2 === 0 ? 'gauche' : 'droite');
 
-function pageFrame(trim: Trim, margins: Margins, number: number) {
+export type PageFrame = ReturnType<typeof pageFrame>;
+
+export function pageFrame(trim: Trim, margins: Margins, number: number) {
   const side = sideOfPage(number);
   const size = pageSize(trim);
   const widthMm = size.widthIn * MM_PER_IN;
@@ -88,7 +105,7 @@ function axis(extent: number, near: number | undefined, far: number | undefined,
   return [start, end];
 }
 
-function zoneRect(frame: ReturnType<typeof pageFrame>, margins: Margins, box: ZoneBox, label: string): Rect {
+export function zoneRect(frame: PageFrame, margins: Margins, box: ZoneBox, label: string): Rect {
   const dist = (e: ZoneBox['outer'], margin: number) => (e ? (e.from === 'securite' ? margin : 0) + e.mm : undefined);
   const width = frame.trim.right - frame.trim.left;
   const height = frame.trim.bottom - frame.trim.top;
@@ -101,7 +118,7 @@ function zoneRect(frame: ReturnType<typeof pageFrame>, margins: Margins, box: Zo
     : { left: frame.trim.right - toInner, right: frame.trim.right - fromOuter, top, bottom };
 }
 
-function bleedEdges(box: ZoneBox): BleedEdge[] {
+export function bleedEdges(box: ZoneBox): BleedEdge[] {
   const onTrim = (e: ZoneBox['outer']) => e?.from === 'rogne' && e.mm === 0;
   const out: BleedEdge[] = [];
   if (onTrim(box.outer)) out.push('outer');
@@ -111,7 +128,7 @@ function bleedEdges(box: ZoneBox): BleedEdge[] {
 }
 
 /** Étend la zone vers le bord du PDF. Côté pli, rien ne bouge (§4.1). */
-function extend(rect: Rect, frame: ReturnType<typeof pageFrame>, edges: BleedEdge[]): Rect {
+function extend(rect: Rect, frame: PageFrame, edges: BleedEdge[]): Rect {
   const out = { ...rect };
   if (edges.includes('top')) out.top = 0;
   if (edges.includes('bottom')) out.bottom = frame.heightMm;

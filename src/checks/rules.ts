@@ -60,7 +60,9 @@ function outside(box: MeasuredBox, page: LayoutPage): string | null {
 export function c3Safety(measures: Measures, pages: LayoutPage[]): CheckResult {
   const details: string[] = [];
   for (const box of measures.boxes) {
-    if (!SAFE_TYPES.includes(box.type)) continue;
+    // Un bandeau va au bord comme un fond : seul son titre est soumis à la zone de sécurité (ED1).
+    const kept = SAFE_TYPES.includes(box.type) || (box.type === 'bandeau' && box.kind === 'texte');
+    if (!kept) continue;
     const page = pages.find((p) => p.number === box.page);
     if (!page) continue;
     const fault = outside(box, page);
@@ -89,11 +91,12 @@ export function c4Bleed(measures: Measures, pages: LayoutPage[]): CheckResult {
       if (zone.bleedEdges.includes('top')) short('en haut', page.trim.top - r.top);
       if (zone.bleedEdges.includes('bottom')) short('en bas', r.bottom - page.trim.bottom);
       if (zone.bleedEdges.includes('outer')) short('à l\'extérieur', left ? page.trim.left - r.left : r.right - page.trim.right);
+      // Un élément à cheval traverse le pli par construction (ED1).
       const overFold = left ? r.right - page.foldMm : page.foldMm - r.left;
-      if (overFold > t) details.push(`${label} : déborde de ${fmt(overFold)} mm côté pli`);
+      if (!zone.double && overFold > t) details.push(`${label} : déborde de ${fmt(overFold)} mm côté pli`);
     }
   }
-  return result('C4', 'Fond perdu à l\'extérieur, en haut et en bas, rien côté pli', details);
+  return result('C4', 'Fond perdu à l\'extérieur, en haut et en bas, rien côté pli sauf un élément à cheval', details);
 }
 
 export function c6Transparency(facts: PdfFacts, measures: Measures): CheckResult {

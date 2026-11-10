@@ -19,6 +19,7 @@ import { slugSchema } from '../schema/common';
 import type { StoredResearch } from '../schema/research';
 import { templateFits } from '../templates';
 import { readTemplates, validTemplates } from '../templates/files';
+import { sameFormat } from '../layout/model';
 import type { Config } from './config';
 
 export class BadSubjectRequest extends Error {}
@@ -84,7 +85,8 @@ function bookState(config: Config, dir: string): Json {
     bookId: read.bookId,
     lang: book.edition.lang,
     scenes: read.scenes.map((s) => ({ id: s.id, title: s.title?.[book.edition.lang] ?? s.id, used: used.has(s.id) })),
-    templates: Object.values(validTemplates(readTemplates(config.dataRoot, collection.style))).map((t) => ({ id: t.id, pages: t.pages, fits: templateFits(t, firstPage) })),
+    // Seules les mises en page du format du livre sont proposées (ED1).
+    templates: Object.values(validTemplates(readTemplates(config.dataRoot, collection.style))).filter((t) => sameFormat(t, book.edition.trim)).map((t) => ({ id: t.id, pages: t.pages, fits: templateFits(t, firstPage) })),
     firstPage,
     themes: Object.keys(collection.style.palette.themes),
     /** Le thème suivant dans la rotation : deux sujets voisins ne se ressemblent pas. */

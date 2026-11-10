@@ -497,6 +497,7 @@ function svgEl(tag, attrs, text) {
 
 const rectAttrs = (r, x) => ({ x: r.left + x, y: r.top, width: r.right - r.left, height: r.bottom - r.top });
 
+/** Un élément à cheval (ED1) est posé sur deux pages : son cadre n'est dessiné qu'une fois, depuis sa première page. */
 function drawPageMarks(layers, page, x) {
   const t = page.trim;
   const outer = `M${x} 0h${page.widthMm}v${page.heightMm}h${-page.widthMm}z`;
@@ -505,6 +506,7 @@ function drawPageMarks(layers, page, x) {
   layers.safe.append(svgEl('rect', { ...rectAttrs(page.safe, x), class: 'r-safe' }));
   layers.fold.append(svgEl('line', { x1: page.foldMm + x, x2: page.foldMm + x, y1: 0, y2: page.heightMm, class: 'r-fold' }));
   for (const z of page.zones) {
+    if (z.double === 'fin') continue;
     layers.zones.append(svgEl('rect', { ...rectAttrs(z.rect, x), class: 'r-zone' }));
     layers.zones.append(svgEl('text', { x: z.rect.left + x + 1, y: z.rect.top + 4, class: 'r-label' }, z.id));
   }
@@ -676,21 +678,23 @@ const gabaritView = { layout: null, frame: $('ga-cadre'), inner: $('ga-echelle')
 const START_LABELS = { gauche: 'gauche', droite: 'droite', libre: 'libre' };
 
 function gabaritsTable(templates) {
-  if (templates.length === 0) return el('p', 'Aucun gabarit dans collection/gabarits/.', 'alerte');
+  if (templates.length === 0) return el('p', 'Aucune mise en page dans collection/gabarits/.', 'alerte');
   const table = el('table');
   const head = el('tr');
-  for (const t of ['Gabarit', 'Pages', 'Départ', 'État', 'Sujets']) head.append(el('th', t));
+  for (const t of ['Mise en page', 'Pages', 'Départ', 'État', 'Sujets']) head.append(el('th', t));
   table.append(head);
   for (const t of templates) {
     const row = el('tr');
     row.dataset.gabarit = t.id;
     if (t.id === gabarits.selected) row.setAttribute('aria-current', 'true');
     const name = el('td');
-    if (t.error) name.append(el('span', t.id));
+    if (t.error || t.otherFormat) name.append(el('span', t.id));
     else name.append(smallButton(t.id, () => selectGabarit(t.id)));
     const verdict = el('td');
-    verdict.append(el('span', t.error ? '✗' : '✓', `signe ${t.error ? 'erreur' : 'bien'}`));
+    // Une mise en page d'un autre format n'est pas une erreur : elle sert à un autre livre de la collection (ED1).
+    verdict.append(el('span', t.error ? '✗' : t.otherFormat ? '—' : '✓', `signe ${t.error ? 'erreur' : t.otherFormat ? '' : 'bien'}`));
     if (t.error) verdict.append(el('p', t.error, 'erreur cellule'));
+    else if (t.otherFormat) verdict.append(el('p', `Autre format (${t.format}) : non proposée pour ce livre.`, 'note cellule'));
     row.append(name, el('td', t.pages === null ? '—' : String(t.pages)), el('td', t.start ? START_LABELS[t.start] : '—'), verdict, el('td', t.subjects.join(', ') || '—'));
     table.append(row);
   }
@@ -741,7 +745,7 @@ async function loadGabarits() {
     const select = $('ga-theme');
     const current = select.value;
     fillSelect(select, state.themes.map((name) => [name, name]), state.themes.includes(current) ? current : state.theme);
-    const valid = state.templates.filter((t) => !t.error);
+    const valid = state.templates.filter((t) => !t.error && !t.otherFormat);
     if (!valid.some((t) => t.id === gabarits.selected)) gabarits.selected = valid[0]?.id ?? null;
     $('ga-liste').replaceChildren(gabaritsTable(state.templates));
     if (gabarits.selected) await selectGabarit(gabarits.selected);
@@ -914,6 +918,7 @@ function showSubStep(id) {
   const facts = openSubjectFacts();
   for (const step of facts?.steps ?? []) $(step.id).hidden = step.id !== id;
   showSubSteps();
+  if (id === 'sujet-mise-en-page') loadMiseEnPage();
   if (id === 'sujet-apercu') loadSubjectPreview();
   if (id === 'sujet-illustrations') {
     enqueue(loadImages, $('il-message'));
@@ -941,12 +946,94 @@ async function openSubject(id) {
   $('motifs').hidden = true;
   $('sujets-accueil').hidden = true;
   $('sujet-ouvert').hidden = false;
+  $('mp-resultat').replaceChildren();
   try {
     await refreshParcours();
-    await loadSubject();
+    // Une mise en page qui ne se pose pas (format, côté de départ) empêche l'état du sujet, pas l'étape Mise en page qui la montre (ED1).
+    try {
+      await loadSubject();
+    } catch (e) {
+      $('sujet-erreur').replaceChildren(el('p', e.message, 'erreur'));
+    }
     showSubStep(openSubjectFacts().open);
   } catch (e) {
     $('sujet-erreur').replaceChildren(el('p', e.message, 'erreur'));
+  }
+}
+
+// Mise en page du sujet (ED1). Sans éditeur : la page montre la copie du sujet, ses éléments, ses fautes et son aperçu au texte de remplissage ;
+// le fichier se modifie à la main, « Recharger » le relit.
+
+const miseView = { layout: null, frame: $('mp-cadre'), inner: $('mp-echelle'), svg: $('mp-reperes'), boxes: 'input[data-mise-layer]', attr: 'miseLayer' };
+const mm1 = (n) => (n === undefined ? '—' : (Math.round(n * 10) / 10).toFixed(1).replace('.', ','));
+
+function elementsTable(elements) {
+  const table = el('table');
+  const head = el('tr');
+  for (const t of ['Élément', 'Type', 'Page', 'x', 'y', 'l', 'h']) head.append(el('th', t));
+  table.append(head);
+  for (const e of elements) {
+    const row = el('tr');
+    row.append(el('td', e.id), el('td', e.double ? `${e.type}, à cheval` : e.type), el('td', String(e.page + 1)), el('td', mm1(e.x)), el('td', mm1(e.y)), el('td', mm1(e.w)), el('td', mm1(e.h)));
+    table.append(row);
+  }
+  return table;
+}
+
+function clearMisePreview() {
+  miseView.layout = null;
+  $('mp-page').removeAttribute('src');
+  $('mp-reperes').replaceChildren();
+}
+
+async function loadMiseEnPage() {
+  const box = $('mp-message');
+  box.replaceChildren();
+  const id = sujets.open;
+  try {
+    const state = await action('/api/mise-en-page/state', { dir: dirOf(), subjectId: id });
+    if (sujets.open !== id) return;
+    const origin = state.source === 'layout.json'
+      ? `Copie de ${state.modele.id}, le ${new Date(state.modele.date).toLocaleDateString('fr-FR')}.`
+      : `Sujet créé avant les mises en page libres : il garde le gabarit ${state.id} de la collection.`;
+    $('mp-fichier').replaceChildren(el('span', `${origin} Fichier : `), el('code', state.file));
+    $('mp-elements').replaceChildren(elementsTable(state.elements));
+    for (const fault of state.errors) box.append(el('p', fault, 'erreur'));
+    if (!state.layout) return clearMisePreview();
+    miseView.layout = state.layout;
+    drawMarks(miseView);
+    $('mp-page').src = `/apercu-mise-en-page?${new URLSearchParams({ dir: dirOf(), subject: id, t: String(Date.now()) })}`;
+  } catch (e) {
+    clearMisePreview();
+    $('mp-elements').replaceChildren();
+    box.append(el('p', e.message, 'erreur'));
+  }
+}
+
+async function reloadMiseEnPage() {
+  $('mp-resultat').replaceChildren();
+  await refreshParcours();
+  await loadMiseEnPage();
+  try {
+    await loadSubject();
+    $('sujet-erreur').replaceChildren();
+  } catch (e) {
+    $('sujet-erreur').replaceChildren(el('p', e.message, 'erreur'));
+  }
+}
+
+async function controlMiseEnPage() {
+  const button = $('mp-controler');
+  const box = $('mp-resultat');
+  button.disabled = true;
+  box.replaceChildren(el('p', 'Contrôle en cours…', 'note'));
+  try {
+    const { checks } = await action('/api/mise-en-page/controle', { dir: dirOf(), subjectId: sujets.open });
+    box.replaceChildren(checksTable(checks));
+  } catch (e) {
+    box.replaceChildren(el('p', e.message, 'erreur'));
+  } finally {
+    button.disabled = false;
   }
 }
 
@@ -2368,6 +2455,10 @@ new ResizeObserver(() => fitPreview(essaiView)).observe($('apercu-cadre'));
 new ResizeObserver(() => fitPreview(sujetView)).observe($('sa-cadre'));
 new ResizeObserver(() => fitPreview(gabaritView)).observe($('ga-cadre'));
 $('ga-ajouter').addEventListener('click', addDeliveredGabarits);
+$('mp-controler').addEventListener('click', controlMiseEnPage);
+$('mp-recharger').addEventListener('click', reloadMiseEnPage);
+for (const box of document.querySelectorAll('input[data-mise-layer]')) box.addEventListener('change', () => showLayers(miseView));
+new ResizeObserver(() => fitPreview(miseView)).observe($('mp-cadre'));
 $('ga-recharger').addEventListener('click', reloadGabarits);
 $('ga-controler').addEventListener('click', controlGabarit);
 $('ga-theme').addEventListener('change', () => {

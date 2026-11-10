@@ -27,6 +27,8 @@ export interface RenderContent {
   /** SVG inséré tel quel, seul le prologue XML est retiré. */
   qrSvg: string;
   qrLegend: string;
+  /** En-tête d'un encadré écrit par la recherche (`headingMaxChars`, ED1 ; rempli par ED4). Vide ou absent : pas d'en-tête. */
+  headings?: Record<string, string>;
 }
 
 /** Fiche d'un livre (P-30) : celle de `print-book.json` si elle existe, avec les mêmes contrôles que celle du style. */
@@ -61,6 +63,12 @@ function extraCss(style: Style, theme: string, pages: LayoutPage[], font: (f: St
   if (types.has('legende')) rules.push(`.legende { ${font(fonts.label)}; }`);
   if (types.has('picto')) rules.push(`.picto { display: flex; align-items: center; justify-content: center; color: ${theme}; }`, '.picto svg { display: block; width: 100%; height: 100%; }');
   if (types.has('etiquette')) rules.push(`.etiquette { padding: 1mm 2mm; background: ${palette.paper}; ${font(fonts.label)}; font-weight: 700; }`);
+  // Version 2 (ED1) : écrites seulement si les pages portent ces types ou ces champs, comme en GB1.
+  if (types.has('bandeau')) {
+    rules.push(`.bandeau { background: ${theme}; }`);
+    rules.push(`.bandeau .bandeau-texte { position: absolute; display: flex; align-items: flex-end; margin: 0; ${font(fonts.title)}; font-weight: 700; color: ${palette.paper}; }`);
+  }
+  if (zones.some((z) => z.icone !== undefined)) rules.push(`.encadre .icone { float: left; width: 8mm; height: 8mm; margin: 0 2mm 1mm 0; color: ${theme}; }`, '.encadre .icone svg { display: block; width: 100%; height: 100%; }');
   return rules.map((r) => `${r}\n`).join('');
 }
 
@@ -114,6 +122,44 @@ function ficheMarkup(zone: LayoutZone, style: Style, content: RenderContent, pic
     .join('');
 }
 
+const num = (n: number) => Math.round(n * 1e4) / 1e4;
+/** Alignement vertical en flexbox. Absent : aucun style ajouté, le HTML de GB1 ne change pas. */
+const FLEX_ALIGN = { haut: 'flex-start', milieu: 'center', bas: 'flex-end' } as const;
+/** Pointe de la flèche : 2 mm de long, 2 mm de large ; trait de 1 pt (C8 : 0,75 pt au moins). Décision de David (ED1). */
+const HEAD_MM = 2;
+const STROKE_MM = 25.4 / 72;
+
+/**
+ * Flèche d'une étiquette (ED1) : du bord de l'étiquette le plus proche du point visé, jusqu'au point. Un SVG posé dans l'étiquette, à la taille
+ * exacte du trait et de sa pointe : C3 le mesure comme un SVG de l'étiquette.
+ */
+function arrowMarkup(zone: LayoutZone, color: string): string {
+  const target = zone.fleche!;
+  const r = zone.rect;
+  const sx = Math.min(Math.max(target.x, r.left), r.right);
+  const sy = Math.min(Math.max(target.y, r.top), r.bottom);
+  const dx = target.x - sx;
+  const dy = target.y - sy;
+  const len = Math.hypot(dx, dy);
+  const ux = dx / len;
+  const uy = dy / len;
+  const head = Math.min(HEAD_MM, len);
+  const bx = target.x - ux * head;
+  const by = target.y - uy * head;
+  const half = HEAD_MM / 2;
+  const corners = [[target.x, target.y], [bx - uy * half, by + ux * half], [bx + uy * half, by - ux * half]] as const;
+  const pad = STROKE_MM / 2;
+  const xs = [sx, ...corners.map((c) => c[0])];
+  const ys = [sy, ...corners.map((c) => c[1])];
+  const left = Math.min(...xs) - pad;
+  const top = Math.min(...ys) - pad;
+  const width = Math.max(...xs) + pad - left;
+  const height = Math.max(...ys) + pad - top;
+  const at = (x: number, y: number) => `${num(x - left)},${num(y - top)}`;
+  const line = len > HEAD_MM ? `<line x1="${num(sx - left)}" y1="${num(sy - top)}" x2="${num(bx - left)}" y2="${num(by - top)}" stroke="${color}" stroke-width="${num(STROKE_MM)}"/>` : '';
+  return `<svg class="fleche" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${num(width)} ${num(height)}" style="position:absolute;left:${mm(left - r.left)};top:${mm(top - r.top)};width:${mm(width)};height:${mm(height)};overflow:visible" aria-hidden="true">${line}<polygon points="${corners.map(([x, y]) => at(x, y)).join(' ')}" fill="${color}"/></svg>`;
+}
+
 function zoneMarkup(zone: LayoutZone, page: LayoutPage, style: Style, content: RenderContent, pictos: Record<string, string>): string {
   const attrs = `class="zone ${zone.type}" data-zone="${zone.id}" data-type="${zone.type}" style="${boxStyle(zone.rect)}"`;
   const text = () => {
@@ -146,16 +192,38 @@ function zoneMarkup(zone: LayoutZone, page: LayoutPage, style: Style, content: R
     case 'encadre': {
       // La couleur et le pictogramme sont vérifiés à la lecture du gabarit ; le rendu refuse quand même ce que le style ne connaît pas.
       if (!zone.encadre || !Object.hasOwn(style.palette.boxes, zone.encadre)) throw new RenderRefused(`${zone.id} : couleur d'encadré inconnue, ${zone.encadre}.`);
-      const heading = zone.heading ? `<b class="entete">${esc(zone.heading[content.lang])}</b>` : '';
-      return `<div class="zone encadre encadre-${zone.encadre}" data-zone="${zone.id}" data-type="${zone.type}" style="${boxStyle(zone.rect)}">${heading}<span data-fill>${text()}</span></div>`;
+      const written = content.headings?.[zone.id];
+      const heading = zone.heading ? `<b class="entete">${esc(zone.heading[content.lang])}</b>` : written ? `<b class="entete">${esc(written)}</b>` : '';
+      let icone = '';
+      if (zone.icone !== undefined) {
+        if (!Object.hasOwn(pictos, zone.icone)) throw new RenderRefused(`${zone.id} : icône inconnue, ${zone.icone}.`);
+        icone = `<span class="icone">${pictos[zone.icone]}</span>`;
+      }
+      const body = `${icone}${heading}<span data-fill>${text()}</span>`;
+      const box = `class="zone encadre encadre-${zone.encadre}" data-zone="${zone.id}" data-type="${zone.type}"`;
+      if (!zone.alignement) return `<div ${box} style="${boxStyle(zone.rect)}">${body}</div>`;
+      // Le contenu reste un bloc (l'icône y flotte) ; c'est ce bloc qui est placé en hauteur dans l'encadré.
+      return `<div ${box} style="${boxStyle(zone.rect)};display:flex;flex-direction:column;justify-content:${FLEX_ALIGN[zone.alignement]}"><div class="encadre-corps">${body}</div></div>`;
     }
     case 'chiffre-cle': {
       const size = zone.sizePt === undefined ? '' : `;font-size:${zone.sizePt}pt`;
       return `<p class="zone chiffre-cle" data-zone="${zone.id}" data-type="${zone.type}" style="${boxStyle(zone.rect)}${size}"><span data-fill>${text()}</span></p>`;
     }
     case 'legende':
-    case 'etiquette':
       return `<p ${attrs}><span data-fill>${text()}</span></p>`;
+    case 'etiquette':
+      // La flèche est en position absolue : elle reste hors du placement en hauteur du texte.
+      const align = zone.alignement ? `;display:flex;flex-direction:column;justify-content:${FLEX_ALIGN[zone.alignement]}` : '';
+      const label = `class="zone ${zone.type}" data-zone="${zone.id}" data-type="${zone.type}" style="${boxStyle(zone.rect)}${align}"`;
+      return `<p ${label}><span data-fill>${text()}</span>${zone.fleche ? arrowMarkup(zone, style.palette.text) : ''}</p>`;
+    case 'bandeau': {
+      // Le titre est posé dans la partie du bandeau qui est dans la zone de sécurité (C3) ; la seconde page d'un bandeau à cheval n'en porte pas.
+      const t = zone.textRect;
+      if (!t) return `<div ${attrs}></div>`;
+      const inner = { left: t.left - zone.rect.left, top: t.top - zone.rect.top, right: t.right - zone.rect.left, bottom: t.bottom - zone.rect.top };
+      const align = zone.alignement ? `;align-items:${FLEX_ALIGN[zone.alignement]}` : '';
+      return `<div ${attrs}><h1 class="bandeau-texte" data-cadre style="${boxStyle(inner)}${align}"><span data-fill>${text()}</span></h1></div>`;
+    }
     case 'picto': {
       const svg = zone.picto !== undefined && Object.hasOwn(pictos, zone.picto) ? pictos[zone.picto] : undefined;
       if (svg === undefined) throw new RenderRefused(`${zone.id} : pictogramme inconnu, ${zone.picto}.`);

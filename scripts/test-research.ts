@@ -66,7 +66,7 @@ check('création : légende générique', created.qrLegend?.fr === QR_LEGEND_DEF
 check('création : titre lu dans la scène', Object.keys(created.title).length === 0 && created.sceneId === 'alpha');
 check('création : ajouté au livre', book().subjects.join() === 'alpha');
 check('création : fichier relu', readSubject(dataRoot, BOOK_ID, 'alpha').template === '2A');
-check('création : aucun fichier temporaire', fs.readdirSync(subjectFolder(dataRoot, BOOK_ID, 'alpha')!).join() === SUBJECT_FILE);
+check('création : aucun fichier temporaire, la copie de la mise en page et le sujet', fs.readdirSync(subjectFolder(dataRoot, BOOK_ID, 'alpha')!).sort().join() === ['layout.json', SUBJECT_FILE].sort().join());
 check('création : pageBudget inchangé', book().pageBudget === 46);
 refused('création : même sujet deux fois', () => newSubject('alpha'), 'existe déjà');
 refused('création : scène inconnue', () => newSubject('omega'), 'Scène inconnue');
