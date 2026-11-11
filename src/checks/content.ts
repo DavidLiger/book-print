@@ -98,12 +98,20 @@ export function c12Texts({ blocks, expected, lang, title, titleMax, legend, lege
   over('titre', title, titleMax);
   over('légende du QR', legend, legendMax);
   for (const block of blocks) {
+    const want = expected.find((b) => b.id === block.id);
+    // L'en-tête d'un bloc (ED4) : présent dans la langue de l'édition, dans sa longueur. Celui d'un paragraphe est mesuré avec sa chaîne.
+    if (block.heading !== undefined) {
+      const heading = block.heading[lang];
+      if (heading === undefined || heading.trim() === '') errors.push(`bloc ${block.id} : aucun en-tête en ${lang}`);
+      else if (block.type !== 'paragraphe') over(`en-tête du bloc ${block.id}`, heading, want?.heading?.maxChars ?? null);
+    }
     const text = block.text[lang];
     if (text === undefined || text.trim() === '') {
       errors.push(`bloc ${block.id} : aucun texte en ${lang}`);
       continue;
     }
-    over(`bloc ${block.id}`, text, expected.find((b) => b.id === block.id)?.maxChars ?? null);
+    // La longueur d'un paragraphe est donnée par sa chaîne (`chainFaults`), qui nomme la chaîne et le paragraphe.
+    if (block.type !== 'paragraphe' || !chains) over(`bloc ${block.id}`, text, want?.maxChars ?? null);
   }
   for (const o of measures.overflows) errors.push(`page ${o.page}, ${o.item ? `fiche, ${o.item}` : o.zone} : déborde de ${fmt(o.overMm)} mm`);
   if (chains) errors.push(...chainFaults(chains.flow, chains.texts, chains.defs));
@@ -124,13 +132,14 @@ export interface FillerInput {
   essaiPhrases: string[];
   /** Valeurs de fiche du sujet d'essai : comparées à la valeur entière, car elles sont courtes. */
   essaiValues: string[];
-  /** Chaînes au texte de remplissage (ED2) : leur texte viendra de la recherche par paragraphe (ED4). */
-  fillerChains?: string[];
 }
 
-export function c13Filler({ blocks, expected, lang, title, legend, essaiPhrases, essaiValues, fillerChains }: FillerInput): CheckResult {
+/** Où est un bloc attendu, pour dire qu'il est vide. */
+const place = (want: ExpectedBlock) => (want.item ? `fiche, ${want.item}` : want.paragraphe ? `chaîne ${want.zone}, ${want.paragraphe}` : want.zone);
+
+/** ED4 : une chaîne est cherchée comme les autres blocs, paragraphe par paragraphe, intertitre compris ; l'en-tête d'un encadré aussi. */
+export function c13Filler({ blocks, expected, lang, title, legend, essaiPhrases, essaiValues }: FillerInput): CheckResult {
   const errors: string[] = [];
-  for (const id of fillerChains ?? []) errors.push(`chaîne ${id} : texte de remplissage jusqu'à ED4`);
   const phrases = essaiPhrases.map(normalized);
   const values = essaiValues.map(normalized);
   const inspect = (label: string, text: string) => {
@@ -146,13 +155,17 @@ export function c13Filler({ blocks, expected, lang, title, legend, essaiPhrases,
   for (const want of expected) {
     const block = blocks.find((b) => b.id === want.id);
     const text = block?.text[lang] ?? '';
-    if (text.trim() === '') errors.push(`zone ${want.item ? `fiche, ${want.item}` : want.zone} vide`);
+    if (text.trim() === '') errors.push(`zone ${place(want)} vide`);
     else inspect(`bloc ${want.id}`, text);
+    if (!want.heading || !block) continue;
+    const heading = block.heading?.[lang] ?? '';
+    if (heading.trim() === '') errors.push(`en-tête de ${place(want)} vide`);
+    else inspect(`en-tête du bloc ${want.id}`, heading);
   }
   return verdict('C13', 'Aucun texte de remplissage, aucune zone vide', errors);
 }
 
-export interface SubjectCheckInput extends TextInput, Pick<FillerInput, 'essaiPhrases' | 'essaiValues' | 'fillerChains'> {
+export interface SubjectCheckInput extends TextInput, Pick<FillerInput, 'essaiPhrases' | 'essaiValues'> {
   claims: C10Claim[];
   measures: Pick<Measures, 'overflows'>;
 }

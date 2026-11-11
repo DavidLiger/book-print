@@ -23,7 +23,9 @@ import type { StoredResearch } from '../schema/research';
 import type { Illustration, Subject } from '../schema/subject';
 import { readTemplates, templateOf } from '../templates/files';
 import type { LayoutPage, LayoutZone, Trim } from '../templates/geometry';
-import { fillerChains, templateContent } from './gabarit';
+import { templateContent } from './gabarit';
+import type { ChainText } from './flow';
+import { blockId } from '../schema/block';
 import { applyBookFiche, RenderRefused, renderHtml, type RenderContent } from './html';
 import { flowHtml, measureFlowed, type Flowed, type HtmlBuilder } from './pdf';
 
@@ -197,33 +199,62 @@ function subjectImages(ctx: SubjectContext): { images: Record<string, string>; p
   return { images, placements };
 }
 
+/**
+ * Texte réel des chaînes (ED4) : le bloc `paragraphe` de chaque paragraphe, dans leur ordre ; son intertitre pour un paragraphe qui en a un.
+ * Un bloc absent laisse son paragraphe vide, un en-tête vide n'est pas rendu : C13 les nomme. `fill` donne le remplissage d'un paragraphe ou
+ * d'un intertitre sans texte réel (éditeur d'un sujet, ED3).
+ */
+export function subjectChains(ctx: SubjectContext, fill?: Record<string, ChainText>): Record<string, ChainText> {
+  return Object.fromEntries(
+    chainsOf(ctx.template).map((c) => {
+      const filler = fill?.[c.id];
+      const paragraphs = c.paragraphes.map((p, i) => {
+        const block = ctx.subject.blocks.find((b) => b.type === 'paragraphe' && b.id === blockId(c.id, p.id));
+        const text = block?.text[ctx.lang] ?? '';
+        const heading = block?.heading?.[ctx.lang] ?? '';
+        const spare = filler?.paragraphs[i];
+        return {
+          id: p.id,
+          heading: p.intertitre ? (heading !== '' ? heading : (spare?.heading ?? null)) : null,
+          text: text !== '' ? text : (spare?.text ?? ''),
+        };
+      });
+      return [c.id, { cadres: c.cadres, lettrine: c.lettrine === true, paragraphs }];
+    }),
+  );
+}
+
 /** Un bloc absent laisse sa zone vide : c'est C13 qui le dit, l'aperçu doit rester visible. */
 export function subjectContent(ctx: SubjectContext): RenderContent {
   const texts: Record<string, string> = {};
   const fiche: Record<string, string> = {};
+  const headings: Record<string, string> = {};
   for (const zone of elementsOf(ctx.template)) if (zone.type !== 'fiche') texts[zone.id] = '';
   for (const zone of elementsOf(ctx.template)) if (zone.type === 'titre' || zone.type === 'bandeau') texts[zone.id] = ctx.title;
   for (const block of ctx.subject.blocks) {
     const text = block.text[ctx.lang] ?? '';
     if (block.item) fiche[block.item] = text;
+    else if (block.type === 'paragraphe') continue;
     else texts[block.zone] = text;
+    // L'en-tête écrit d'un encadré (ED4), dans la langue de l'édition.
+    if (block.heading !== undefined && (block.heading[ctx.lang] ?? '') !== '') headings[block.zone] = block.heading[ctx.lang]!;
   }
-  // Une chaîne n'a pas de bloc avant ED4 : elle reçoit le texte de remplissage, que C13 refuse (décision de David, ED2).
-  return { title: 'Aperçu', lang: ctx.lang, theme: ctx.subject.variant.theme, texts, fiche, ficheMissing: '', ...subjectImages(ctx), qrSvg: stampedQr(), qrLegend: ctx.legend, chains: fillerChains(ctx.template) };
+  return { title: 'Aperçu', lang: ctx.lang, theme: ctx.subject.variant.theme, texts, fiche, ficheMissing: '', ...subjectImages(ctx), qrSvg: stampedQr(), qrLegend: ctx.legend, headings, chains: subjectChains(ctx) };
 }
 
 /**
- * Contenu de l'éditeur d'un sujet (ED3, décision de David) : le texte réel là où il existe (titre, blocs importés, légende du QR, images), le
- * remplissage de l'aperçu d'un modèle ailleurs (chaînes avant ED4, en-têtes écrits, éléments sans bloc, sujet sans recherche, QR).
+ * Contenu de l'éditeur d'un sujet (ED3) : le texte réel là où il existe (titre, blocs importés, paragraphes et en-têtes, légende du QR, images),
+ * le remplissage de l'aperçu d'un modèle ailleurs (éléments sans bloc, sujet sans recherche, QR).
  */
 export function editorContent(ctx: SubjectContext): RenderContent {
   const real = subjectContent(ctx);
   const filler = templateContent(ctx.template, ctx.collection.style.fiche, ctx.subject.variant.theme, ctx.trim);
-  const zones = new Set(ctx.subject.blocks.filter((b) => !b.item && (b.text[ctx.lang] ?? '') !== '').map((b) => b.zone));
+  const zones = new Set(ctx.subject.blocks.filter((b) => !b.item && b.type !== 'paragraphe' && (b.text[ctx.lang] ?? '') !== '').map((b) => b.zone));
   const items = new Set(ctx.subject.blocks.filter((b) => b.item && (b.text[ctx.lang] ?? '') !== '').map((b) => b.item!));
   const titled = new Set(elementsOf(ctx.template).filter((z) => z.type === 'titre' || z.type === 'bandeau').map((z) => z.id));
   const texts = Object.fromEntries(Object.entries(filler.texts).map(([zone, text]) => [zone, titled.has(zone) || zones.has(zone) ? (real.texts[zone] ?? '') : text]));
   const fiche = Object.fromEntries(Object.entries(filler.fiche).map(([item, text]) => [item, items.has(item) ? (real.fiche[item] ?? '') : text]));
+  const headings = { ...(filler.headings ?? {}), ...(real.headings ?? {}) };
   // Une image déposée et lisible est montrée ; ailleurs, l'image d'essai de l'aperçu d'un modèle, sans cadrage. L'aplat « à venir » et le faux
   // QR tamponné de l'aperçu d'un sujet portent un texte hors du pack (C7, C8) ; le vrai QR viendra en ED6.
   const placeholder = placeholderImage();
@@ -234,7 +265,7 @@ export function editorContent(ctx: SubjectContext): RenderContent {
     images[zone] = deposited ? real.images[zone]! : image;
     if (deposited && real.placements?.[zone]) placements[zone] = real.placements[zone];
   }
-  return { ...real, texts, fiche, images, placements, headings: filler.headings, chains: filler.chains, qrSvg: filler.qrSvg };
+  return { ...real, texts, fiche, images, placements, headings, chains: subjectChains(ctx, filler.chains), qrSvg: filler.qrSvg };
 }
 
 /** Le HTML d'un sujet avec les coupures données ; sans coupure, le HTML final d'un sujet sans chaîne. */
@@ -270,6 +301,5 @@ export async function controlSubject(ctx: SubjectContext, research: StoredResear
     essaiPhrases: ESSAI_PHRASES,
     essaiValues: ESSAI_FICHE_VALUES,
     chains: { defs: chainsOf(ctx.template), texts, flow },
-    fillerChains: Object.keys(texts),
   });
 }

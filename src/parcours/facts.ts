@@ -15,7 +15,8 @@ import { bookSnapshot, essaiFor, readEssaiControl } from '../render/essai';
 import { RenderRefused } from '../render/html';
 import { imageChecks, strayIllustrations, subjectContext, subjectTitle } from '../render/subject';
 import { applyBookFiche } from '../render/html';
-import { blocksGap, expectedBlocks } from '../research/blocks';
+import { blocksGap, duplicateFault, expectedBlocks } from '../research/blocks';
+import { reviewState } from '../schema/block';
 import { readTemplates, templateOf, TEMPLATES_DIR } from '../templates/files';
 import { ESSAI_TEMPLATE_FILE } from '../render/essai';
 import { missingDefaults, readBookRights, readCollectionRights, RightsRefused } from '../rights/registry';
@@ -209,14 +210,14 @@ function gabaritFacts(dataRoot: string, book: PrintBook): ParcoursFacts['gabarit
   }
 }
 
-type LayoutFacts = Pick<SubjectFacts, 'templateError' | 'blocksGap' | 'miseEnPage'>;
+type LayoutFacts = Pick<SubjectFacts, 'templateError' | 'blocksGap' | 'miseEnPage' | 'duplicateBlocks'>;
 
 /**
  * Mise en page d'un sujet : sa copie (`layout.json`, ED1), sinon le gabarit de la collection (GB1) ; absente ou invalide, ou modifiée depuis
  * l'import, ce qui change les blocs attendus. Format du livre, côté de départ (C16) et C17 pour l'étape Mise en page.
  */
 export function subjectLayoutFacts(dataRoot: string, book: PrintBook, subject: Subject): LayoutFacts {
-  const none: LayoutFacts = { templateError: null, blocksGap: { missing: [], extra: [] }, miseEnPage: { source: null, errors: [] } };
+  const none: LayoutFacts = { templateError: null, blocksGap: { missing: [], extra: [] }, miseEnPage: { source: null, errors: [] }, duplicateBlocks: null };
   try {
     const read = readCollection(dataRoot);
     if (!read) return none;
@@ -254,8 +255,10 @@ export function subjectLayoutFacts(dataRoot: string, book: PrintBook, subject: S
       }
     }
     const miseEnPage = { source: copy ? ('layout.json' as const) : ('gabarit' as const), errors };
-    if (subject.blocks.length === 0) return { ...none, miseEnPage };
-    return { ...none, miseEnPage, blocksGap: blocksGap(subject.blocks, expectedBlocks(model, style.fiche, book.edition.lang)) };
+    const expected = expectedBlocks(model, style.fiche, book.edition.lang);
+    const duplicateBlocks = duplicateFault(expected);
+    if (subject.blocks.length === 0) return { ...none, miseEnPage, duplicateBlocks };
+    return { ...none, miseEnPage, duplicateBlocks, blocksGap: blocksGap(subject.blocks, expected) };
   } catch (e) {
     if (e instanceof CollectionRefused || e instanceof RenderRefused) return none;
     throw e;
@@ -282,7 +285,7 @@ function illustrationFacts(dataRoot: string, bookId: string, id: string, scenes:
 function subjectFacts(dataRoot: string, book: PrintBook, id: string, scenes: SceneReading[]): SubjectFacts {
   const empty: SubjectFacts = {
     id, title: id, error: null, status: null, pages: 0, template: null, theme: null,
-    templateError: null, blocksGap: { missing: [], extra: [] }, miseEnPage: { source: null, errors: [] },
+    templateError: null, blocksGap: { missing: [], extra: [] }, miseEnPage: { source: null, errors: [] }, duplicateBlocks: null,
     research: { state: 'absent', error: null }, blocks: { total: 0, valide: 0, aRelire: 0, aReprendre: 0 }, claims: { total: 0, propose: 0 },
     illustrations: { error: null, zones: 0, missing: 0, errors: [], alerts: [] },
   };
@@ -293,7 +296,8 @@ function subjectFacts(dataRoot: string, book: PrintBook, id: string, scenes: Sce
     if (e instanceof SubjectRefused) return { ...empty, error: e.message };
     throw e;
   }
-  const count = (state: string) => subject.blocks.filter((b) => b.state === state).length;
+  // Un bloc n'est relu que si son texte et son en-tête le sont (ED4).
+  const count = (state: string) => subject.blocks.filter((b) => reviewState(b) === state).length;
   const facts: SubjectFacts = {
     ...empty,
     title: subjectTitle(subject, scenes.find((s) => s.id === subject.sceneId), book.edition.lang) || id,

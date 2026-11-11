@@ -29,7 +29,7 @@ export interface RenderContent {
   /** SVG inséré tel quel, seul le prologue XML est retiré. */
   qrSvg: string;
   qrLegend: string;
-  /** En-tête d'un encadré écrit par la recherche (`headingMaxChars`, ED1 ; rempli par ED4). Vide ou absent : pas d'en-tête. */
+  /** En-tête d'un encadré écrit par la recherche (`headingMaxChars`, ED1) : le `heading` du bloc dans un sujet (ED4), le remplissage dans un aperçu. Vide ou absent : pas d'en-tête. */
   headings?: Record<string, string>;
   /** Texte de chaque chaîne (ED2), par identifiant de chaîne. */
   chains?: Record<string, ChainText>;

@@ -7,7 +7,7 @@ import { createSubject, firstPageOf, keepDatedCopies, readResearch, readSubject,
 import { readPrintBook } from '../data/pricing-file';
 import { readBook, type BookReading } from '../glbi/read';
 import { urlIsDead } from '../checks/content';
-import { zoneLimit } from '../research/blocks';
+import { duplicateFault, zoneLimit } from '../research/blocks';
 import { ResearchRefused } from '../research/errors';
 import { checkAgainst, mergeImport, parseResearch } from '../research/import';
 import { researchPrompt } from '../research/prompt';
@@ -15,6 +15,7 @@ import { applyBlockAction, applyClaimAction, touched } from '../research/state';
 import { checkUrls, defaultUrlDeps, type UrlDeps } from '../research/url-check';
 import { applyBookFiche, RenderRefused } from '../render/html';
 import { controlSubject, subjectContext, subjectPage, type SubjectContext } from '../render/subject';
+import { reviewState } from '../schema/block';
 import { slugSchema } from '../schema/common';
 import type { StoredResearch } from '../schema/research';
 import { templateFits } from '../templates';
@@ -52,6 +53,8 @@ const blockBody = z.strictObject({
     z.strictObject({ kind: z.literal('valider') }),
     z.strictObject({ kind: z.literal('texte'), text: z.string() }),
     z.strictObject({ kind: z.literal('citer'), claims: z.array(slugSchema) }),
+    z.strictObject({ kind: z.literal('entete'), text: z.string() }),
+    z.strictObject({ kind: z.literal('valider-entete') }),
   ]),
 });
 /** `title` nul : retire la surcharge, le titre revient à celui de la scène. */
@@ -122,6 +125,9 @@ function subjectState(config: Config, dir: string, subjectId: string): Json {
 function promptFor(config: Config, dir: string, subjectId: string, today: Date): string {
   const read = reading(config, dir);
   const ctx = subjectContext(config.dataRoot, read.bookId, subjectId, read.scenes);
+  // Deux blocs au même identifiant ne se distingueraient pas dans le fichier rendu (ED4).
+  const dup = duplicateFault(ctx.expected);
+  if (dup) throw new ResearchRefused(dup);
   return researchPrompt({
     subjectId,
     subjectTitle: ctx.title,
@@ -217,7 +223,8 @@ async function control(config: Config, dir: string, subjectId: string, mark: boo
     const ctx: SubjectContext = subjectContext(config.dataRoot, read.bookId, subjectId, read.scenes);
     const checks = await controlSubject(ctx, readResearch(config.dataRoot, read.bookId, subjectId));
     const refused = checks.filter((c) => c.level === 'erreur').map((c) => c.id);
-    const notValid = ctx.subject.blocks.filter((b) => b.state !== 'valide').length;
+    // Un bloc n'est relu que si son texte et son en-tête le sont (ED4).
+    const notValid = ctx.subject.blocks.filter((b) => reviewState(b) !== 'valide').length;
     const reason = refused.length > 0 ? `${refused.join(', ')} en erreur.` : ctx.subject.blocks.length === 0 || notValid > 0 ? `${notValid} bloc(s) à valider dans Relecture.` : null;
     const marked = mark && reason === null;
     if (marked) updateSubject(config.dataRoot, read.bookId, subjectId, (data) => ({ ...data, subject: { ...data.subject, status: 'relu' } }));

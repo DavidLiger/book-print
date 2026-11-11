@@ -353,12 +353,12 @@ function pngPixels(buf: Buffer): Buffer {
   check('gabarit modifié : rien n’est réécrit dans le sujet', onDisk.includes('"chapeau"') && onDisk.includes('"illustration"'));
   // Second import aux blocs du gabarit modifié : l'écart se règle.
   const ctx = subjectContext(dataRoot, BOOK_ID, 'alpha', []);
-  const file: ResearchImport = { ...makeResearch(), blocks: ctx.expected.map((b) => ({ zone: b.zone, type: b.type, ...(b.item ? { item: b.item } : {}), text: `Texte ${b.id}`, claims: ['c1'] })) };
+  const file: ResearchImport = { ...makeResearch(), blocks: ctx.expected.map((b) => ({ zone: b.zone, type: b.type as 'texte', ...(b.item ? { item: b.item } : {}), text: `Texte ${b.id}`, claims: ['c1'] })) };
   const second = mergeImport(file, merged.research, ctx.subject, ctx.expected);
   updateSubject(dataRoot, BOOK_ID, 'alpha', () => ({ subject: second.subject, research: second.research }));
   f = facts();
   check('second import : l’écart est réglé, Recherche validée', subjectOf(f).blocksGap.missing.length + subjectOf(f).blocksGap.extra.length === 0 && sujetStep(f, 'sujet-recherche').state === 'validee', subjectOf(f).blocksGap);
-  check('écart : calcul pur, type compté des deux côtés', JSON.stringify(blocksGap([{ id: 'a', type: 'texte' }], [{ id: 'a', zone: 'a', type: 'encadre', label: 'a', maxChars: 1 }])) === JSON.stringify({ missing: ['a (encadre)'], extra: ['a (texte)'] }));
+  check('écart : calcul pur, type compté des deux côtés', JSON.stringify(blocksGap([{ id: 'a', type: 'texte' }], [{ id: 'a', zone: 'a', type: 'encadre', label: 'a', maxChars: 1, kind: 'capsule', heading: null }])) === JSON.stringify({ missing: ['a (encadre)'], extra: ['a (texte)'] }));
 
   // Gabarit invalide, puis absent.
   fs.writeFileSync(gabarit(dataRoot, '2A.json'), '{ "id": "2A" }');

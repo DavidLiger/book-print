@@ -20,6 +20,8 @@ export interface SubjectFacts {
   templateError: string | null;
   /** Blocs attendus par le gabarit et absents, blocs en trop : un gabarit modifié depuis l'import (GB1). */
   blocksGap: { missing: string[]; extra: string[] };
+  /** Deux blocs attendus au même identifiant (ED4) : le prompt et l'import sont refusés, nommés. `null` : rien. */
+  duplicateBlocks: string | null;
   /** Mise en page du sujet (ED1) : sa copie (`layout.json`) ou le gabarit d'un sujet d'avant ED1 ; format, côté de départ (C16) et C17. */
   miseEnPage: { source: 'layout.json' | 'gabarit' | null; errors: string[] };
   research: { state: 'absent' | 'ok' | 'invalide'; error: string | null };
@@ -262,6 +264,7 @@ function sujetRecherche(_f: ParcoursFacts, s?: SubjectFacts): StepVerdict {
   const fault = unreadable(s);
   if (fault) return fault;
   if (s?.templateError) return { state: 'erreur', reasons: [s.templateError] };
+  if (s?.duplicateBlocks) return { state: 'erreur', reasons: [s.duplicateBlocks] };
   if (s?.research.state === 'invalide') return { state: 'erreur', reasons: [s.research.error ?? 'research.json invalide.'] };
   if (s?.research.state !== 'ok') return { state: 'a-faire', reasons: ['Préparer la recherche, puis importer le fichier.'] };
   const gap = gapReason(s);

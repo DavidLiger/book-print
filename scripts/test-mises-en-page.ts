@@ -416,7 +416,8 @@ const snapshot = (root: string): Record<string, string> => {
   // Recherche du sujet en version 2 : importée aux blocs de ses éléments.
   const research = makeResearch();
   research.subjectId = 'beta';
-  research.blocks = betaCtx.expected.map((b) => ({ zone: b.zone, type: b.type, text: `Texte ${b.id}`, claims: ['c1'] }));
+  (research as { schemaVersion: number }).schemaVersion = 2;
+  research.blocks = betaCtx.expected.map((b) => ({ zone: b.zone, type: b.type as 'texte', ...(b.heading ? { heading: `Titre ${b.id}` } : {}), text: `Texte ${b.id}`, claims: ['c1'] })) as typeof research.blocks;
   const merged = mergeImport(research, null, betaCtx.subject, betaCtx.expected);
   updateSubject(dataRoot, BOOK_ID, 'beta', () => ({ subject: merged.subject, research: merged.research }));
   f = facts();

@@ -7,7 +7,11 @@ import path from 'node:path';
 import { createCollection } from '../src/data/collection';
 import { createBookFolder } from '../src/data/create-book';
 import { retainScenario, saveScenario } from '../src/data/pricing-file';
-import { createSubject, updateSubject } from '../src/data/subject-file';
+import { createSubject, readResearch, updateSubject } from '../src/data/subject-file';
+import { subjectContext } from '../src/render/subject';
+import { mergeImport, parseResearch } from '../src/research/import';
+import { applyBlockAction, applyClaimAction, type Data } from '../src/research/state';
+import { researchEd4, syntheseEd4 } from './fixtures/recherche-ed4';
 import { addMissingDefaults, ensureIllustrationRights, setIllustrationRights } from '../src/rights/registry';
 import { readFacts } from '../src/parcours/facts';
 import { computeParcours, isValidated, STEPS, type ParcoursFacts, type StepDef, type SubjectFacts } from '../src/parcours/steps';
@@ -21,7 +25,7 @@ import { check, finish } from './test-lib';
 const LONG_AGO = 1_000_000;
 const goodSubject = (over: Partial<SubjectFacts> = {}): SubjectFacts => ({
   id: 'alpha', title: 'Alpha', error: null, status: 'relu', pages: 2, template: '2A', theme: 'foret',
-  templateError: null, blocksGap: { missing: [], extra: [] }, miseEnPage: { source: 'layout.json', errors: [] },
+  templateError: null, blocksGap: { missing: [], extra: [] }, miseEnPage: { source: 'layout.json', errors: [] }, duplicateBlocks: null,
   research: { state: 'ok', error: null }, blocks: { total: 7, valide: 7, aRelire: 0, aReprendre: 0 }, claims: { total: 3, propose: 0 },
   illustrations: { error: null, zones: 1, missing: 0, errors: [], alerts: [] }, ...over,
 });
@@ -199,6 +203,12 @@ check('sans recherche : ouverture sur Recherche', levelOf(noResearch).open === '
 const badResearch: Partial<SubjectFacts> = { research: { state: 'invalide', error: 'research.json invalide' } };
 check('Recherche : fichier invalide, erreur', sub(badResearch, 'sujet-recherche').state === 'erreur' && sub(badResearch, 'sujet-recherche').reasons[0] === 'research.json invalide');
 check('sujet illisible : Mise en page en erreur, Recherche verrouillée', sub({ error: 'illisible' }, 'sujet-mise-en-page').state === 'erreur' && sub({ error: 'illisible' }, 'sujet-recherche').state === 'verrouillee');
+// ED4 : identifiant de bloc en double, écart des en-têtes.
+const dup: Partial<SubjectFacts> = { ...noResearch, duplicateBlocks: 'Identifiant de bloc en double : corps-p2 (corps, p2 et corps-p2). Renommer l\'élément ou le paragraphe dans l\'étape Mise en page.' };
+check('ED4 Recherche : identifiant de bloc en double, erreur nommée, même sans recherche', sub(dup, 'sujet-recherche').state === 'erreur' && sub(dup, 'sujet-recherche').reasons[0]!.includes('corps-p2 (corps, p2 et corps-p2)'));
+const headingGap: Partial<SubjectFacts> = { blocksGap: { missing: ['en-tête de corps-p2'], extra: [] } };
+check('ED4 Recherche : en-tête manquant, erreur, second import proposé', sub(headingGap, 'sujet-recherche').state === 'erreur' && sub(headingGap, 'sujet-recherche').reasons[0]!.includes('en-tête de corps-p2') && sub(headingGap, 'sujet-recherche').reasons[0]!.includes('second import'));
+check('ED4 Recherche : en-tête en trop, erreur', sub({ blocksGap: { missing: [], extra: ['en-tête de capsule'] } }, 'sujet-recherche').reasons[0]!.includes('blocs en trop : en-tête de capsule'));
 const toRead: Partial<SubjectFacts> = { status: 'brouillon', blocks: { total: 7, valide: 4, aRelire: 2, aReprendre: 1 } };
 check('Relecture : blocs à relire et à reprendre', sub(toRead, 'sujet-relecture').state === 'a-faire' && sub(toRead, 'sujet-relecture').reasons[0] === '2 blocs à relire, 1 bloc à reprendre.', sub(toRead, 'sujet-relecture'));
 check('blocs à relire : Aperçu reste ouvert, pour voir un débordement', sub(toRead, 'sujet-apercu').state === 'a-faire');
@@ -420,6 +430,56 @@ check('fichiers : aucun sujet, Sujets à faire', stateOf('sujets').state === 'a-
   dirLink(tempDir(), path.join(data2, BOOK_ID));
   const linked = computeParcours(readFacts({ ok: true, config: { glbRoot: glb2, dataRoot: data2 } }, BOOK_DIR));
   check('dossier du livre lié : Livre en erreur', linked.steps[0]!.state === 'erreur' && linked.steps[0]!.reasons[0]!.includes('dossier réel'), linked.steps[0]);
+}
+
+{
+  // ED4 : un sujet à chaîne, capsule et question importé ; relecture des en-têtes comptée ; intertitre ajouté à la mise en page : écart des en-têtes.
+  const glb = makeGlbi();
+  const data = path.join(tempDir(), 'donnees');
+  fs.mkdirSync(data);
+  createBookFolder(data, BOOK_ID);
+  createCollection(data);
+  put(data, 'collection/gabarits/2Q.json', syntheseEd4('2Q', undefined, undefined, { sansIntertitreP2: true }));
+  createSubject(data, BOOK_ID, { sceneId: 'alpha', pages: 2, template: '2Q', theme: 'foret' }, ['alpha', 'beta'], ['foret']);
+  const ctx = subjectContext(data, BOOK_ID, 'alpha', []);
+  const file = parseResearch(JSON.stringify({ ...researchEd4(), blocks: researchEd4().blocks.map((b) => (b.type === 'paragraphe' && b.paragraphe === 'p2' ? { ...b, heading: undefined } : b)) }));
+  const merged = mergeImport(file, null, ctx.subject, ctx.expected);
+  updateSubject(data, BOOK_ID, 'alpha', () => ({ subject: merged.subject, research: merged.research }));
+  const facts = () => readFacts({ ok: true, config: { glbRoot: glb, dataRoot: data } }, BOOK_DIR);
+  const sujet = () => facts().subjects[0]!;
+  const recherche = () => computeParcours(facts()).subjects[0]!.steps.find((x) => x.id === 'sujet-recherche')!;
+  check('ED4 parcours : import conforme, Recherche validée', recherche().state === 'validee', recherche());
+  check('ED4 parcours : 9 blocs à relire', sujet().blocks.total === 9 && sujet().blocks.aRelire === 9, sujet().blocks);
+  updateSubject(data, BOOK_ID, 'alpha', (d) => {
+    let x: Data = { subject: d.subject, research: d.research! };
+    for (const id of ['c1', 'c2', 'c3']) x = applyClaimAction(x, id, { kind: 'valider' }, new Date());
+    for (const b of x.subject.blocks) x = applyBlockAction(x, b.id, { kind: 'valider' });
+    return x;
+  });
+  check('ED4 parcours : textes validés, en-têtes à relire, blocs pas encore relus', sujet().blocks.valide === 6 && sujet().blocks.aRelire === 3, sujet().blocks);
+  updateSubject(data, BOOK_ID, 'alpha', (d) => {
+    let x: Data = { subject: d.subject, research: d.research! };
+    for (const b of x.subject.blocks) if (b.heading) x = applyBlockAction(x, b.id, { kind: 'valider-entete' });
+    return x;
+  });
+  check('ED4 parcours : en-têtes validés, tous les blocs relus', sujet().blocks.valide === 9 && computeParcours(facts()).subjects[0]!.steps.find((x) => x.id === 'sujet-relecture')!.state === 'validee', sujet().blocks);
+  // Intertitre ajouté au second paragraphe dans la mise en page du sujet.
+  const layoutFile = path.join(data, BOOK_ID, 'subjects', 'alpha', 'layout.json');
+  const layout = JSON.parse(fs.readFileSync(layoutFile, 'utf8'));
+  layout.chaines[0].paragraphes[1] = { id: 'p2', intertitre: true, headingMaxChars: 28, maxChars: 330 };
+  fs.writeFileSync(layoutFile, JSON.stringify(layout, null, 2));
+  check('ED4 parcours : intertitre ajouté, en-tête manquant compté dans l’écart', sujet().blocksGap.missing.join() === 'en-tête de corps-p2' && sujet().blocksGap.extra.length === 0, sujet().blocksGap);
+  check('ED4 parcours : Recherche en erreur, en-tête nommé, second import proposé', recherche().state === 'erreur' && recherche().reasons[0]!.includes('en-tête de corps-p2') && recherche().reasons[0]!.includes('second import'), recherche());
+  // Second import avec l'intertitre : l'écart se règle.
+  const ctx2 = subjectContext(data, BOOK_ID, 'alpha', []);
+  const second = mergeImport(parseResearch(JSON.stringify(researchEd4())), readResearch(data, BOOK_ID, 'alpha'), ctx2.subject, ctx2.expected);
+  updateSubject(data, BOOK_ID, 'alpha', () => ({ subject: second.subject, research: second.research }));
+  check('ED4 parcours : second import, écart réglé, Recherche validée', recherche().state === 'validee' && sujet().blocksGap.missing.length === 0, recherche());
+  check('ED4 parcours : le paragraphe changé repasse à relire, les autres gardés', sujet().blocks.aRelire === 1 && sujet().blocks.valide === 8, sujet().blocks);
+  // Un élément nommé comme un paragraphe : Recherche en erreur, nommée.
+  layout.elements.push({ id: 'corps-p3', type: 'chiffre-cle', page: 1, x: 100, y: 212.5, w: 20, h: 3, maxChars: 10 });
+  fs.writeFileSync(layoutFile, JSON.stringify(layout, null, 2));
+  check('ED4 parcours : identifiant en double, Recherche en erreur', recherche().state === 'erreur' && recherche().reasons[0]!.startsWith('Identifiant de bloc en double : corps-p3'), recherche());
 }
 
 // Route

@@ -858,6 +858,16 @@ async function reloadGabarits() {
 const CLAIM_LABELS = { propose: 'proposée', valide: 'validée', rejete: 'rejetée', corrige: 'corrigée' };
 const BLOCK_LABELS = { 'a-relire': 'à relire', valide: 'validé', 'a-reprendre': 'à reprendre' };
 const VALIDATED = ['valide', 'corrige'];
+/** Nom de l'en-tête d'un bloc (ED4), par sorte de paragraphe. */
+const HEADING_LABELS = { paragraphe: 'Intertitre', question: 'Question', capsule: 'Titre' };
+const VALIDATE_HEADING = { Intertitre: 'Valider l\'intertitre', Question: 'Valider la question', Titre: 'Valider le titre', 'En-tête': 'Valider l\'en-tête' };
+
+/** Un bloc n'est relu que si son texte et son en-tête le sont (ED4) : même règle que `reviewState` du serveur. */
+function reviewOf(block) {
+  if (block.headingState === undefined) return block.state;
+  if (block.state === 'a-reprendre' || block.headingState === 'a-reprendre') return 'a-reprendre';
+  return block.state === 'valide' && block.headingState === 'valide' ? 'valide' : 'a-relire';
+}
 const IMPORT_MAX = 2 * 1024 * 1024;
 const SAVE_DELAY_MS = 600;
 
@@ -1275,6 +1285,49 @@ function flushText(id, area) {
   subjectChange('/api/sujet/block', { blockId: id, action: { kind: 'texte', text: area.value } });
 }
 
+function flushHeading(id, input) {
+  const key = `entete:${id}`;
+  clearTimeout(sujets.timers.get(key));
+  sujets.timers.delete(key);
+  const block = sujets.view.subject.blocks.find((b) => b.id === id);
+  if ((block.heading?.[sujets.view.lang] ?? '') === input.value) return;
+  block.heading[sujets.view.lang] = input.value;
+  subjectChange('/api/sujet/block', { blockId: id, action: { kind: 'entete', text: input.value } });
+}
+
+/** L'en-tête d'un bloc (ED4), relu à part au-dessus du texte : son compteur, son état, son bouton ; il cite les affirmations du bloc. */
+function headingPart(block, want, ready) {
+  const { lang } = sujets.view;
+  const box = el('div', undefined, 'entete-bloc');
+  box.dataset.state = block.headingState;
+  const label = HEADING_LABELS[want?.kind] ?? 'En-tête';
+  const head = el('div', undefined, 'ligne-entete');
+  head.append(el('span', label, 'nom-entete'), el('span', BLOCK_LABELS[block.headingState], 'etat'));
+  const input = el('textarea');
+  input.rows = 1;
+  input.value = block.heading[lang] ?? '';
+  input.dataset.key = `entete-${block.id}`;
+  input.setAttribute('aria-label', `${label} du bloc ${block.id}`);
+  const counter = el('span', undefined, 'compteur');
+  const max = want?.heading?.maxChars ?? null;
+  updateCounter(counter, input.value, max);
+  const key = `entete:${block.id}`;
+  input.addEventListener('input', () => {
+    updateCounter(counter, input.value, max);
+    clearTimeout(sujets.timers.get(key));
+    sujets.timers.set(key, setTimeout(() => flushHeading(block.id, input), SAVE_DELAY_MS));
+  });
+  input.addEventListener('change', () => flushHeading(block.id, input));
+  const validate = el('button', VALIDATE_HEADING[label], 'petit');
+  validate.type = 'button';
+  validate.dataset.action = 'valider-entete';
+  validate.disabled = block.headingState === 'valide' || !ready;
+  validate.title = ready ? '' : 'Toutes les affirmations citées doivent être validées.';
+  validate.addEventListener('click', () => subjectChange('/api/sujet/block', { blockId: block.id, action: { kind: 'valider-entete' } }));
+  box.append(head, input, counter, validate);
+  return box;
+}
+
 function citations(block) {
   const box = el('div', undefined, 'cite');
   const { claims } = sujets.view;
@@ -1302,11 +1355,12 @@ function blockCard(block) {
   const want = expected.find((b) => b.id === block.id);
   const card = el('article', undefined, 'carte');
   card.dataset.block = block.id;
-  card.dataset.state = block.state;
+  const review = reviewOf(block);
+  card.dataset.state = review;
   const head = el('header');
-  head.append(el('strong', want?.label ?? block.id), el('span', BLOCK_LABELS[block.state], 'etat'));
+  head.append(el('strong', want?.label ?? block.id), el('span', BLOCK_LABELS[review], 'etat'));
   const area = el('textarea');
-  area.rows = block.type === 'texte' ? 6 : block.type === 'chapeau' ? 3 : 1;
+  area.rows = block.type === 'texte' || block.type === 'paragraphe' ? 6 : block.type === 'chapeau' ? 3 : 1;
   area.value = block.text[lang] ?? '';
   area.dataset.key = `bloc-${block.id}`;
   area.setAttribute('aria-label', `Texte du bloc ${block.id}`);
@@ -1319,13 +1373,24 @@ function blockCard(block) {
     sujets.timers.set(block.id, setTimeout(() => flushText(block.id, area), SAVE_DELAY_MS));
   });
   area.addEventListener('change', () => flushText(block.id, area));
-  const validate = el('button', 'Valider le bloc', 'petit');
-  validate.type = 'button';
   const ready = block.claims.every((id) => VALIDATED.includes(claims.find((c) => c.id === id)?.status));
+  const validate = el('button', block.heading ? 'Valider le texte' : 'Valider le bloc', 'petit');
+  validate.type = 'button';
+  validate.dataset.action = 'valider';
   validate.disabled = block.state === 'valide' || !ready;
   validate.title = ready ? '' : 'Toutes les affirmations citées doivent être validées.';
   validate.addEventListener('click', () => subjectChange('/api/sujet/block', { blockId: block.id, action: { kind: 'valider' } }));
-  card.append(head, area, counter, citations(block), validate);
+  if (!block.heading) {
+    card.append(head, area, counter, citations(block), validate);
+    return card;
+  }
+  // En-tête au-dessus du texte, chacun avec son état (ED4).
+  const textHead = el('div', undefined, 'ligne-entete');
+  textHead.append(el('span', 'Texte', 'nom-entete'), el('span', BLOCK_LABELS[block.state], 'etat'));
+  const textBox = el('div', undefined, 'texte-bloc');
+  textBox.dataset.state = block.state;
+  textBox.append(textHead, area, counter, validate);
+  card.append(head, headingPart(block, want, ready), textBox, citations(block));
   return card;
 }
 
@@ -1340,7 +1405,7 @@ function showRelecture() {
   $('rl-claims').replaceChildren(...(view.claims.length ? view.claims.map(claimCard) : [noResearch]));
   $('rl-blocks').replaceChildren(...view.subject.blocks.map(blockCard));
   const count = (list, ok) => `${list.filter(ok).length} / ${list.length}`;
-  $('rl-compte').textContent = `Affirmations traitées : ${count(view.claims, (c) => c.status !== 'propose')}. Blocs validés : ${count(view.subject.blocks, (b) => b.state === 'valide')}.`;
+  $('rl-compte').textContent = `Affirmations traitées : ${count(view.claims, (c) => c.status !== 'propose')}. Blocs validés : ${count(view.subject.blocks, (b) => reviewOf(b) === 'valide')}.`;
   $('rl-titre').value = view.titleOverride ?? '';
   $('rl-titre').placeholder = view.sceneTitle;
   $('rl-legende').value = view.legend;

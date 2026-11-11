@@ -10,6 +10,7 @@ import { createPrintServer } from '../src/server/app';
 import { BOOK_ID, makeGlbi, put, tempDir } from './fixtures/make-glbi';
 import { makePng } from './fixtures/make-png';
 import { makeResearch } from './fixtures/recherche';
+import { researchEd4, syntheseEd4 } from './fixtures/recherche-ed4';
 import { startFakeComfy } from './fixtures/fake-comfy';
 import { generationGraph, upscaleGraph } from './fixtures/workflows';
 import { createComfyRuntime } from '../src/server/comfy-actions';
@@ -503,6 +504,67 @@ const levels = () => page.evaluate(`[...document.querySelectorAll('#sa-resultat 
   await page.click('#s-creer');
   await until(`document.querySelector('#sujet-message').textContent.includes('beta')`);
   check('second sujet : commence en page 8', (await text('#sujets-total')).includes('page 10'));
+}
+
+// ED4 : prompt par sorte et relecture des en-têtes, sur le sujet beta passé sur une mise en page de synthèse (chaîne, capsule, question) ;
+// beta est remis ensuite tel qu'il était, pour la suite.
+{
+  const betaDir = path.join(dataRoot, BOOK_ID, 'subjects', 'beta');
+  const saved = Object.fromEntries(fs.readdirSync(betaDir).map((f) => [f, fs.readFileSync(path.join(betaDir, f))]));
+  const modele = JSON.parse(saved['layout.json']!.toString('utf8')).modele;
+  fs.writeFileSync(path.join(betaDir, 'layout.json'), JSON.stringify({ ...syntheseEd4('2A'), modele }, null, 2));
+  const betaFile = () => JSON.parse(fs.readFileSync(path.join(betaDir, 'subject.json'), 'utf8'));
+  await page.setViewportSize(SIZES[1]!);
+  await page.locator('#sujets-liste tr', { hasText: 'beta' }).locator('button:has-text("Ouvrir")').click();
+  await untilSub('sujet-recherche', 'à faire');
+  await page.click('#r-preparer');
+  await until(`document.querySelector('#r-prompt').value.includes('"paragraphe": "p2"')`);
+  const prompt = await page.inputValue('#r-prompt');
+  check('ED4 page : prompt par sorte, paragraphes, intertitre, question, consignes', ['"paragraphe": "p1"', 'un intertitre de 2 à 5 mots', 'une question « Pourquoi… ? »', 'un titre court', 'consigne de l\'éditeur) : L’animal entier', '"schemaVersion" vaut 2.'].every((t) => prompt.includes(t)));
+  const v1 = { ...makeResearch('beta'), schemaVersion: 1 };
+  await importJson(v1);
+  await until(`document.querySelector('#r-resultat .erreur') !== null`);
+  check('ED4 page : fichier version 1 refusé, relancer le prompt', (await text('#r-resultat')).includes('Relancer le prompt'), await text('#r-resultat'));
+  const noHeading = researchEd4('beta');
+  delete (noHeading.blocks[2] as { heading?: string }).heading;
+  await importJson(noHeading);
+  await until(`document.querySelector('#r-resultat').textContent.includes('en-tête manquant')`);
+  check('ED4 page : en-tête manquant, nommé par bloc', (await text('#r-resultat')).includes('en-tête manquant pour le bloc corps-p2'));
+  await importJson(researchEd4('beta'));
+  await untilSub('sujet-recherche', 'validée');
+  await goSub('sujet-relecture');
+  await page.waitForSelector('[data-block="corps-p2"] .entete-bloc');
+  const order = await page.evaluate(`(() => { const c = document.querySelector('[data-block="corps-p2"]'); const h = c.querySelector('.entete-bloc'); const t = c.querySelector('.texte-bloc'); return !!h && !!t && (h.compareDocumentPosition(t) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0; })()`);
+  check('ED4 relecture : l’en-tête au-dessus du texte, dans la même carte', order === true);
+  check('ED4 relecture : intertitre avec son compteur', (await text('[data-block="corps-p2"] .entete-bloc .nom-entete')) === 'Intertitre' && (await text('[data-block="corps-p2"] .entete-bloc .compteur')) === '20 / 28 caractères');
+  check('ED4 relecture : question et titre de capsule nommés', (await text('[data-block="question"] .entete-bloc .nom-entete')) === 'Question' && (await text('[data-block="capsule"] .entete-bloc .nom-entete')) === 'Titre');
+  check('ED4 relecture : pas d’en-tête là où il n’en est pas attendu', (await page.locator('[data-block="corps-p1"] .entete-bloc').count()) === 0 && (await page.locator('[data-block="legende"] .entete-bloc').count()) === 0);
+  check('ED4 relecture : en-tête non validable avant ses affirmations', await page.isDisabled('[data-block="corps-p2"] button:has-text("Valider l\'intertitre")'));
+  for (const id of ['c1', 'c2', 'c3']) {
+    await claimButton(id, 'Valider');
+    await untilClaim(id, 'valide');
+  }
+  await page.click('[data-block="corps-p2"] button:has-text("Valider le texte")');
+  await until(`document.querySelector('[data-block="corps-p2"] .texte-bloc')?.dataset.state === 'valide'`);
+  check('ED4 relecture : texte validé, en-tête à relire, bloc pas relu', (await stateOfBlock('corps-p2')) === 'a-relire' && betaFile().blocks.find((b: { id: string }) => b.id === 'corps-p2').state === 'valide');
+  await page.click('[data-block="corps-p2"] button:has-text("Valider l\'intertitre")');
+  await untilBlock('corps-p2', 'valide');
+  check('ED4 relecture : texte et en-tête validés, bloc relu', betaFile().blocks.find((b: { id: string }) => b.id === 'corps-p2').headingState === 'valide');
+  await page.fill('[data-block="corps-p2"] .entete-bloc textarea', 'Un intertitre bien trop long ici');
+  check('ED4 relecture : compteur de l’en-tête en erreur à la frappe', await page.evaluate(`document.querySelector('[data-block="corps-p2"] .entete-bloc .compteur').classList.contains('erreur')`) as boolean);
+  await page.press('[data-block="corps-p2"] .entete-bloc textarea', 'Tab');
+  await untilBlock('corps-p2', 'a-relire');
+  check('ED4 relecture : en-tête modifié, enregistré, à relire', betaFile().blocks.find((b: { id: string }) => b.id === 'corps-p2').heading.fr === 'Un intertitre bien trop long ici' && betaFile().blocks.find((b: { id: string }) => b.id === 'corps-p2').headingState === 'a-relire');
+  check('ED4 relecture : compte des blocs relus', (await text('#rl-compte')).includes('Blocs validés : 0 / 9'), await text('#rl-compte'));
+  for (const size of SIZES) {
+    await page.setViewportSize(size);
+    await page.waitForTimeout(50);
+    const r = await page.evaluate(`({ sh: document.documentElement.scrollHeight, h: innerHeight, sw: document.documentElement.scrollWidth, w: innerWidth })`) as { sh: number; h: number; sw: number; w: number };
+    check(`ED4 relecture ${size.width} × ${size.height} : aucun défilement de page`, r.sh <= r.h && r.sw <= r.w, r);
+  }
+  await page.click('#sujet-retour');
+  for (const f of fs.readdirSync(betaDir)) if (!(f in saved)) fs.rmSync(path.join(betaDir, f));
+  for (const [f, bytes] of Object.entries(saved)) fs.writeFileSync(path.join(betaDir, f), bytes);
 }
 
 // Droits et illustrations, de bout en bout (MP4)

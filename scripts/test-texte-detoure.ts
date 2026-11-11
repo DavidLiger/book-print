@@ -15,7 +15,11 @@ import { createCollection, readCollection } from '../src/data/collection';
 import { contourFile, contourName, readContour, sha256, subjectContour, writeContour } from '../src/data/contour-file';
 import { createBookFolder } from '../src/data/create-book';
 import { storeIllustration } from '../src/data/illustration-store';
-import { createSubject } from '../src/data/subject-file';
+import { createSubject, readResearch, updateSubject } from '../src/data/subject-file';
+import { checkAgainst, mergeImport, parseResearch } from '../src/research/import';
+import { applyBlockAction, applyClaimAction, type Data } from '../src/research/state';
+import { editorContent } from '../src/render/subject';
+import { paragraphWords, researchEd4, syntheseEd4 } from './fixtures/recherche-ed4';
 import { cleanDetoure, cleanPng, ImageRefused } from '../src/images/clean';
 import { ALPHA_THRESHOLD, containRect, contourOf, ContourRefused, insidePolygon, outlineIn, polygonsOverlap, rectPolygon, simplify } from '../src/images/contour';
 import { containPpi } from '../src/images/crop';
@@ -27,7 +31,7 @@ import { readFacts } from '../src/parcours/facts';
 import { computeParcours, STEPS } from '../src/parcours/steps';
 import { boxMarkup, chainTokens, type ChainText } from '../src/render/flow';
 import { controlTemplate, fillerChains, fillerText, flowedPreview, templatePreview } from '../src/render/gabarit';
-import { SHAPE_MARGIN_MM, wrapFloats } from '../src/render/html';
+import { renderHtml, SHAPE_MARGIN_MM, wrapFloats } from '../src/render/html';
 import { flowHtml, measureHtml, renderFlowedPdf, renderPdf } from '../src/render/pdf';
 import { controlSubject, subjectBuilder, subjectContext, subjectHtml, subjectPage, zoneImages } from '../src/render/subject';
 import { expectedBlocks } from '../src/research/blocks';
@@ -56,6 +60,20 @@ const newData = () => {
 const margins = (dataRoot: string) => readCollection(dataRoot)!.style.margins;
 const writeModel = (dataRoot: string, id = '2X', options = {}) => put(dataRoot, `collection/gabarits/${id}.json`, syntheseEd2(id, SIX_NINE, margins(dataRoot), options));
 const parsed = (options = {}) => layoutSchema.parse(syntheseEd2('2X', SIX_NINE, MARGINS, options));
+/** ED4 : les paragraphes de la chaîne `corps` de 2X, écrits dans le sujet comme après un import (mots numérotés, intertitres de p2 et p4). */
+/** Le HTML d'un sujet pour un contenu donné, sans coupure (le texte des chaînes n'y est pas). */
+const renderHtmlOf = (ctx: ReturnType<typeof subjectContext>, content: Parameters<typeof renderHtml>[3]) => renderHtml(ctx.layout, ctx.trim, ctx.collection.style, content, ctx.collection.pictos);
+const fillParagraphs = (dataRoot: string, subjectId = 'alpha') => {
+  const file = path.join(dataRoot, BOOK_ID, 'subjects', subjectId, 'subject.json');
+  const subject = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const words = (p: string) => Array.from({ length: 40 }, (_, i) => `${p}mot${String(i + 1).padStart(2, '0')}`).join(' ');
+  subject.blocks = ['p1', 'p2', 'p3', 'p4', 'p5'].map((p) => ({
+    id: `corps-${p}`, zone: 'corps', type: 'paragraphe', paragraphe: p, text: { fr: words(p) },
+    ...(p === 'p2' || p === 'p4' ? { heading: { fr: `Intertitre ${p}` }, headingState: 'a-relire' } : {}),
+    claims: ['c1'], state: 'a-relire',
+  }));
+  fs.writeFileSync(file, JSON.stringify(subject, null, 2));
+};
 
 /** Le texte de chaque boîte d'une chaîne, dans l'ordre des boîtes, relu dans le HTML final. */
 function boxTexts(html: string, chain = 'corps'): { words: string[]; paras: string[]; lastIsHeading: boolean; firstIsTete: boolean }[] {
@@ -179,7 +197,7 @@ async function pdfImages(pdf: Uint8Array): Promise<{ count: number; smask: numbe
   check('pose : zone sans champ d’ED2, rien d’ajouté', !('chaine' in zone('chapeau')) && !('detoure' in zone('chapeau')));
   const fiche = readCollection(newData())!.style.fiche;
   const blocks = expectedBlocks(layout, fiche, 'fr');
-  check('blocs attendus : aucun pour un cadre de chaîne (avant ED4)', !blocks.some((b) => b.zone === 'texte-g' || b.zone === 'texte-d') && blocks.some((b) => b.zone === 'chapeau'), blocks);
+  check('blocs attendus : aucun pour un cadre de chaîne, un paragraphe par paragraphe (ED4)', !blocks.some((b) => b.zone === 'texte-g' || b.zone === 'texte-d') && blocks.some((b) => b.zone === 'chapeau') && blocks.filter((b) => b.type === 'paragraphe').map((b) => b.id).join() === 'corps-p1,corps-p2,corps-p3,corps-p4,corps-p5', blocks);
   const solo = layoutSchema.parse({ ...syntheseEd2(), chaines: undefined, elements: [{ id: 'texte', type: 'texte', page: 0, x: 20, y: 20, w: 80, h: 40, maxChars: 200 }] });
   check('blocs attendus : un texte seul garde son bloc', expectedBlocks(solo, fiche, 'fr').some((b) => b.zone === 'texte' && b.type === 'texte' && b.maxChars === 200));
   check('chaînes d’une version 2, aucune pour une version 1', chainsOf(layout).length === 1 && chainsOf({ id: '2A', pages: 2, start: 'gauche', sheets: [] } as never).length === 0);
@@ -454,7 +472,17 @@ async function pdfImages(pdf: Uint8Array): Promise<{ count: number; smask: numbe
   check('C12 : paragraphe plus long que sa limite', faults.includes('chaîne corps, p1 : 381 caractères, 380 au plus'), faults);
   check('C12 : intertitre plus long que sa limite', faults.includes('chaîne corps, intertitre de p2 : 25 caractères, 24 au plus'), faults);
   check('C12 : une boîte vide n’est pas une faute', chainFaults({ corps: { ends: [0, 0, 0], rest: 0, words: 0 } }, {}, defs).length === 0);
-  check('C13 : chaîne au texte de remplissage refusée jusqu’à ED4', c13Filler({ blocks: [], expected: [], lang: 'fr', title: 't', legend: 'l', essaiPhrases: [], essaiValues: [], fillerChains: ['corps'] }).details.includes('chaîne corps : texte de remplissage jusqu\'à ED4'));
+  {
+    // ED4 : la chaîne est cherchée comme les autres blocs, paragraphe par paragraphe, intertitre compris.
+    const want = expectedBlocks(parsed(), [], 'fr').filter((b) => b.type === 'paragraphe').slice(0, 2);
+    const para = (p: string, text: string, heading?: string) => ({ id: `corps-${p}`, zone: 'corps', type: 'paragraphe' as const, paragraphe: p, text: { fr: text }, ...(heading !== undefined ? { heading: { fr: heading }, headingState: 'a-relire' as const } : {}), claims: ['c1'], state: 'a-relire' as const });
+    const c13 = (blocks: never[]) => c13Filler({ blocks, expected: want, lang: 'fr', title: 't', legend: 'l', essaiPhrases: [], essaiValues: [] }).details;
+    check('C13 : le message « jusqu’à ED4 » a disparu', !c13([para('p1', 'Un vrai texte.'), para('p2', 'Un autre.', 'Titre')] as never[]).some((d) => d.includes('ED4')) && c13([para('p1', 'Un vrai texte.'), para('p2', 'Un autre.', 'Titre')] as never[]).length === 0);
+    check('C13 : remplissage dans un paragraphe refusé', c13([para('p1', fillerText(60)), para('p2', 'Un autre.', 'Titre')] as never[]).includes('bloc corps-p1 : texte de remplissage'));
+    check('C13 : remplissage dans un intertitre refusé', c13([para('p1', 'Un texte.'), para('p2', 'Un autre.', 'Lorem ipsum')] as never[]).includes('en-tête du bloc corps-p2 : texte de remplissage'));
+    check('C13 : paragraphe absent, sa place nommée', c13([para('p2', 'Un autre.', 'Titre')] as never[]).includes('zone chaîne corps, p1 vide'));
+    check('C13 : intertitre vide nommé', c13([para('p1', 'Un texte.'), para('p2', 'Un autre.', ' ')] as never[]).includes('en-tête de chaîne corps, p2 vide'));
+  }
 
   // Débordement d'une boîte mesuré comme aujourd'hui (`data-fill`, limite de la colonne) : toute la chaîne forcée dans la première boîte.
   writeModel(dataRoot);
@@ -473,6 +501,7 @@ async function pdfImages(pdf: Uint8Array): Promise<{ count: number; smask: numbe
   const dataRoot = newData();
   writeModel(dataRoot);
   createSubject(dataRoot, BOOK_ID, { sceneId: 'alpha', pages: 2, template: '2X', theme: 'foret' }, ['alpha', 'beta'], ['foret']);
+  fillParagraphs(dataRoot);
   const ctx0 = subjectContext(dataRoot, BOOK_ID, 'alpha', SCENES);
   check('sujet sans image : détouré sans contour, aplat dans sa boîte', !ctx0.layout[1]!.zones.find((z) => z.id === 'animal')!.outline && /<img class="zone illustration" data-zone="animal"/.test(subjectHtml(ctx0)));
   const synth = await detourePng(800, 900);
@@ -519,7 +548,7 @@ async function pdfImages(pdf: Uint8Array): Promise<{ count: number; smask: numbe
   check('C5 : détouré mesuré sur l’image entière, pas sur un cadrage', c5Resolution([{ ...wide, contain: true }]).level === 'ok' && c5Resolution([wide]).level === 'erreur');
   const control = await controlSubject(ctx, null);
   const c = Object.fromEntries(control.map((x) => [x.id, x]));
-  check('sujet : C13 refuse la chaîne au texte de remplissage', c.C13?.level === 'erreur' && c.C13.details.includes('chaîne corps : texte de remplissage jusqu\'à ED4'), c.C13);
+  check('sujet : C13 ne refuse plus une chaîne parce qu’elle est une chaîne (ED4)', !c.C13!.details.some((x) => x.includes('ED4') || x.includes('corps-p') || x.includes('chaîne corps')), c.C13);
   check('sujet : C12 de la chaîne vert au remplissage maximal', c.C12?.level === 'ok' || !c.C12?.details.some((x) => x.startsWith('chaîne')), c.C12);
   const page = await subjectPage(ctx);
   check('sujet : aperçu coupé, même HTML que le PDF', page.html === r.html);
@@ -560,6 +589,7 @@ async function pdfImages(pdf: Uint8Array): Promise<{ count: number; smask: numbe
   createCollection(dataRoot);
   writeModel(dataRoot);
   createSubject(dataRoot, BOOK_ID, { sceneId: 'alpha', pages: 2, template: '2X', theme: 'foret' }, ['alpha', 'beta'], ['foret']);
+  fillParagraphs(dataRoot);
   put(parent, 'config.local.json', { glbRoot, dataRoot });
   const server = createPrintServer(path.join(parent, 'config.local.json'));
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -631,8 +661,68 @@ async function pdfImages(pdf: Uint8Array): Promise<{ count: number; smask: numbe
   const ctl = JSON.parse((await request({ path: '/api/gabarits/controle', body: { bookId: BOOK_ID, id: '2X' } })).body);
   check('route : contrôle du modèle à chaîne', ctl.checks?.find((c: Dict) => c.id === 'C12')?.level === 'ok', ctl);
   const mark = JSON.parse((await request({ path: '/api/sujet/check', body: { dir: BOOK_DIR, subjectId: 'alpha', mark: true } })).body);
-  check('Aperçu : sujet à chaîne non marqué relu avant ED4 (C13)', mark.marked === false && String(mark.reason).includes('C13'), mark.reason);
+  check('Aperçu : sujet non marqué relu tant que C13 est en erreur (chapô vide)', mark.marked === false && String(mark.reason).includes('C13'), mark.reason);
   await new Promise<void>((resolve) => server.close(() => resolve()));
+}
+
+// 11. ED4 : texte réel d'une chaîne et en-têtes écrits, venus d'une recherche importée ; C10, C12, C13 ; éditeur d'un sujet.
+{
+  const dataRoot = newData();
+  put(dataRoot, 'collection/gabarits/2Q.json', syntheseEd4('2Q', SIX_NINE, margins(dataRoot)));
+  createSubject(dataRoot, BOOK_ID, { sceneId: 'alpha', pages: 2, template: '2Q', theme: 'foret' }, ['alpha', 'beta'], ['foret']);
+  const ctx0 = subjectContext(dataRoot, BOOK_ID, 'alpha', SCENES);
+  const editor0 = renderHtmlOf(ctx0, editorContent(ctx0));
+  check('ED4 éditeur, sans recherche : remplissage des paragraphes et des en-têtes', editor0.includes('Texte de remplissage'));
+  const file = parseResearch(JSON.stringify(researchEd4()));
+  checkAgainst(file, 'alpha', 'fr', ctx0.expected);
+  const merged = mergeImport(file, null, ctx0.subject, ctx0.expected);
+  updateSubject(dataRoot, BOOK_ID, 'alpha', () => ({ subject: merged.subject, research: merged.research }));
+  const ctx = subjectContext(dataRoot, BOOK_ID, 'alpha', SCENES);
+  const page = await subjectPage(ctx);
+  const boxes = boxTexts(page.html);
+  const want = ['p1', 'p2', 'p3'].flatMap((p) => paragraphWords(p, 40));
+  check('ED4 chaîne : texte réel, aucun mot perdu ni répété', JSON.stringify(boxes.flatMap((b) => b.words)) === JSON.stringify(want), { got: boxes.flatMap((b) => b.words).length, want: want.length });
+  check('ED4 chaîne : dans l’ordre des paragraphes', [...page.html.matchAll(/data-para="(p\d)"/g)].map((m) => m[1]).filter((x, i, a) => a.indexOf(x) === i).join() === 'p1,p2,p3');
+  check('ED4 chaîne : intertitres rendus depuis le heading des blocs', page.html.includes('class="intertitre" data-para="p2">Un très grand animal</h3>') || page.html.includes('data-para="p2">Un très grand animal</h3>'));
+  check('ED4 chaîne : intertitre de p3 rendu', page.html.includes('>Que mange-t-il ?</h3>'));
+  check('ED4 chaîne : lettrine sur le premier paragraphe', /<p class="lettrine" data-para="p1">p1mot01/.test(page.html));
+  check('ED4 chaîne : aucun remplissage dans l’aperçu', !page.html.includes('Texte de remplissage'));
+  check('ED4 encadré : en-tête écrit de la capsule rendu', page.html.includes('<b class="entete">Le sais-tu ?</b>'));
+  check('ED4 encadré : question rendue en en-tête', page.html.includes('<b class="entete">Pourquoi le Fictivore mange-t-il des baies ?</b>'));
+  // Contrôles, après la relecture.
+  let d: Data = { subject: ctx.subject, research: readResearch(dataRoot, BOOK_ID, 'alpha')! };
+  for (const id of ['c1', 'c2', 'c3']) d = applyClaimAction(d, id, { kind: 'valider' }, new Date());
+  for (const b of d.subject.blocks) {
+    d = applyBlockAction(d, b.id, { kind: 'valider' });
+    if (b.heading) d = applyBlockAction(d, b.id, { kind: 'valider-entete' });
+  }
+  updateSubject(dataRoot, BOOK_ID, 'alpha', () => d);
+  const control = Object.fromEntries((await controlSubject(subjectContext(dataRoot, BOOK_ID, 'alpha', SCENES), d.research)).map((c) => [c.id, c]));
+  check('ED4 contrôles : C10 vert sur les citations des blocs', control.C10?.level === 'ok', control.C10);
+  check('ED4 contrôles : C12 vert (chaîne réelle, en-têtes)', control.C12?.level === 'ok', control.C12);
+  check('ED4 contrôles : C13 vert', control.C13?.level === 'ok', control.C13);
+  // C12 et C13 sur les en-têtes.
+  const edit = (change: (data: Data) => Data) => updateSubject(dataRoot, BOOK_ID, 'alpha', (x) => change({ subject: x.subject, research: x.research! }));
+  edit((x) => applyBlockAction(x, 'capsule', { kind: 'entete', text: 'Un titre de capsule bien trop long' }));
+  edit((x) => applyBlockAction(x, 'corps-p2', { kind: 'entete', text: 'Un intertitre beaucoup trop long' }));
+  const longs = Object.fromEntries((await controlSubject(subjectContext(dataRoot, BOOK_ID, 'alpha', SCENES), d.research)).map((c) => [c.id, c]));
+  check('ED4 C12 : en-tête d’encadré trop long', longs.C12!.details.includes('en-tête du bloc capsule : 34 caractères, 24 au plus'), longs.C12);
+  check('ED4 C12 : intertitre trop long, nommé par sa chaîne', longs.C12!.details.includes('chaîne corps, intertitre de p2 : 32 caractères, 28 au plus'), longs.C12);
+  edit((x) => applyBlockAction(x, 'capsule', { kind: 'entete', text: 'Lorem ipsum' }));
+  edit((x) => applyBlockAction(x, 'corps-p3', { kind: 'texte', text: 'Texte de remplissage à compléter.' }));
+  edit((x) => applyBlockAction(x, 'question', { kind: 'entete', text: '' }));
+  const filled = Object.fromEntries((await controlSubject(subjectContext(dataRoot, BOOK_ID, 'alpha', SCENES), d.research)).map((c) => [c.id, c]));
+  check('ED4 C13 : remplissage dans l’en-tête d’un encadré', filled.C13!.details.includes('en-tête du bloc capsule : texte de remplissage'), filled.C13);
+  check('ED4 C13 : remplissage dans un paragraphe de la chaîne', filled.C13!.details.includes('bloc corps-p3 : texte de remplissage'), filled.C13);
+  check('ED4 C13 : en-tête vide', filled.C13!.details.includes('en-tête de question vide'), filled.C13);
+  check('ED4 C12 : en-tête vide', filled.C12!.details.includes('bloc question : aucun en-tête en fr'), filled.C12);
+  // Éditeur d'un sujet : texte réel là où il existe.
+  const ctx2 = subjectContext(dataRoot, BOOK_ID, 'alpha', SCENES);
+  const editor = renderHtmlOf(ctx2, editorContent(ctx2));
+  const ec = editorContent(ctx2);
+  check('ED4 éditeur : paragraphes et intertitres réels', ec.chains!.corps!.paragraphs[0]!.text.startsWith('p1mot01') && ec.chains!.corps!.paragraphs[1]!.heading === 'Un intertitre beaucoup trop long');
+  check('ED4 éditeur : en-tête réel de la capsule', ec.headings!.capsule === 'Lorem ipsum' && editor.length > 0);
+  check('ED4 éditeur : en-tête vide, remplissage à sa place', ec.headings!.question!.startsWith('Texte de remplissage'));
 }
 
 finish('texte et détourés');

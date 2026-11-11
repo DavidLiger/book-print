@@ -357,3 +357,12 @@ button[aria-pressed="true"] { background: var(--action); color: var(--carte); }
 .r-guide-texte { fill: #c2185b; font: 2.6px system-ui, sans-serif; }
 .r-colonne { fill: none; stroke: #7b4fc4; stroke-width: 0.25; stroke-dasharray: 1.5 1; }
 .r-bande { stroke: #1f5fa8; stroke-width: 0.3; stroke-dasharray: 1 1.5; }
+/* ED4 : en-tête d'un bloc, relu à part au-dessus du texte. */
+.entete-bloc, .texte-bloc { display: flex; flex-direction: column; gap: 3px; padding-left: 6px; border-left: 2px solid var(--action); }
+.entete-bloc[data-state="valide"], .texte-bloc[data-state="valide"] { border-left-color: var(--bien); }
+.entete-bloc[data-state="a-reprendre"], .texte-bloc[data-state="a-reprendre"] { border-left-color: var(--erreur); }
+.ligne-entete { display: flex; align-items: baseline; gap: 8px; font-size: 13px; }
+.nom-entete { font-weight: 600; }
+.carte .entete-bloc .etat, .carte .texte-bloc .etat { color: var(--doux); }
+.carte .entete-bloc[data-state="valide"] .etat, .carte .texte-bloc[data-state="valide"] .etat { color: var(--bien); }
+.carte .entete-bloc[data-state="a-reprendre"] .etat, .carte .texte-bloc[data-state="a-reprendre"] .etat { color: var(--erreur); }

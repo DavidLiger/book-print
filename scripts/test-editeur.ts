@@ -482,13 +482,18 @@ const expected = (doc: Dict) => layoutJson(layoutSchema.parse(doc));
   // Éditeur d'un sujet : texte réel là où il existe (titre, blocs importés, légende du QR), remplissage ailleurs.
   const alphaCtx = subjectContext(dataRoot, BOOK_ID, 'alpha', readBook(glbRoot, BOOK_DIR).scenes);
   const research = makeResearch('alpha');
-  research.blocks = alphaCtx.expected.map((b) => ({ zone: b.zone, type: b.type, ...(b.item ? { item: b.item } : {}), text: `Texte importé ${b.id}`, claims: ['c1'] })) as typeof research.blocks;
+  (research as { schemaVersion: number }).schemaVersion = 2;
+  research.blocks = alphaCtx.expected.map((b) => ({ zone: b.zone, type: b.type, ...(b.item ? { item: b.item } : {}), ...(b.heading ? { heading: `En-tête importé ${b.id}` } : {}), text: `Texte importé ${b.id}`, claims: ['c1'] })) as typeof research.blocks;
   const merged = mergeImport(research, null, alphaCtx.subject, alphaCtx.expected);
+  // ED4 : l'en-tête de la question vidé dans la relecture, le temps de le récrire : l'éditeur y met le remplissage.
+  const question = merged.subject.blocks.find((b) => b.id === 'question')!;
+  question.heading = { fr: '' };
   updateSubject(dataRoot, BOOK_ID, 'alpha', () => ({ subject: merged.subject, research: merged.research }));
   const alphaHtml = (await get(`/apercu-mise-en-page?dir=${BOOK_DIR}&subject=alpha`)).body;
   check('éditeur d’un sujet : bloc importé en texte réel', alphaHtml.includes('Texte importé chapeau') && alphaHtml.includes('Texte importé capsule'), alphaCtx.expected.map((b) => b.id));
   check('éditeur d’un sujet : titre de la scène, légende du QR réelle', alphaHtml.includes('alpha fr') && alphaHtml.includes('Scanne-moi'));
-  check('éditeur d’un sujet : remplissage là où rien n’est importé (en-tête écrit avant ED4)', alphaHtml.includes('Texte de remplissage'));
+  check('éditeur d’un sujet : en-tête importé en texte réel (ED4)', alphaHtml.includes('<b class="entete">En-tête importé capsule</b>'));
+  check('éditeur d’un sujet : remplissage là où rien n’est écrit (en-tête vide)', alphaHtml.includes('Texte de remplissage'));
   const control = await post('/api/mise-en-page/controle', { dir: BOOK_DIR, subjectId: 'alpha' });
   check('éditeur d’un sujet : « Contrôler », sept contrôles', control.status === 200 && control.data.checks.map((c: Dict) => c.id).join() === 'C3,C4,C6,C7,C8,C12,C17', control.data);
 

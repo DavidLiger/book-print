@@ -6,10 +6,14 @@ import { createCollection, readCollection } from '../src/data/collection';
 import { createBookFolder } from '../src/data/create-book';
 import { readPrintBook } from '../src/data/pricing-file';
 import { createSubject, firstPageOf, keepDatedCopies, QR_LEGEND_DEFAULT, readResearch, readSubject, RESEARCH_FILE, SubjectRefused, subjectFolder, subjectIdFor, SUBJECT_FILE, updateSubject } from '../src/data/subject-file';
-import { expectedBlocks } from '../src/research/blocks';
+import { blocksGap, duplicateBlocks, duplicateFault, expectedBlocks } from '../src/research/blocks';
+import { KIND_RULES, KINDS } from '../src/research/kinds';
+import { layoutSchema } from '../src/layout/schema';
+import { reviewState } from '../src/schema/block';
+import { researchEd4, syntheseEd4 } from './fixtures/recherche-ed4';
 import { ResearchRefused } from '../src/research/errors';
 import { checkAgainst, mergeImport, parseResearch } from '../src/research/import';
-import { AGE_TARGET, researchPrompt } from '../src/research/prompt';
+import { AGE_TARGET, blockLine, researchPrompt } from '../src/research/prompt';
 import { applyBlockAction, applyClaimAction, type Data } from '../src/research/state';
 import { checkUrl, checkUrls, isPrivateAddress, MAX_REDIRECTS, type UrlDeps } from '../src/research/url-check';
 import { researchJsonSchema } from '../src/schema/research';
@@ -214,7 +218,8 @@ parseRefused('affirmation en double', (f) => { f.claims[1].id = 'c1'; }, 'claims
 parseRefused('bloc citant une affirmation inconnue', (f) => { f.blocks[1].claims[0] = 'c9'; }, 'blocks.1.claims.0');
 parseRefused('bloc sans affirmation', (f) => { f.blocks[0].claims = []; }, 'blocks.0.claims');
 parseRefused('bloc de type inconnu', (f) => { f.blocks[0].type = 'titre'; }, 'blocks.0.type');
-parseRefused('version inconnue', (f) => { f.schemaVersion = 2; }, 'schemaVersion');
+parseRefused('version inconnue', (f) => { f.schemaVersion = 3; }, 'schemaVersion');
+parseRefused('version 1 : lue par son ancien schéma, en-tête refusé', (f) => { f.blocks[0].heading = 'Titre'; }, 'blocks.0');
 parseRefused('langue inconnue', (f) => { f.lang = 'de'; }, 'lang');
 
 const against = (change: (f: any) => void = () => {}) => () => checkAgainst(JSON.parse(text(change)), 'alpha', 'fr', expected);
@@ -227,6 +232,139 @@ refused('import : type différent de la zone', against((f) => { f.blocks[0].type
 refused('import : bloc en double', against((f) => { f.blocks.push(f.blocks[0]); }), 'bloc en double');
 refused('import : bloc manquant', against((f) => { f.blocks.splice(1, 1); }), 'bloc manquant, texte');
 check('import : texte trop long accepté (compteur et C12)', refusal(against((f) => { f.blocks[0].text = 'x'.repeat(500); })) === '');
+
+// ED4 : recherche par sorte de paragraphe (spec §24.9).
+{
+  const layout = layoutSchema.parse(syntheseEd4());
+  const want = expectedBlocks(layout, fiche, 'fr');
+  const byId = (id: string) => want.find((b) => b.id === id)!;
+  check('ED4 blocs attendus : dans l’ordre de la mise en page, la chaîne à la place de son premier cadre', want.map((b) => b.id).join() === 'chapeau,corps-p1,corps-p2,corps-p3,capsule,question,etiquette,chiffre,legende', want.map((b) => b.id));
+  check('ED4 blocs attendus : un paragraphe par paragraphe de chaîne, identifiant <chaîne>-<paragraphe>', ['p1', 'p2', 'p3'].every((p) => byId(`corps-${p}`).type === 'paragraphe' && byId(`corps-${p}`).zone === 'corps' && byId(`corps-${p}`).paragraphe === p && byId(`corps-${p}`).maxChars === 330));
+  check('ED4 blocs attendus : en-tête exigé avec un intertitre, à sa longueur', byId('corps-p1').heading === null && byId('corps-p2').heading?.maxChars === 28 && byId('corps-p3').heading?.maxChars === 28);
+  check('ED4 blocs attendus : aucun bloc pour les cadres de la chaîne', !want.some((b) => b.zone === 'texte-g' || b.zone === 'texte-d'));
+  check('ED4 blocs attendus : capsule à titre écrit et question, en-tête exigé', byId('capsule').kind === 'capsule' && byId('capsule').heading?.maxChars === 24 && byId('question').kind === 'question' && byId('question').heading?.maxChars === 48);
+  check('ED4 blocs attendus : consigne de la légende et de l’étiquette reprise', byId('legende').consigne!.startsWith('L’animal entier') && byId('etiquette').consigne!.startsWith('La queue'));
+  check('ED4 blocs attendus : sortes', byId('chapeau').kind === 'chapeau' && byId('chiffre').kind === 'chiffre-cle' && byId('legende').kind === 'legende' && byId('etiquette').kind === 'etiquette');
+  {
+    const fixed = layoutSchema.parse({ ...syntheseEd4(), elements: syntheseEd4().elements.map((e) => (e.id === 'capsule' ? { ...e, headingMaxChars: undefined, heading: { fr: 'Le savais-tu ?', en: 'Did you know?', es: '¿Sabías que?' } } : e)) });
+    const b = expectedBlocks(fixed, fiche, 'fr').find((x) => x.id === 'capsule')!;
+    check('ED4 blocs attendus : capsule à titre fixé, aucun en-tête à écrire', b.heading === null && b.fixedHeading === 'Le savais-tu ?' && b.kind === 'capsule');
+    check('ED4 prompt : titre fixé dit, pas de heading demandé', blockLine(b).includes('En-tête déjà imprimé : « Le savais-tu ? »') && !blockLine(b).includes('"heading" :'));
+    const bare = layoutSchema.parse({ ...syntheseEd4(), elements: syntheseEd4().elements.map((e) => (e.id === 'capsule' ? { ...e, headingMaxChars: undefined } : e)) });
+    check('ED4 blocs attendus : capsule sans en-tête (comme GB1)', expectedBlocks(bare, fiche, 'fr').find((x) => x.id === 'capsule')!.heading === null);
+  }
+  check('ED4 blocs attendus : 2A inchangé, aucun en-tête ni paragraphe', expected.every((b) => b.heading === null && b.type !== 'paragraphe') && expected.map((b) => b.id).join() === 'chapeau,texte,fiche-taille,fiche-poids,fiche-epoque,fiche-regime,fiche-lieu');
+  {
+    const clash = layoutSchema.parse({ ...syntheseEd4(), elements: [...syntheseEd4().elements, { id: 'corps-p2', type: 'chiffre-cle', page: 1, x: 120, y: 200, w: 10, h: 8, maxChars: 10 }] });
+    const all = expectedBlocks(clash, fiche, 'fr');
+    check('ED4 identifiant en double : nommé', duplicateBlocks(all).join() === 'corps-p2 (corps, p2 et corps-p2)', duplicateBlocks(all));
+    check('ED4 identifiant en double : refus qui renvoie à la mise en page', duplicateFault(all)!.includes('Renommer l\'élément ou le paragraphe') && duplicateFault(want) === null);
+    refused('ED4 import : identifiant en double refusé', () => checkAgainst(researchEd4() as never, 'alpha', 'fr', all), 'Identifiant de bloc en double');
+  }
+
+  // Prompt
+  const prompt = researchPrompt({ subjectId: 'alpha', subjectTitle: 'Alpha fr', bookTitle: 'Livre fr', lang: 'fr', templateId: '2Q', pages: 2, blocks: want, today: '2026-11-11' });
+  check('ED4 prompt : chaque sorte a sa consigne', KINDS.every((k) => KIND_RULES[k].name !== '') && ['chapeau', 'paragraphe', 'capsule', 'question', 'legende', 'etiquette', 'chiffre-cle'].every((k) => prompt.includes(KIND_RULES[k as keyof typeof KIND_RULES].text!)));
+  check('ED4 prompt : consigne du chapô', prompt.includes('"zone": "chapeau", "type": "chapeau" : chapô : une ou deux phrases qui disent l\'essentiel du sujet et donnent envie de lire, 140 caractères au plus'));
+  check('ED4 prompt : paragraphe, son champ et ses deux longueurs', prompt.includes('"zone": "corps", "type": "paragraphe", "paragraphe": "p2" : paragraphe : un seul aspect du sujet, 330 caractères au plus') && prompt.includes('"heading" : un intertitre de 2 à 5 mots qui annonce ce que contient le paragraphe, 28 caractères au plus'));
+  check('ED4 prompt : paragraphe sans intertitre, sans heading', (() => { const line = blockLine(byId('corps-p1')); return !line.includes('"heading"') && line.includes('"paragraphe": "p1"'); })());
+  check('ED4 prompt : capsule, texte et titre court', blockLine(byId('capsule')).includes('capsule : un fait étonnant ou une petite activité, 140 caractères au plus') && blockLine(byId('capsule')).includes('"heading" : un titre court, 24 caractères au plus'));
+  check('ED4 prompt : question « Pourquoi… ? » et sa réponse', blockLine(byId('question')).includes('question : la réponse, expliquée simplement, 200 caractères au plus') && blockLine(byId('question')).includes('"heading" : une question « Pourquoi… ? » qu\'un enfant se pose sur le sujet, 48 caractères au plus'));
+  check('ED4 prompt : légende et sa consigne', blockLine(byId('legende')).includes('légende : une phrase qui dit ce que montre l\'image, d\'après la consigne, 90 caractères au plus') && blockLine(byId('legende')).includes('Ce que montre l\'image (consigne de l\'éditeur) : L’animal entier, de profil, dans les hautes herbes.'));
+  check('ED4 prompt : étiquette et sa consigne', blockLine(byId('etiquette')).includes('étiquette : un ou deux mots : le nom de ce qui est montré, 14 caractères au plus') && blockLine(byId('etiquette')).includes('consigne de l\'éditeur) : La queue'));
+  check('ED4 prompt : chiffre-clé', blockLine(byId('chiffre')).includes('chiffre-clé : un nombre et son unité, puis quelques mots, 30 caractères au plus'));
+  check('ED4 prompt : blocs dans l’ordre de la page', ['"zone": "chapeau"', '"paragraphe": "p1"', '"paragraphe": "p2"', '"paragraphe": "p3"', '"zone": "capsule"', '"zone": "question"', '"zone": "etiquette"', '"zone": "chiffre"', '"zone": "legende"'].map((t) => prompt.indexOf(t)).every((i, k, a) => i > 0 && (k === 0 || i > a[k - 1]!)));
+  check('ED4 prompt : version 2 demandée, schéma de la version 2', prompt.includes('"schemaVersion" vaut 2.') && prompt.includes(JSON.stringify(researchJsonSchema(), null, 2)) && JSON.stringify(researchJsonSchema()).includes('"paragraphe"') && JSON.stringify(researchJsonSchema()).includes('"heading"'));
+  check('ED4 prompt : règles générales en tête, inchangées', prompt.indexOf('Règles\n- Une source au moins par affirmation') < prompt.indexOf('Blocs à rédiger') && ['Une source au moins par affirmation', 'paraphrase', 'Aucune citation longue', 'fait débattu', AGE_TARGET].every((t) => prompt.includes(t)));
+  check('ED4 prompt : 2A sans en-tête ni paragraphe demandé', !researchPrompt({ subjectId: 'alpha', subjectTitle: 'A', bookTitle: 'L', lang: 'fr', templateId: '2A', pages: 2, blocks: expected, today: '2026-11-11' }).match(/^ {2}"heading"/m));
+  const kinds = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'research', 'kinds.ts'), 'utf8');
+  check('ED4 consignes : modèle générique, aucun sujet du livre', !/dinosaure|rex|paléonto/i.test(kinds));
+
+  // Import
+  const v2 = (change: (f: any) => void = () => {}) => {
+    const f: any = structuredClone(researchEd4());
+    change(f);
+    return JSON.stringify(f);
+  };
+  const ed4Against = (change: (f: any) => void = () => {}) => () => checkAgainst(parseResearch(v2(change)), 'alpha', 'fr', want);
+  check('ED4 import : fichier version 2 conforme', refusal(ed4Against()) === '', refusal(ed4Against()));
+  refused('ED4 import : en-tête manquant', ed4Against((f) => { delete f.blocks[2].heading; }), 'champ blocks.2.heading : en-tête manquant pour le bloc corps-p2, 28 caractères au plus');
+  refused('ED4 import : en-tête manquant d’une capsule', ed4Against((f) => { delete f.blocks[4].heading; }), 'en-tête manquant pour le bloc capsule');
+  refused('ED4 import : en-tête en trop sur un paragraphe sans intertitre', ed4Against((f) => { f.blocks[1].heading = 'Titre'; }), 'champ blocks.1.heading : en-tête en trop pour le bloc corps-p1');
+  refused('ED4 import : en-tête en trop sur la légende', ed4Against((f) => { f.blocks[8].heading = 'Titre'; }), 'en-tête en trop pour le bloc legende');
+  refused('ED4 import : en-tête trop long', ed4Against((f) => { f.blocks[5].heading = 'P'.repeat(49); }), 'champ blocks.5.heading : en-tête du bloc question trop long, 49 caractères, 48 au plus');
+  refused('ED4 import : paragraphe absent', ed4Against((f) => { f.blocks.splice(3, 1); }), 'paragraphe absent, p3 de la chaîne corps (bloc corps-p3)');
+  refused('ED4 import : paragraphe en trop', ed4Against((f) => { f.blocks.push({ ...f.blocks[1], paragraphe: 'p4' }); }), 'paragraphe p4 de la chaîne corps inconnu de la mise en page, en trop');
+  refused('ED4 import : paragraphe d’une chaîne inconnue', ed4Against((f) => { f.blocks[1].zone = 'autre'; }), 'paragraphe p1 de la chaîne autre inconnu');
+  refused('ED4 import : paragraphe en double', ed4Against((f) => { f.blocks.push(f.blocks[1]); }), 'bloc en double, corps-p1');
+  refused('ED4 import : paragraphe donné comme texte', ed4Against((f) => { f.blocks[1] = { zone: 'corps', type: 'texte', text: 'T', claims: ['c1'] }; }), 'inconnue du gabarit');
+  check('ED4 import : texte de paragraphe trop long accepté (compteur et C12)', refusal(ed4Against((f) => { f.blocks[1].text = 'x'.repeat(400); })) === '');
+  {
+    const v1File = JSON.stringify({ ...researchEd4(), schemaVersion: 1, blocks: [{ zone: 'chapeau', type: 'chapeau', text: 'Texte.', claims: ['c1'] }] });
+    refused('ED4 import : version 1 refusée si la mise en page attend des paragraphes ou des en-têtes', () => checkAgainst(parseResearch(v1File), 'alpha', 'fr', want), 'version 1, d\'avant les paragraphes et les en-têtes');
+    refused('ED4 import : version 1, motif « relancer le prompt »', () => checkAgainst(parseResearch(v1File), 'alpha', 'fr', want), 'Relancer le prompt');
+    const onlyHeading = layoutSchema.parse({ ...syntheseEd4(), chaines: undefined, elements: syntheseEd4().elements.filter((e) => e.id === 'capsule' || e.id === 'chapeau') });
+    refused('ED4 import : version 1 refusée si un seul en-tête est exigé', () => checkAgainst(parseResearch(v1File), 'alpha', 'fr', expectedBlocks(onlyHeading, fiche, 'fr')), 'attend capsule');
+    check('ED4 import : version 1 admise sur 2A (le raptor)', refusal(() => checkAgainst(parseResearch(text()), 'alpha', 'fr', expected)) === '');
+  }
+
+  // Fusion
+  const s0 = { ...readSubject(dataRoot, BOOK_ID, 'alpha'), blocks: [] };
+  const file = parseResearch(v2());
+  const m1 = mergeImport(file, null, s0, want);
+  const blk = (d: { subject: { blocks: any[] } }, id: string) => d.subject.blocks.find((b) => b.id === id)!;
+  check('ED4 premier import : paragraphe rangé, zone = chaîne, champ paragraphe', blk(m1, 'corps-p2').type === 'paragraphe' && blk(m1, 'corps-p2').zone === 'corps' && blk(m1, 'corps-p2').paragraphe === 'p2');
+  check('ED4 premier import : en-tête dans la langue, à relire', blk(m1, 'corps-p2').heading.fr === 'Un très grand animal' && blk(m1, 'corps-p2').headingState === 'a-relire' && blk(m1, 'question').heading.fr.startsWith('Pourquoi'));
+  check('ED4 premier import : pas d’en-tête là où il n’est pas attendu', blk(m1, 'corps-p1').heading === undefined && blk(m1, 'corps-p1').headingState === undefined && blk(m1, 'legende').heading === undefined);
+  check('ED4 premier import : research.json en version 2, blocs gardés tels quels', m1.research.schemaVersion === 2 && m1.research.blocks[2]!.heading === 'Un très grand animal');
+  check('ED4 premier import : écart nul', JSON.stringify(blocksGap(m1.subject.blocks, want)) === JSON.stringify({ missing: [], extra: [] }));
+  {
+    let d: Data = { subject: m1.subject, research: m1.research };
+    for (const id of ['c1', 'c2', 'c3']) d = applyClaimAction(d, id, { kind: 'valider' }, NOW);
+    d = applyBlockAction(d, 'corps-p2', { kind: 'valider' });
+    d = applyBlockAction(d, 'corps-p2', { kind: 'entete', text: 'Un animal géant' });
+    const again = mergeImport(file, d.research, d.subject, want);
+    check('ED4 second import identique : texte et en-tête de David gardés', blk(again, 'corps-p2').heading.fr === 'Un animal géant' && blk(again, 'corps-p2').state === 'valide');
+    const changed = mergeImport(parseResearch(v2((f) => { f.blocks[2].heading = 'Un animal immense'; })), d.research, d.subject, want);
+    check('ED4 second import : en-tête proposé changé, bloc remplacé, à relire', blk(changed, 'corps-p2').heading.fr === 'Un animal immense' && blk(changed, 'corps-p2').state === 'a-relire' && blk(changed, 'corps-p2').headingState === 'a-relire');
+  }
+
+  // Relecture de l’en-tête
+  {
+    let d: Data = { subject: m1.subject, research: m1.research };
+    refused('ED4 en-tête : affirmations non validées', () => applyBlockAction(d, 'corps-p2', { kind: 'valider-entete' }), 'En-tête du bloc corps-p2 : affirmations non validées, c2');
+    d = applyClaimAction(d, 'c2', { kind: 'valider' }, NOW);
+    d = applyBlockAction(d, 'corps-p2', { kind: 'valider' });
+    check('ED4 relecture : texte validé, en-tête à relire, bloc pas encore relu', blk(d, 'corps-p2').state === 'valide' && blk(d, 'corps-p2').headingState === 'a-relire' && reviewState(blk(d, 'corps-p2')) === 'a-relire');
+    d = applyBlockAction(d, 'corps-p2', { kind: 'valider-entete' });
+    check('ED4 relecture : en-tête validé, bloc relu', blk(d, 'corps-p2').headingState === 'valide' && reviewState(blk(d, 'corps-p2')) === 'valide');
+    const edited = applyBlockAction(d, 'corps-p2', { kind: 'entete', text: 'Autre titre' });
+    check('ED4 relecture : en-tête modifié, à relire, texte gardé validé, brouillon', blk(edited, 'corps-p2').headingState === 'a-relire' && blk(edited, 'corps-p2').state === 'valide' && blk(edited, 'corps-p2').heading.fr === 'Autre titre' && edited.subject.status === 'brouillon');
+    check('ED4 relecture : même en-tête, rien ne change', applyBlockAction(d, 'corps-p2', { kind: 'entete', text: 'Un très grand animal' }) === d);
+    const rejected = applyClaimAction(d, 'c2', { kind: 'rejeter' }, NOW);
+    check('ED4 relecture : affirmation rejetée, texte et en-tête à reprendre', blk(rejected, 'corps-p2').state === 'a-reprendre' && blk(rejected, 'corps-p2').headingState === 'a-reprendre');
+    const corrected = applyClaimAction(d, 'c2', { kind: 'corriger', text: 'Corrigé.' }, NOW);
+    check('ED4 relecture : correction après validation, en-tête à reprendre', blk(corrected, 'corps-p2').headingState === 'a-reprendre');
+    const recited = applyBlockAction(applyClaimAction(d, 'c1', { kind: 'valider' }, NOW), 'corps-p2', { kind: 'citer', claims: ['c2', 'c1'] });
+    check('ED4 relecture : citations changées, texte et en-tête à relire', blk(recited, 'corps-p2').state === 'a-relire' && blk(recited, 'corps-p2').headingState === 'a-relire');
+    refused('ED4 relecture : en-tête vide refusé à la validation', () => applyBlockAction(applyBlockAction(d, 'corps-p2', { kind: 'entete', text: ' ' }), 'corps-p2', { kind: 'valider-entete' }), 'En-tête du bloc corps-p2 vide');
+    refused('ED4 relecture : bloc sans en-tête', () => applyBlockAction(d, 'corps-p1', { kind: 'entete', text: 'X' }), 'Bloc corps-p1 sans en-tête');
+    refused('ED4 relecture : valider l’en-tête d’un bloc sans en-tête', () => applyBlockAction(d, 'legende', { kind: 'valider-entete' }), 'Bloc legende sans en-tête');
+    check('ED4 relecture : un en-tête n’a pas de citations à lui', !('headingClaims' in blk(d, 'corps-p2')) && blk(d, 'corps-p2').claims.join() === 'c2');
+  }
+
+  // Écart des en-têtes (mise en page changée après l'import)
+  {
+    const without = expectedBlocks(layoutSchema.parse(syntheseEd4('2Q', undefined, undefined, { sansIntertitreP2: true })), fiche, 'fr');
+    check('ED4 écart : intertitre retiré, en-tête en trop', JSON.stringify(blocksGap(m1.subject.blocks, without)) === JSON.stringify({ missing: [], extra: ['en-tête de corps-p2'] }));
+    const m0 = mergeImport(parseResearch(v2((f) => { delete f.blocks[2].heading; })), null, s0, without);
+    check('ED4 écart : intertitre ajouté, en-tête manquant', JSON.stringify(blocksGap(m0.subject.blocks, want)) === JSON.stringify({ missing: ['en-tête de corps-p2'], extra: [] }));
+    const capsuleBare = expectedBlocks(layoutSchema.parse({ ...syntheseEd4(), elements: syntheseEd4().elements.map((e) => (e.id === 'capsule' ? { ...e, headingMaxChars: undefined } : e)) }), fiche, 'fr');
+    check('ED4 écart : capsule devenue sans en-tête', blocksGap(m1.subject.blocks, capsuleBare).extra.join() === 'en-tête de capsule');
+    const oneMore = expectedBlocks(layoutSchema.parse({ ...syntheseEd4(), chaines: [{ ...syntheseEd4().chaines[0], paragraphes: [...syntheseEd4().chaines[0]!.paragraphes, { id: 'p4', intertitre: false, maxChars: 100 }] }] }), fiche, 'fr');
+    check('ED4 écart : paragraphe ajouté, bloc manquant', blocksGap(m1.subject.blocks, oneMore).missing.join() === 'corps-p4 (paragraphe)');
+  }
+}
 
 // Import : premier import
 const subject0 = readSubject(dataRoot, BOOK_ID, 'alpha');

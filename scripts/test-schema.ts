@@ -1,9 +1,9 @@
 // scripts/test-schema.ts — schémas print-book et subject : le cas valide, puis chaque refus.
 import fs from 'node:fs';
 import { printBookSchema, newPrintBook } from '../src/schema/print-book';
-import { blockId, blockSchema } from '../src/schema/block';
+import { blockId, blockSchema, reviewState } from '../src/schema/block';
 import { claimIsValidated, claimSchema, claimText, sourceSchema, storedClaimSchema } from '../src/schema/claim';
-import { researchImportSchema, storedResearchSchema } from '../src/schema/research';
+import { researchImportSchema, researchImportV1Schema, RESEARCH_SCHEMA_VERSION, storedResearchSchema } from '../src/schema/research';
 import { rightsFileSchema } from '../src/schema/rights';
 import { contrast, styleSchema } from '../src/schema/style';
 import { subjectSchema } from '../src/schema/subject';
@@ -283,6 +283,20 @@ noBlock('langue inconnue', (v) => { v.text = { de: 'Text.' }; });
 noBlock('fiche sans item', (v) => { v.type = 'fiche'; });
 noBlock('item hors fiche', (v) => { v.item = 'taille'; });
 noBlock('clé inconnue', (v) => { v.plus = 1; });
+// ED4 : paragraphe d'une chaîne, en-tête et son état.
+const paragraph = (): Dict => ({ id: 'corps-p1', zone: 'corps', type: 'paragraphe', paragraphe: 'p1', text: { fr: 'Texte.' }, heading: { fr: 'Titre' }, headingState: 'a-relire', claims: ['c1'], state: 'a-relire' });
+check('ED4 bloc : paragraphe avec en-tête', blockSchema.safeParse(paragraph()).success);
+check('ED4 bloc : encadré avec en-tête', blockSchema.safeParse({ ...block(), id: 'capsule', zone: 'capsule', type: 'encadre', heading: { fr: 'Titre' }, headingState: 'valide' }).success);
+noBlock('ED4, paragraphe sans son champ paragraphe', (v) => { v.type = 'paragraphe'; });
+noBlock('ED4, champ paragraphe hors paragraphe', (v) => { v.paragraphe = 'p1'; });
+noBlock('ED4, en-tête sans état', (v) => { v.heading = { fr: 'Titre' }; });
+noBlock('ED4, état d’en-tête sans en-tête', (v) => { v.headingState = 'a-relire'; });
+noBlock('ED4, état d’en-tête inconnu', (v) => { v.heading = { fr: 'Titre' }; v.headingState = 'relu'; });
+noBlock('ED4, en-tête en langue inconnue', (v) => { v.heading = { de: 'Titel' }; v.headingState = 'a-relire'; });
+check('ED4 relecture : sans en-tête, l’état du texte', reviewState({ state: 'valide' }) === 'valide' && reviewState({ state: 'a-relire' }) === 'a-relire');
+check('ED4 relecture : relu seulement si texte et en-tête le sont', reviewState({ state: 'valide', headingState: 'valide' }) === 'valide' && reviewState({ state: 'valide', headingState: 'a-relire' }) === 'a-relire' && reviewState({ state: 'a-relire', headingState: 'valide' }) === 'a-relire');
+check('ED4 relecture : à reprendre si l’un des deux l’est', reviewState({ state: 'valide', headingState: 'a-reprendre' }) === 'a-reprendre' && reviewState({ state: 'a-reprendre', headingState: 'valide' }) === 'a-reprendre');
+check('ED4 sujet : paragraphe et en-tête lus', subjectSchema.safeParse({ ...subject(), blocks: [paragraph()] }).success);
 
 // Sujet avec blocs
 check('sujet écrit avant MP3 : toujours lisible', subjectSchema.safeParse(subject()).success);
@@ -302,14 +316,31 @@ noSubject('légende vide', (s) => { s.qrLegend = { fr: ' ' }; });
 }
 
 // Recherche
-const research = (): Dict => ({ schemaVersion: 1, subjectId: 'alpha', lang: 'fr', generatedAt: '2026-11-06', claims: [claim()], blocks: [{ zone: 'texte', type: 'texte', text: 'Texte.', claims: ['c1'] }] });
+const research = (): Dict => ({ schemaVersion: 2, subjectId: 'alpha', lang: 'fr', generatedAt: '2026-11-06', claims: [claim()], blocks: [{ zone: 'texte', type: 'texte', text: 'Texte.', claims: ['c1'] }] });
 const noResearch = (name: string, change: (v: Dict) => void) => refused(researchImportSchema, `recherche, ${name}`, change, research);
 check('recherche valide', researchImportSchema.safeParse(research()).success);
 for (const key of ['schemaVersion', 'subjectId', 'lang', 'generatedAt', 'claims', 'blocks']) noResearch(`${key} absent`, (v) => delete v[key]);
 noResearch('aucune affirmation', (v) => { v.claims = []; });
 noResearch('aucun bloc', (v) => { v.blocks = []; });
 noResearch('langue inconnue', (v) => { v.lang = 'de'; });
-noResearch('version inconnue', (v) => { v.schemaVersion = 2; });
+noResearch('version inconnue', (v) => { v.schemaVersion = 3; });
+noResearch('version 1 dans le schéma de la version 2', (v) => { v.schemaVersion = 1; });
+check('ED4 recherche : version demandée par le prompt', RESEARCH_SCHEMA_VERSION === 2);
+check('ED4 recherche : paragraphe et en-tête', researchImportSchema.safeParse({ ...research(), blocks: [{ zone: 'corps', type: 'paragraphe', paragraphe: 'p1', heading: 'Titre', text: 'Texte.', claims: ['c1'] }] }).success);
+noResearch('ED4, paragraphe sans son champ paragraphe', (v) => { v.blocks[0].type = 'paragraphe'; });
+noResearch('ED4, champ paragraphe hors paragraphe', (v) => { v.blocks[0].paragraphe = 'p1'; });
+noResearch('ED4, en-tête vide', (v) => { v.blocks[0].heading = ' '; });
+{
+  const v1 = (): Dict => ({ ...research(), schemaVersion: 1 });
+  const noV1 = (name: string, change: (v: Dict) => void) => refused(researchImportV1Schema, `recherche v1, ${name}`, change, v1);
+  check('ED4 recherche v1 : lue par son ancien schéma', researchImportV1Schema.safeParse(v1()).success);
+  noV1('en-tête', (v) => { v.blocks[0].heading = 'Titre'; });
+  noV1('paragraphe', (v) => { v.blocks[0] = { zone: 'corps', type: 'paragraphe', paragraphe: 'p1', text: 'Texte.', claims: ['c1'] }; });
+  noV1('version 2', (v) => { v.schemaVersion = 2; });
+  check('ED4 recherche stockée : version 1 lisible', storedResearchSchema.safeParse({ ...v1(), claims: [stored()] }).success);
+  check('ED4 recherche stockée : version 1 avec un en-tête refusée', !storedResearchSchema.safeParse({ ...v1(), claims: [stored()], blocks: [{ zone: 'texte', type: 'texte', heading: 'T', text: 'Texte.', claims: ['c1'] }] }).success);
+  check('ED4 recherche stockée : version 3 refusée', !storedResearchSchema.safeParse({ ...research(), schemaVersion: 3, claims: [stored()] }).success);
+}
 noResearch('affirmation en double', (v) => { v.claims = [claim(), claim()]; });
 noResearch('bloc citant une inconnue', (v) => { v.blocks[0].claims = ['c9']; });
 noResearch('bloc sans affirmation', (v) => { v.blocks[0].claims = []; });

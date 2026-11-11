@@ -1,5 +1,7 @@
 // src/research/state.ts — états des affirmations et des blocs (spec §3.5, §3.7). Fonctions pures : elles reçoivent les données et rendent les
 // données modifiées. Toute modification de fond repasse le sujet en `brouillon`. La note de David n'est pas une modification de fond.
+// ED4 : l'en-tête d'un bloc (`heading`) se relit à part (`headingState`), avec les mêmes affirmations que son texte : une affirmation rejetée ou
+// corrigée après validation, ou des citations changées, touchent le texte et l'en-tête.
 import { claimIsValidated, claimText, type StoredClaim } from '../schema/claim';
 import type { Block } from '../schema/block';
 import type { StoredResearch } from '../schema/research';
@@ -12,7 +14,7 @@ export interface Data {
 }
 
 export type ClaimAction = { kind: 'valider' } | { kind: 'corriger'; text: string } | { kind: 'rejeter' } | { kind: 'note'; text: string };
-export type BlockAction = { kind: 'texte'; text: string } | { kind: 'valider' } | { kind: 'citer'; claims: string[] };
+export type BlockAction = { kind: 'texte'; text: string } | { kind: 'valider' } | { kind: 'citer'; claims: string[] } | { kind: 'entete'; text: string } | { kind: 'valider-entete' };
 
 const draft = (subject: Subject): Subject => ({ ...subject, status: 'brouillon' });
 
@@ -30,7 +32,17 @@ function findBlock(subject: Subject, id: string): Block {
 
 /** Les blocs qui citent cette affirmation sont à reprendre. */
 function redoCiting(subject: Subject, claimId: string): void {
-  for (const block of subject.blocks) if (block.claims.includes(claimId)) block.state = 'a-reprendre';
+  for (const block of subject.blocks) {
+    if (!block.claims.includes(claimId)) continue;
+    block.state = 'a-reprendre';
+    if (block.headingState !== undefined) block.headingState = 'a-reprendre';
+  }
+}
+
+/** Les affirmations citées par un bloc, toutes validées ; sinon le refus nommé. */
+function requireValidated(research: StoredResearch, block: Block, what: string): void {
+  const pending = block.claims.filter((id) => !claimIsValidated(findClaim(research, id).status));
+  if (pending.length > 0) throw new ResearchRefused(`${what} : affirmations non validées, ${pending.join(', ')}.`);
 }
 
 export function applyClaimAction(data: Data, claimId: string, action: ClaimAction, now: Date): Data {
@@ -84,13 +96,27 @@ export function applyBlockAction(data: Data, blockId: string, action: BlockActio
       if (action.claims.join() === block.claims.join()) return data;
       block.claims = action.claims;
       if (block.state === 'valide') block.state = 'a-relire';
+      if (block.headingState === 'valide') block.headingState = 'a-relire';
       break;
     }
     case 'valider': {
       if ((block.text[lang] ?? '').trim() === '') throw new ResearchRefused(`Bloc ${blockId} sans texte.`);
-      const pending = block.claims.filter((id) => !claimIsValidated(findClaim(research, id).status));
-      if (pending.length > 0) throw new ResearchRefused(`Bloc ${blockId} : affirmations non validées, ${pending.join(', ')}.`);
+      requireValidated(research, block, `Bloc ${blockId}`);
       block.state = 'valide';
+      return { subject, research };
+    }
+    case 'entete': {
+      if (!block.heading) throw new ResearchRefused(`Bloc ${blockId} sans en-tête.`);
+      if ((block.heading[lang] ?? '') === action.text) return data;
+      block.heading[lang] = action.text;
+      if (block.headingState === 'valide') block.headingState = 'a-relire';
+      break;
+    }
+    case 'valider-entete': {
+      if (!block.heading) throw new ResearchRefused(`Bloc ${blockId} sans en-tête.`);
+      if ((block.heading[lang] ?? '').trim() === '') throw new ResearchRefused(`En-tête du bloc ${blockId} vide.`);
+      requireValidated(research, block, `En-tête du bloc ${blockId}`);
+      block.headingState = 'valide';
       return { subject, research };
     }
   }
