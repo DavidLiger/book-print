@@ -29,7 +29,7 @@ import { readTemplates, templateOf, templateStyleFaults, TEMPLATES_DIR, type Tem
 import { GeometryRefused, type LayoutPage } from '../templates/geometry';
 import type { Config } from './config';
 import { requireBook } from './gabarit-actions';
-import { BadSubjectRequest, reading } from './subject-actions';
+import { BadSubjectRequest, qrSourceOf, reading } from './subject-actions';
 
 type Json = Record<string, unknown>;
 
@@ -108,7 +108,7 @@ function view(config: Config, dir: string, subjectId: string): View {
   let preview: TemplatePreview | null = null;
   const ratios: Record<string, number> = {};
   if (placeable) {
-    const ctx = subjectContext(config.dataRoot, bookId, subjectId, read.scenes);
+    const ctx = subjectContext(config.dataRoot, bookId, subjectId, read.scenes, qrSourceOf(config, read));
     preview = previewOf(ctx.layout, trim, model, ctx.collection.style, editorContent(ctx), ctx.collection.pictos);
     for (const zone of ctx.layout.flatMap((p) => p.zones)) {
       if (zone.outline && zone.double !== 'fin') ratios[zone.id] = (zone.outline.image.right - zone.outline.image.left) / (zone.outline.image.bottom - zone.outline.image.top);

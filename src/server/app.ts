@@ -21,7 +21,7 @@ import { CreditsRefused } from '../rights/credits';
 import { RightsRefused } from '../rights/registry';
 import { GeometryRefused } from '../templates/geometry';
 import { loadConfig, type ConfigState } from './config';
-import { BadEssaiRequest, ESSAI_ACTIONS, previewHtml, PREVIEW_CSP } from './essai-actions';
+import { BadCollectionRequest, COLLECTION_ACTIONS, PREVIEW_CSP } from './collection-actions';
 import { BadGabaritRequest, GABARIT_ACTIONS, gabaritPreviewHtml } from './gabarit-actions';
 import { ComfyError } from '../comfy/client';
 import { QueueRefused } from '../comfy/queue';
@@ -147,7 +147,7 @@ const ACTIONS: Record<string, (body: unknown, configPath: string) => Json | Prom
     return { ...computeParcours(readFacts(loadConfig(configPath), body.data.dir)) };
   },
   ...Object.fromEntries(
-    Object.entries({ ...PRICING_ACTIONS, ...ESSAI_ACTIONS, ...GABARIT_ACTIONS }).map(([route, run]) => [route, (body: unknown, configPath: string) => run(body, configured(loadConfig(configPath)).dataRoot)]),
+    Object.entries({ ...PRICING_ACTIONS, ...COLLECTION_ACTIONS, ...GABARIT_ACTIONS }).map(([route, run]) => [route, (body: unknown, configPath: string) => run(body, configured(loadConfig(configPath)).dataRoot)]),
   ),
   ...Object.fromEntries(Object.entries({ ...SUBJECT_ACTIONS, ...LAYOUT_ACTIONS, ...ILLUSTRATION_ACTIONS, ...RIGHTS_ACTIONS }).map(([route, run]) => [route, (body: unknown, configPath: string) => run(body, configured(loadConfig(configPath)))])),
 };
@@ -239,14 +239,6 @@ async function handle(
     return sendJson(res, 200, await action(await readBody(req, limit), configPath));
   }
 
-  // Aperçu : le HTML du PDF, dans un cadre de la page. Lecture seule, sur contenu d'essai : polices et images en `data:`, aucun script.
-  if (url === '/apercu') {
-    if (req.method !== 'GET') return sendJson(res, 405, { error: 'GET attendu' }, { Allow: 'GET' });
-    const query = new URL(req.url ?? '/', 'http://local').searchParams;
-    const html = previewHtml(query.get('bookId'), query.get('theme'), configured(loadConfig(configPath)).dataRoot);
-    return send(res, 200, html, 'text/html; charset=utf-8', { 'Content-Security-Policy': PREVIEW_CSP });
-  }
-
   // Aperçu d'un gabarit (GB1) : le même HTML que le PDF, texte de remplissage à la longueur maximale de chaque zone.
   if (url === '/apercu-gabarit') {
     if (req.method !== 'GET') return sendJson(res, 405, { error: 'GET attendu' }, { Allow: 'GET' });
@@ -324,7 +316,7 @@ export function createPrintServer(configPath: string, comfy: ComfyRuntime = crea
       }
       // Une mise en page changée ailleurs depuis sa lecture (ED3) : la page la relit et repart d'un historique vide.
       if (e instanceof LayoutConflict) return sendJson(res, 409, { error: e.message, conflit: true });
-      if (e instanceof BadPricingRequest || e instanceof BadEssaiRequest || e instanceof BadGabaritRequest || e instanceof BadSubjectRequest || e instanceof BadImageRequest || e instanceof BadRightsRequest || e instanceof BadComfyRequest || e instanceof BadStyleRequest) return sendJson(res, 400, { error: e.message });
+      if (e instanceof BadPricingRequest || e instanceof BadCollectionRequest || e instanceof BadGabaritRequest || e instanceof BadSubjectRequest || e instanceof BadImageRequest || e instanceof BadRightsRequest || e instanceof BadComfyRequest || e instanceof BadStyleRequest) return sendJson(res, 400, { error: e.message });
       if (e instanceof CreateRefused || e instanceof PricingRefused || e instanceof CollectionRefused || e instanceof RenderRefused || e instanceof GeometryRefused || e instanceof SubjectRefused || e instanceof ResearchRefused || e instanceof RightsRefused || e instanceof CreditsRefused || e instanceof ImageRefused || e instanceof WorkflowRefused || e instanceof QueueRefused || e instanceof ComfyError || e instanceof StyleRefused || e instanceof LayoutRefused) {
         return sendJson(res, 409, { error: e.message });
       }

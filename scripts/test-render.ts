@@ -11,7 +11,7 @@ import { readPdfFacts } from '../src/checks/pdf-facts';
 import { runChecks, type CheckResult } from '../src/checks/rules';
 import { createCollection, readCollection, type Collection } from '../src/data/collection';
 import { createBookFolder } from '../src/data/create-book';
-import { buildEssai, ESSAI_CONTROL_FILE, ESSAI_FILE, packFonts, renderEssai, type Essai } from '../src/render/essai';
+import { buildEssai, packFonts, renderEssai, type Essai } from './fixtures/essai-2a';
 import { applyBookFiche, renderHtml, RenderRefused } from '../src/render/html';
 import { measureHtml, renderPdf } from '../src/render/pdf';
 import { controlSubject, imageChecks, subjectContent, subjectContext, subjectHtml, zoneImages } from '../src/render/subject';
@@ -198,47 +198,6 @@ for (const [name, trim, wantW, wantH] of [['6 × 9"', SIX_NINE, 441, 666], ['8,5
   check('faute réelle, page sans fond perdu : C1 rouge', level(big.checks, 'C1') === 'erreur', big.pages);
 }
 
-// Export par la route, nom du fichier d'essai, écriture limitée
-{
-  const parent = tempDir();
-  const glbRoot = makeGlbi();
-  const data = path.join(parent, 'donnees');
-  fs.mkdirSync(data);
-  put(parent, 'config.local.json', { glbRoot, dataRoot: data });
-  createBookFolder(data, BOOK_ID);
-  createCollection(data);
-  const server = createPrintServer(path.join(parent, 'config.local.json'));
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const { port } = server.address() as AddressInfo;
-  const exportNow = (body: unknown) =>
-    new Promise<{ status: number; json: Record<string, any> }>((resolve, reject) => {
-      const text = JSON.stringify(body);
-      const req = http.request({ host: '127.0.0.1', port, method: 'POST', path: '/api/essai/export', headers: { Host: `127.0.0.1:${port}`, Origin: `http://127.0.0.1:${port}`, 'Content-Type': 'application/json', 'x-book-print': '1' } }, (res) => {
-        const chunks: Buffer[] = [];
-        res.on('data', (c: Buffer) => chunks.push(c));
-        res.on('end', () => resolve({ status: res.statusCode ?? 0, json: JSON.parse(Buffer.concat(chunks).toString('utf8')) }));
-      });
-      req.on('error', reject);
-      req.write(text);
-      req.end();
-    });
-  const glbBefore = fs.readdirSync(glbRoot, { recursive: true, encoding: 'utf8' }).sort().join();
-  const first = await exportNow({ bookId: BOOK_ID, theme: 'ocean' });
-  const file = path.join(data, BOOK_ID, 'export', ESSAI_FILE);
-  check('export : PDF écrit sous export/', first.status === 200 && first.json.file === file && fs.statSync(file).size > 1000, first.json.error);
-  check('export : nom d’essai, jamais celui du PDF final', ESSAI_FILE === 'essai-2A.pdf');
-  check('export : tous les contrôles verts', first.json.checks?.every((c: CheckResult) => c.level === 'ok'), first.json.checks);
-  check('export : dimensions et polices rendues à la page', first.json.pages?.length === 2 && first.json.fonts?.length >= 2 && first.json.pageSizeIn?.widthIn === 6.125, first.json);
-  const second = await exportNow({ bookId: BOOK_ID, theme: 'volcan' });
-  check('export : le fichier d’essai se remplace, sans temporaire laissé', second.status === 200 && fs.readdirSync(path.join(data, BOOK_ID, 'export')).sort().join() === `${ESSAI_CONTROL_FILE},${ESSAI_FILE}`, fs.readdirSync(path.join(data, BOOK_ID, 'export')));
-  const book = JSON.parse(fs.readFileSync(path.join(data, BOOK_ID, 'print-book.json'), 'utf8'));
-  put(data, `${BOOK_ID}/print-book.json`, { ...book, edition: { ...book.edition, trim: LETTER } });
-  const letter = await exportNow({ bookId: BOOK_ID, theme: 'savane' });
-  check('export : le format vient de print-book.json', letter.status === 200 && letter.json.pageSizeIn.widthIn === 8.625 && Math.abs(letter.json.pages[0].widthPt - 621) <= 0.15, letter.json.pages);
-  check('export : rien dans GLBInterpreter', fs.readdirSync(glbRoot, { recursive: true, encoding: 'utf8' }).sort().join() === glbBefore);
-  await new Promise((resolve) => server.close(resolve));
-}
-
 // Sujet réel : le texte du sujet, le même HTML, et C12 mesuré dans Chromium
 {
   const parent = tempDir();
@@ -260,7 +219,7 @@ for (const [name, trim, wantW, wantH] of [['6 × 9"', SIX_NINE, 441, 666], ['8,5
   const before = subjectHtml(context());
   check('sujet : texte réel dans le HTML', before.includes('Voici le Fictivore') && before.includes('Pages de tests') && before.includes('Alpha fr'));
   check('sujet : aucun texte d’essai', !/Essaisaurus|valeur d'essai/.test(before));
-  check('sujet : illustration à venir et faux QR tamponné', before.includes('venir') && before.includes('FACTICE'));
+  check('sujet : illustration à venir et faux QR marqué « QR absent » quand la scène n’a pas de QR (ED6)', before.includes('venir') && before.includes('>QR absent<') && !before.includes('FACTICE'));
   check('sujet : pages réelles', context().firstPage === 6 && before.includes('data-page="6"') && before.includes('data-page="7"'));
   check('sujet : Title neutre', before.includes('<title>Aperçu</title>'));
   check('sujet : aucune ressource externe', !/\bsrc="http|url\(http/.test(before));

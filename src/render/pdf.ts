@@ -26,12 +26,12 @@ async function load(page: import('playwright').Page, html: string): Promise<void
   await page.evaluate('Promise.all([document.fonts.ready, ...Array.from(document.images).map((i) => i.decode())]).then(() => true)');
 }
 
-async function inPage<T>(html: string, run: (page: import('playwright').Page, browser: import('playwright').Browser) => Promise<T>): Promise<T> {
+async function inPage<T>(html: string, run: (page: import('playwright').Page, browser: import('playwright').Browser) => Promise<T>, scale = 1): Promise<T> {
   // Chargé ici : le reste de l'outil démarre sans Playwright.
   const { chromium } = await import('playwright');
   const browser = await chromium.launch();
   try {
-    const page = await browser.newPage();
+    const page = await browser.newPage(scale === 1 ? {} : { deviceScaleFactor: scale });
     await page.emulateMedia({ media: 'print' });
     await load(page, html);
     return await run(page, browser);
@@ -84,4 +84,28 @@ export function measureFlowed(build: HtmlBuilder, chains: Record<string, ChainTe
     const flowed = hasChains(chains) ? await flowIn(page, build, chains) : { html: build(), flow: {} };
     return { ...flowed, measures: (await page.evaluate(MEASURE_SCRIPT)) as Measures };
   });
+}
+
+export interface QrCapture {
+  /** Côté imprimé du QR, mesuré dans la page. */
+  sideMm: number;
+  /** Capture du cartouche entier (fond, marge et légende comprises), en PNG. */
+  png: Buffer;
+}
+
+/** C9 : le cartouche du QR tel que le PDF le montre, capturé à 4 fois la définition de l'écran. `null` : la mise en page n'a pas de QR. */
+export function captureQr(build: HtmlBuilder, chains: Record<string, ChainText>): Promise<QrCapture | null> {
+  return inPage(
+    build(),
+    async (page) => {
+      if (hasChains(chains)) await flowIn(page, build, chains);
+      const cartouche = await page.$('.qr');
+      const svg = await page.$('.qr svg[data-qr]');
+      if (!cartouche || !svg) return null;
+      const box = await svg.boundingBox();
+      if (!box) return null;
+      return { sideMm: (Math.min(box.width, box.height) * 25.4) / 96, png: await cartouche.screenshot({ type: 'png' }) };
+    },
+    4,
+  );
 }

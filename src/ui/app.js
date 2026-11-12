@@ -1,5 +1,5 @@
 // src/ui/app.js — page locale de book-print : un menu d'étapes (UI1) et un panneau par étape : configuration, livre lu, dossier (MP1),
-// simulateur de prix (PX1), collection et essai du gabarit 2A (MP2), gabarits de la collection (GB1), sujets et relecture (MP3), droits et illustrations (MP4), workflows et génération par ComfyUI (IC1),
+// simulateur de prix (PX1), collection (MP2), gabarits de la collection (GB1), sujets et relecture (MP3), droits et illustrations (MP4), workflows et génération par ComfyUI (IC1),
 // bibliothèque de styles (IC2). L'état des étapes vient du serveur (`/api/parcours`).
 // Les textes viennent de fichiers : ils passent toujours par textContent.
 
@@ -163,7 +163,7 @@ async function readSelected() {
   if ($('creer').disabled) $('creation').append(el('p', 'Création impossible tant que la lecture est en erreur.', 'alerte'));
   if (reading.bookId) {
     await openPricing(reading.bookId);
-    await openEssai(reading.bookId);
+    await openCollection(reading.bookId);
   }
   closeSubject();
   await refreshParcours({ reopen: true });
@@ -186,7 +186,7 @@ async function createFolder() {
       list(`Alertes (${result.alerts.length})`, result.alerts, 'alerte'),
     );
     await openPricing(result.bookId);
-    await openEssai(result.bookId);
+    await openCollection(result.bookId);
   } catch (e) {
     box.append(el('p', e.message, 'erreur'));
   } finally {
@@ -480,11 +480,10 @@ async function saveCurrent(event) {
   if (await pricingAction('/api/pricing/save', body)) resetForm();
 }
 
-// Essai du gabarit 2A (spec §5.2, étape 7). L'aperçu est le HTML du PDF, dans un cadre sans script. Les repères sont dessinés ici,
-// par-dessus le cadre, à partir de la géométrie du serveur : ils n'existent pas dans le HTML imprimé.
+// Repères des aperçus (spec §5.2). L'aperçu est le HTML du PDF, dans un cadre sans script. Les repères sont dessinés ici, par-dessus le cadre,
+// à partir de la géométrie du serveur : ils n'existent pas dans le HTML imprimé. L'étape Essai a disparu en ED6 : il reste l'état de la collection.
 
-const essai = { bookId: null };
-const essaiView = { layout: null, frame: $('apercu-cadre'), inner: $('apercu-echelle'), svg: $('reperes'), boxes: 'input[data-layer]', attr: 'layer' };
+const bookRef = { bookId: null };
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const PX_PER_MM = 96 / 25.4;
 
@@ -553,11 +552,6 @@ function fitPreview(view) {
   inner.style.transform = `scale(${scale})`;
 }
 
-function loadPreview() {
-  const query = new URLSearchParams({ bookId: essai.bookId, theme: $('essai-theme').value, t: String(Date.now()) });
-  $('apercu').src = `/apercu?${query}`;
-}
-
 function checksTable(checks) {
   const table = el('table');
   const head = el('tr');
@@ -580,21 +574,6 @@ function checksTable(checks) {
   return table;
 }
 
-function showExport(r) {
-  const size = r.pages.map((p) => `p. ${p.number} : ${String(p.widthPt).replace('.', ',')} × ${String(p.heightPt).replace('.', ',')} pt`).join(' ; ');
-  $('essai-resultat').replaceChildren(
-    checksTable(r.checks),
-    definitions([
-      ['Fichier', r.file],
-      ['Taille demandée', `${String(r.pageSizeIn.widthIn).replace('.', ',')} × ${String(r.pageSizeIn.heightIn).replace('.', ',')} "`],
-      ['Pages relues dans le PDF', size],
-      ['Polices relues dans le PDF', r.fonts.map((f) => `${f.name} (${f.how})`).join(' ; ')],
-      ['Poids', `${(r.sizeBytes / 1e6).toFixed(2).replace('.', ',')} Mo`],
-      ['Chromium', r.chromium],
-    ]),
-  );
-}
-
 function showCollection(state) {
   const { exists, error } = state.collection;
   const box = $('collection-etat');
@@ -603,34 +582,12 @@ function showCollection(state) {
   else box.replaceChildren(el('p', 'collection/ présent et valide.', 'bien'), definitions([['Thèmes', state.themes.join(', ')], ['Premier thème', state.theme]]));
 }
 
-async function openEssai(bookId) {
-  essai.bookId = bookId;
-  $('essai-zone').hidden = true;
-  $('essai-resultat').replaceChildren();
-  const box = $('essai-message');
-  box.replaceChildren();
+async function openCollection(bookId) {
+  bookRef.bookId = bookId;
   try {
-    const state = await action('/api/essai/state', { bookId });
-    showCollection(state);
-    if (!state.collection.exists) box.append(el('p', 'collection/ absent : le créer pour voir l\'aperçu.', 'alerte'));
-    if (state.collection.error) box.append(el('p', state.collection.error, 'erreur'));
-    if (state.error) box.append(el('p', state.error, 'erreur'));
-    if (!state.layout) return;
-    const select = $('essai-theme');
-    const current = select.value;
-    select.replaceChildren();
-    for (const name of state.themes) {
-      const option = el('option', name);
-      option.value = name;
-      select.append(option);
-    }
-    select.value = state.themes.includes(current) ? current : state.theme;
-    essaiView.layout = state.layout;
-    $('essai-zone').hidden = false;
-    drawMarks(essaiView);
-    loadPreview();
+    showCollection(await action('/api/collection/state', { bookId }));
   } catch (e) {
-    box.append(el('p', e.message, 'erreur'));
+    $('collection-etat').replaceChildren(el('p', e.message, 'erreur'));
   }
 }
 
@@ -641,7 +598,7 @@ async function createCollection() {
   try {
     const { result } = await action('/api/collection/create');
     box.append(list(`Créés (${result.created.length})`, result.created, 'bien'), list(`Conservés, non modifiés (${result.kept.length})`, result.kept, ''));
-    await openEssai(essai.bookId);
+    await openCollection(bookRef.bookId);
   } catch (e) {
     box.append(el('p', e.message, 'erreur'));
   } finally {
@@ -650,23 +607,8 @@ async function createCollection() {
   }
 }
 
-async function exportEssai() {
-  const button = $('essai-exporter');
-  const box = $('essai-resultat');
-  button.disabled = true;
-  box.replaceChildren(el('p', 'Export en cours…', 'note'));
-  try {
-    showExport(await action('/api/essai/export', { bookId: essai.bookId, theme: $('essai-theme').value }));
-  } catch (e) {
-    box.replaceChildren(el('p', e.message, 'erreur'));
-  } finally {
-    button.disabled = false;
-    await refreshParcours();
-  }
-}
-
-async function reloadEssai() {
-  await openEssai(essai.bookId);
+async function reloadCollection() {
+  await openCollection(bookRef.bookId);
   await refreshParcours();
 }
 
@@ -676,8 +618,8 @@ async function reloadEssai() {
 const gabarits = { selected: null, turn: 0 };
 const START_LABELS = { gauche: 'gauche', droite: 'droite', libre: 'libre' };
 const themeOf = () => $('ga-theme').value || undefined;
-const gabaritTarget = () => ({ bookId: essai.bookId, id: gabarits.selected, theme: themeOf() });
-const gabaritPreviewUrl = () => `/apercu-gabarit?${new URLSearchParams({ bookId: essai.bookId, id: gabarits.selected, theme: $('ga-theme').value, t: String(Date.now()) })}`;
+const gabaritTarget = () => ({ bookId: bookRef.bookId, id: gabarits.selected, theme: themeOf() });
+const gabaritPreviewUrl = () => `/apercu-gabarit?${new URLSearchParams({ bookId: bookRef.bookId, id: gabarits.selected, theme: $('ga-theme').value, t: String(Date.now()) })}`;
 const editeurModeles = Editeur.creer({
   prefixe: 'ga',
   iframe: 'ga-apercu',
@@ -749,8 +691,8 @@ async function selectGabarit(id) {
 
 /** La liste seule, sans rouvrir l'éditeur : après une écriture, le départ ou l'état d'un modèle a pu changer. */
 async function refreshGabaritList() {
-  if (!essai.bookId) return null;
-  const state = await action('/api/gabarits/state', { bookId: essai.bookId });
+  if (!bookRef.bookId) return null;
+  const state = await action('/api/gabarits/state', { bookId: bookRef.bookId });
   $('ga-liste').replaceChildren(gabaritsTable(state.templates));
   return state;
 }
@@ -758,9 +700,9 @@ async function refreshGabaritList() {
 async function loadGabarits() {
   const box = $('ga-message');
   box.replaceChildren();
-  if (!essai.bookId) return;
+  if (!bookRef.bookId) return;
   try {
-    const state = await action('/api/gabarits/state', { bookId: essai.bookId });
+    const state = await action('/api/gabarits/state', { bookId: bookRef.bookId });
     if (state.error) box.append(el('p', state.error, 'erreur'));
     const select = $('ga-theme');
     const current = select.value;
@@ -786,8 +728,7 @@ async function addDeliveredGabarits() {
   try {
     const { result } = await action('/api/gabarits/ajouter');
     await loadGabarits();
-    // L'essai pose 2A : son aperçu se refait, comme après la création de la collection.
-    await openEssai(essai.bookId);
+    await openCollection(bookRef.bookId);
     box.prepend(list(`Créés (${result.created.length})`, result.created, 'bien'), list(`Conservés, non modifiés (${result.kept.length})`, result.kept, ''));
   } catch (e) {
     box.replaceChildren(el('p', e.message, 'erreur'));
@@ -837,7 +778,7 @@ async function controlGabarit() {
   button.disabled = true;
   box.replaceChildren(el('p', 'Contrôle en cours…', 'note'));
   try {
-    const { checks } = await action('/api/gabarits/controle', { bookId: essai.bookId, id: gabarits.selected, theme: $('ga-theme').value });
+    const { checks } = await action('/api/gabarits/controle', { bookId: bookRef.bookId, id: gabarits.selected, theme: $('ga-theme').value });
     box.replaceChildren(checksTable(checks));
   } catch (e) {
     box.replaceChildren(el('p', e.message, 'erreur'));
@@ -848,7 +789,7 @@ async function controlGabarit() {
 
 async function reloadGabarits() {
   await loadGabarits();
-  await openEssai(essai.bookId);
+  await openCollection(bookRef.bookId);
   await refreshParcours();
 }
 
@@ -912,6 +853,39 @@ async function loadSujets() {
   }
 }
 
+// Supprimer un sujet (ED6, §24.16) : une confirmation dans la page, qui nomme le sujet. Rien n'est effacé, le serveur déplace le dossier.
+const deletion = { id: null };
+
+function askDelete(s) {
+  deletion.id = s.id;
+  $('sujet-suppression-texte').textContent = `Supprimer le sujet « ${s.title} » (${s.id}) ?`;
+  $('sujet-suppression').hidden = false;
+  $('sujet-message').replaceChildren();
+}
+
+function cancelDelete() {
+  deletion.id = null;
+  $('sujet-suppression').hidden = true;
+}
+
+async function confirmDelete() {
+  const id = deletion.id;
+  if (!id) return;
+  const box = $('sujet-message');
+  $('sujet-suppression-valider').disabled = true;
+  try {
+    const state = await action('/api/sujet/supprimer', { dir: dirOf(), subjectId: id, confirm: true });
+    cancelDelete();
+    await refreshParcours();
+    showBookState(state);
+    box.replaceChildren(el('p', `Sujet ${id} supprimé : son dossier est dans ${state.deleted.folder}${state.deleted.illustrations ? ', avec ses illustrations' : ''}.`, 'bien'));
+  } catch (e) {
+    box.replaceChildren(el('p', e.message, 'erreur'));
+  } finally {
+    $('sujet-suppression-valider').disabled = false;
+  }
+}
+
 function showSubjectList() {
   const { book } = sujets;
   if (book) {
@@ -930,7 +904,7 @@ function showSubjectList() {
   for (const s of parcours.subjects) {
     const row = el('tr');
     const action = el('td');
-    action.append(smallButton('Ouvrir', () => openSubject(s.id)));
+    action.append(smallButton('Ouvrir', () => openSubject(s.id)), smallButton('Supprimer', () => askDelete(s)));
     const state = s.error ? el('td', s.error, 'erreur') : el('td', s.status);
     row.append(el('td', s.title), el('td', String(s.pages)), el('td', s.template ?? '—'), el('td', s.theme ?? '—'), state, action);
     table.append(row);
@@ -983,6 +957,7 @@ function showSubStep(id) {
   showSubSteps();
   if (id === 'sujet-mise-en-page') loadMiseEnPage();
   if (id === 'sujet-apercu') loadSubjectPreview();
+  if (id === 'sujet-pret') showReady();
   if (id === 'sujet-illustrations') {
     enqueue(loadImages, $('il-message'));
     if (images.mode === 'generer') showImageMode('generer');
@@ -1444,6 +1419,47 @@ async function checkUrlsNow() {
   }
 }
 
+// Changer de modèle (ED6, §24.12) : les modèles de même format et de même nombre de pages, qui peuvent commencer où le sujet commence.
+
+async function openModelChoice() {
+  const box = $('mp-message');
+  try {
+    const { current, models } = await action('/api/sujet/modeles', { dir: dirOf(), subjectId: sujets.open });
+    const others = models.filter((m) => m.id !== current);
+    if (others.length === 0) {
+      box.replaceChildren(el('p', 'Aucun autre modèle de même format, de même nombre de pages et de même côté de départ.', 'alerte'));
+      $('mp-modele-zone').hidden = true;
+      return;
+    }
+    fillSelect($('mp-modele-choix'), others.map((m) => [m.id, `${m.id} (${m.pages} pages)`]));
+    $('mp-modele-zone').hidden = false;
+    box.replaceChildren();
+  } catch (e) {
+    box.replaceChildren(el('p', e.message, 'erreur'));
+  }
+}
+
+async function changeModelNow() {
+  const box = $('mp-message');
+  $('mp-modele-valider').disabled = true;
+  try {
+    const reply = await action('/api/sujet/modele', { dir: dirOf(), subjectId: sujets.open, modelId: $('mp-modele-choix').value });
+    sujets.view = reply;
+    $('mp-modele-zone').hidden = true;
+    await refreshParcours();
+    await loadMiseEnPage();
+    const gap = [...(reply.gap.missing.length ? [`blocs attendus absents : ${reply.gap.missing.join(', ')}`] : []), ...(reply.gap.extra.length ? [`blocs en trop : ${reply.gap.extra.join(', ')}`] : [])];
+    box.replaceChildren(
+      el('p', `Modèle changé. L'ancienne mise en page est gardée dans ${reply.changed.kept}.${reply.changed.unmarked ? ' Le sujet était prêt : il repasse à « relu ».' : ''}`, 'bien'),
+      ...(gap.length ? [el('p', `Écart avec la recherche : ${gap.join(' ; ')}. Un second import le règle.`, 'alerte')] : []),
+    );
+  } catch (e) {
+    box.replaceChildren(el('p', e.message, 'erreur'));
+  } finally {
+    $('mp-modele-valider').disabled = false;
+  }
+}
+
 // Aperçu du sujet
 
 function loadSubjectPreview() {
@@ -1468,6 +1484,48 @@ async function controlNow(mark) {
   } finally {
     for (const id of ['sa-controler', 'sa-relu']) $(id).disabled = false;
     await refreshParcours();
+  }
+}
+
+// Prêt (ED6) : « Marquer prêt » refuse en nommant chaque contrôle en erreur ; « Retirer prêt » remet le sujet à « relu ».
+
+function showReady() {
+  const status = sujets.view?.subject?.status ?? openSubjectFacts()?.status;
+  $('pr-marquer').disabled = status === 'brouillon';
+  $('pr-retirer').disabled = status !== 'prêt';
+}
+
+async function markReadyNow() {
+  const box = $('pr-resultat');
+  $('pr-marquer').disabled = true;
+  $('pr-retirer').disabled = true;
+  box.replaceChildren(el('p', 'Contrôles en cours…', 'note'));
+  try {
+    const reply = await action('/api/sujet/pret', { dir: dirOf(), subjectId: sujets.open });
+    sujets.view = reply;
+    showRelecture();
+    box.replaceChildren(reply.marked ? el('p', 'Sujet marqué prêt.', 'bien') : el('p', `Sujet non prêt : ${reply.reason}`, 'erreur'), ...(reply.checks.length ? [checksTable(reply.checks)] : []));
+  } catch (e) {
+    box.replaceChildren(el('p', e.message, 'erreur'));
+  } finally {
+    await refreshParcours();
+    showSubSteps();
+    showReady();
+  }
+}
+
+async function unmarkReadyNow() {
+  const box = $('pr-resultat');
+  try {
+    sujets.view = await action('/api/sujet/retirer-pret', { dir: dirOf(), subjectId: sujets.open });
+    showRelecture();
+    box.replaceChildren(el('p', 'Sujet remis à « relu ».', 'bien'));
+  } catch (e) {
+    box.replaceChildren(el('p', e.message, 'erreur'));
+  } finally {
+    await refreshParcours();
+    showSubSteps();
+    showReady();
   }
 }
 
@@ -2577,13 +2635,8 @@ $('p-nouveau').addEventListener('click', () => {
 $('v-simulateur').addEventListener('click', () => showPricingView('simulateur'));
 $('v-scenarios').addEventListener('click', () => showPricingView('scenarios'));
 $('collection-creer').addEventListener('click', createCollection);
-$('collection-relire').addEventListener('click', reloadEssai);
-$('essai-exporter').addEventListener('click', exportEssai);
-$('essai-recharger').addEventListener('click', reloadEssai);
-$('essai-theme').addEventListener('change', loadPreview);
-for (const box of document.querySelectorAll('input[data-layer]')) box.addEventListener('change', () => showLayers(essaiView));
+$('collection-relire').addEventListener('click', reloadCollection);
 for (const box of document.querySelectorAll('input[data-sujet-layer]')) box.addEventListener('change', () => showLayers(sujetView));
-new ResizeObserver(() => fitPreview(essaiView)).observe($('apercu-cadre'));
 new ResizeObserver(() => fitPreview(sujetView)).observe($('sa-cadre'));
 $('ga-ajouter').addEventListener('click', addDeliveredGabarits);
 $('mp-controler').addEventListener('click', controlMiseEnPage);
@@ -2599,11 +2652,11 @@ $('ga-copier').addEventListener('click', openCopyGabarit);
 $('ga-miroir').addEventListener('click', mirrorGabarit);
 $('ga-nouvelle-form').addEventListener('submit', (event) => {
   event.preventDefault();
-  createGabarit('/api/mise-en-page/nouvelle', { bookId: essai.bookId, id: $('ga-nouvelle-id').value.trim(), start: $('ga-nouvelle-depart').value, theme: themeOf() }, $('ga-nouvelle-fenetre'), $('ga-nouvelle-message'));
+  createGabarit('/api/mise-en-page/nouvelle', { bookId: bookRef.bookId, id: $('ga-nouvelle-id').value.trim(), start: $('ga-nouvelle-depart').value, theme: themeOf() }, $('ga-nouvelle-fenetre'), $('ga-nouvelle-message'));
 });
 $('ga-copie-form').addEventListener('submit', (event) => {
   event.preventDefault();
-  createGabarit('/api/mise-en-page/copier', { bookId: essai.bookId, id: gabarits.selected, nouvel: $('ga-copie-id').value.trim(), theme: themeOf() }, $('ga-copie-fenetre'), $('ga-copie-message'));
+  createGabarit('/api/mise-en-page/copier', { bookId: bookRef.bookId, id: gabarits.selected, nouvel: $('ga-copie-id').value.trim(), theme: themeOf() }, $('ga-copie-fenetre'), $('ga-copie-message'));
 });
 for (const button of document.querySelectorAll('dialog [data-fermer]')) button.addEventListener('click', () => button.closest('dialog').close());
 $('sujet-form').addEventListener('submit', createSubject);
@@ -2794,5 +2847,12 @@ dropZone($('dr-depot'), $('dr-fichier'), importCredits);
 $('dr-form').addEventListener('submit', saveEntry);
 $('dr-nouvelle').addEventListener('click', resetEntry);
 $('sa-controler').addEventListener('click', () => controlNow(false));
+$('pr-marquer').addEventListener('click', markReadyNow);
+$('pr-retirer').addEventListener('click', unmarkReadyNow);
+$('mp-modele').addEventListener('click', openModelChoice);
+$('mp-modele-valider').addEventListener('click', changeModelNow);
+$('mp-modele-annuler').addEventListener('click', () => { $('mp-modele-zone').hidden = true; });
+$('sujet-suppression-valider').addEventListener('click', confirmDelete);
+$('sujet-suppression-annuler').addEventListener('click', cancelDelete);
 $('sa-relu').addEventListener('click', () => controlNow(true));
 start().catch((e) => $('config').replaceChildren(el('p', e.message, 'erreur')));

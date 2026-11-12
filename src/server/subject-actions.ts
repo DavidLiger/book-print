@@ -3,7 +3,7 @@
 // `/api/sujet/urls`, sur action de David.
 import { z } from 'zod';
 import { readCollection } from '../data/collection';
-import { createSubject, firstPageOf, keepDatedCopies, readResearch, readSubject, SubjectRefused, updateSubject } from '../data/subject-file';
+import { changeModel, createSubject, deleteSubject, firstPageOf, keepDatedCopies, readResearch, readSubject, SubjectRefused, updateSubject } from '../data/subject-file';
 import { readPrintBook } from '../data/pricing-file';
 import { readBook, type BookReading } from '../glbi/read';
 import { urlIsDead } from '../checks/content';
@@ -14,7 +14,9 @@ import { researchPrompt } from '../research/prompt';
 import { applyBlockAction, applyClaimAction, touched } from '../research/state';
 import { checkUrls, defaultUrlDeps, type UrlDeps } from '../research/url-check';
 import { applyBookFiche, RenderRefused } from '../render/html';
-import { controlSubject, subjectContext, subjectPage, type SubjectContext } from '../render/subject';
+import { controlSubject, subjectContext, subjectPage, type QrSource, type SubjectContext } from '../render/subject';
+import { computeParcours, isValidated } from '../parcours/steps';
+import { readFacts, subjectLayoutFacts } from '../parcours/facts';
 import { reviewState } from '../schema/block';
 import { slugSchema } from '../schema/common';
 import type { StoredResearch } from '../schema/research';
@@ -60,6 +62,8 @@ const blockBody = z.strictObject({
 /** `title` nul : retire la surcharge, le titre revient à celui de la scène. */
 const fieldsBody = z.strictObject({ dir: z.string(), subjectId: slugSchema, title: z.string().nullable().optional(), legend: z.string().optional(), theme: slugSchema.optional() });
 const checkBody = z.strictObject({ dir: z.string(), subjectId: slugSchema, mark: z.boolean().optional() });
+const deleteBody = z.strictObject({ dir: z.string(), subjectId: slugSchema, confirm: z.literal(true) });
+const modelBody = z.strictObject({ dir: z.string(), subjectId: slugSchema, modelId: z.string() });
 
 function parse<T extends z.ZodType>(schema: T, value: unknown): z.infer<T> {
   const body = schema.safeParse(value);
@@ -72,6 +76,9 @@ export function reading(config: Config, dir: string): BookReading & { bookId: st
   if (read.errors.length > 0 || !read.bookId) throw new SubjectRefused(`Lecture de GLBInterpreter en erreur : ${read.errors.join(' ; ')}`);
   return { ...read, bookId: read.bookId };
 }
+
+/** Où lire le QR réel du livre : `dist/qr/<bookId>/` de GLBInterpreter, sous l'origine de `book.json` (ED6). */
+export const qrSourceOf = (config: Config, read: BookReading): QrSource => ({ glbRoot: config.glbRoot, origin: read.origin });
 
 function bookState(config: Config, dir: string): Json {
   const read = reading(config, dir);
@@ -101,7 +108,7 @@ function bookState(config: Config, dir: string): Json {
 
 function subjectState(config: Config, dir: string, subjectId: string): Json {
   const read = reading(config, dir);
-  const ctx = subjectContext(config.dataRoot, read.bookId, subjectId, read.scenes);
+  const ctx = subjectContext(config.dataRoot, read.bookId, subjectId, read.scenes, qrSourceOf(config, read));
   const research = readResearch(config.dataRoot, read.bookId, subjectId);
   const claims = research?.claims.map((c) => ({ ...c, sources: c.sources.map((s) => ({ ...s, urlDead: urlIsDead(s.urlCheck) })) })) ?? [];
   return {
@@ -124,7 +131,7 @@ function subjectState(config: Config, dir: string, subjectId: string): Json {
 
 function promptFor(config: Config, dir: string, subjectId: string, today: Date): string {
   const read = reading(config, dir);
-  const ctx = subjectContext(config.dataRoot, read.bookId, subjectId, read.scenes);
+  const ctx = subjectContext(config.dataRoot, read.bookId, subjectId, read.scenes, qrSourceOf(config, read));
   // Deux blocs au même identifiant ne se distingueraient pas dans le fichier rendu (ED4).
   const dup = duplicateFault(ctx.expected);
   if (dup) throw new ResearchRefused(dup);
@@ -143,7 +150,7 @@ function promptFor(config: Config, dir: string, subjectId: string, today: Date):
 function importFile(config: Config, value: z.infer<typeof importBody>): Json {
   const { dir, subjectId, content, confirm } = value;
   const read = reading(config, dir);
-  const ctx = subjectContext(config.dataRoot, read.bookId, subjectId, read.scenes);
+  const ctx = subjectContext(config.dataRoot, read.bookId, subjectId, read.scenes, qrSourceOf(config, read));
   const file = parseResearch(content);
   checkAgainst(file, subjectId, ctx.lang, ctx.expected);
   const previous = readResearch(config.dataRoot, read.bookId, subjectId);
@@ -214,15 +221,22 @@ export async function checkSubjectUrls(config: Config, dir: string, subjectId: s
 
 let controlling = false;
 
+/** Contrôles qui font un sujet « relu ». */
+const READ_CHECKS = ['C10', 'C12', 'C13'];
+/** Contrôles sans erreur pour un sujet « prêt » (ED6). */
+export const READY_CHECKS = ['C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9', 'C10', 'C11', 'C12', 'C13', 'C17'];
+const READY_STEPS = ['sujet-mise-en-page', 'sujet-recherche', 'sujet-relecture', 'sujet-illustrations', 'sujet-apercu'];
+
 /** Chromium ne se lance qu'ici : `relu` exige tous les blocs valides, et C10, C12 et C13 sans erreur. */
 async function control(config: Config, dir: string, subjectId: string, mark: boolean): Promise<Json> {
   if (controlling) throw new RenderRefused('Un contrôle est déjà en cours.');
   controlling = true;
   try {
     const read = reading(config, dir);
-    const ctx: SubjectContext = subjectContext(config.dataRoot, read.bookId, subjectId, read.scenes);
+    const ctx: SubjectContext = subjectContext(config.dataRoot, read.bookId, subjectId, read.scenes, qrSourceOf(config, read));
     const checks = await controlSubject(ctx, readResearch(config.dataRoot, read.bookId, subjectId));
-    const refused = checks.filter((c) => c.level === 'erreur').map((c) => c.id);
+    // « Relu » ne demande que le contenu : C10, C12 et C13. Les contrôles du rendu, du QR et des images sont ceux de « prêt ».
+    const refused = checks.filter((c) => c.level === 'erreur' && READ_CHECKS.includes(c.id)).map((c) => c.id);
     // Un bloc n'est relu que si son texte et son en-tête le sont (ED4).
     const notValid = ctx.subject.blocks.filter((b) => reviewState(b) !== 'valide').length;
     const reason = refused.length > 0 ? `${refused.join(', ')} en erreur.` : ctx.subject.blocks.length === 0 || notValid > 0 ? `${notValid} bloc(s) à valider dans Relecture.` : null;
@@ -232,6 +246,75 @@ async function control(config: Config, dir: string, subjectId: string, mark: boo
   } finally {
     controlling = false;
   }
+}
+
+
+/** Pourquoi un sujet ne peut pas être marqué « prêt » : ses étapes d'abord, ses contrôles ensuite, chacun nommé. `null` : rien ne l'empêche. */
+function notReadyReason(config: Config, dir: string, subjectId: string, checks: { id: string; level: string; details: string[] }[] | null): string | null {
+  const state = loadedState(config);
+  const parcours = computeParcours(readFacts(state, dir)).subjects.find((s) => s.id === subjectId);
+  if (!parcours) throw new SubjectRefused(`Le sujet ${subjectId} ne figure pas dans le livre.`);
+  if (parcours.status !== 'relu' && parcours.status !== 'prêt') return 'Le sujet doit d\'abord être marqué relu.';
+  const open = parcours.steps.filter((st) => READY_STEPS.includes(st.id) && !isValidated(st.state));
+  if (open.length > 0) return `Étapes à valider d'abord : ${open.map((st) => st.label).join(', ')}.`;
+  if (checks === null) return null;
+  return checksRefusal(checks);
+}
+
+/** Les contrôles de « prêt » en erreur, chacun nommé avec sa première cause ; `null` : aucun. Une alerte ne bloque pas. */
+export function checksRefusal(checks: { id: string; level: string; details: string[] }[]): string | null {
+  const errors = checks.filter((c) => c.level === 'erreur' && READY_CHECKS.includes(c.id));
+  return errors.length > 0 ? `Contrôles en erreur : ${errors.map((c) => `${c.id}${c.details[0] ? ` (${c.details[0]}${c.details.length > 1 ? `, +${c.details.length - 1}` : ''})` : ''}`).join(' ; ')}.` : null;
+}
+
+const loadedState = (config: Config) => ({ ok: true as const, config });
+
+/** « Marquer prêt » : les étapes du sujet validées, puis tous les contrôles, Chromium compris, sans erreur. Une alerte ne bloque pas. */
+async function markReady(config: Config, dir: string, subjectId: string): Promise<Json> {
+  if (controlling) throw new RenderRefused('Un contrôle est déjà en cours.');
+  controlling = true;
+  try {
+    const early = notReadyReason(config, dir, subjectId, null);
+    const read = reading(config, dir);
+    if (early) return { checks: [], marked: false, reason: early, ...subjectState(config, dir, subjectId) };
+    const ctx = subjectContext(config.dataRoot, read.bookId, subjectId, read.scenes, qrSourceOf(config, read));
+    const checks = await controlSubject(ctx, readResearch(config.dataRoot, read.bookId, subjectId));
+    const reason = notReadyReason(config, dir, subjectId, checks);
+    if (reason === null && ctx.subject.status !== 'prêt') updateSubject(config.dataRoot, read.bookId, subjectId, (data) => ({ ...data, subject: { ...data.subject, status: 'prêt' } }));
+    return { checks, marked: reason === null, reason, ...subjectState(config, dir, subjectId) };
+  } finally {
+    controlling = false;
+  }
+}
+
+/** « Retirer prêt » : le sujet redevient « relu ». Rien d'autre ne change. */
+function unmarkReady(config: Config, dir: string, subjectId: string): Json {
+  const { bookId } = reading(config, dir);
+  if (readSubject(config.dataRoot, bookId, subjectId).status !== 'prêt') throw new SubjectRefused(`Le sujet ${subjectId} n'est pas marqué prêt.`);
+  updateSubject(config.dataRoot, bookId, subjectId, (data) => ({ ...data, subject: { ...data.subject, status: 'relu' } }));
+  return subjectState(config, dir, subjectId);
+}
+
+/** Modèles que ce sujet peut prendre : son format, ses pages, et un côté de départ qui convient (§24.12). */
+function compatibleModels(config: Config, dir: string, subjectId: string): Json {
+  const read = reading(config, dir);
+  const { book } = readPrintBook(config.dataRoot, read.bookId);
+  const collection = readCollection(config.dataRoot);
+  if (!book || !collection) throw new SubjectRefused('Le livre et la collection doivent exister.');
+  const subject = readSubject(config.dataRoot, read.bookId, subjectId);
+  const first = firstPageOf(config.dataRoot, book, subjectId);
+  const models = Object.values(validTemplates(readTemplates(config.dataRoot, collection.style)))
+    .filter((t) => sameFormat(t, book.edition.trim) && t.pages === subject.pages && templateFits(t, first))
+    .map((t) => ({ id: t.id, pages: t.pages }));
+  return { current: subject.template, models };
+}
+
+function changeSubjectModel(config: Config, dir: string, subjectId: string, modelId: string): Json {
+  const read = reading(config, dir);
+  const changed = changeModel(config.dataRoot, read.bookId, subjectId, modelId, new Date());
+  const { book } = readPrintBook(config.dataRoot, read.bookId);
+  const gap = book ? subjectLayoutFacts(config.dataRoot, book, readSubject(config.dataRoot, read.bookId, subjectId)).blocksGap : { missing: [], extra: [] };
+  return { changed, gap, ...subjectState(config, dir, subjectId) };
 }
 
 export const SUBJECT_ACTIONS: Record<string, (body: unknown, config: Config) => Json | Promise<Json>> = {
@@ -266,10 +349,32 @@ export const SUBJECT_ACTIONS: Record<string, (body: unknown, config: Config) => 
     const { dir, subjectId, mark } = parse(checkBody, body);
     return control(config, dir, subjectId, mark === true);
   },
+  '/api/sujet/pret': (body, config) => {
+    const { dir, subjectId } = parse(subjectBody, body);
+    return markReady(config, dir, subjectId);
+  },
+  '/api/sujet/retirer-pret': (body, config) => {
+    const { dir, subjectId } = parse(subjectBody, body);
+    return unmarkReady(config, dir, subjectId);
+  },
+  '/api/sujet/supprimer': (body, config) => {
+    const { dir, subjectId } = parse(deleteBody, body);
+    const read = reading(config, dir);
+    const deleted = deleteSubject(config.dataRoot, read.bookId, subjectId, new Date());
+    return { deleted, ...bookState(config, dir) };
+  },
+  '/api/sujet/modeles': (body, config) => {
+    const { dir, subjectId } = parse(subjectBody, body);
+    return compatibleModels(config, dir, subjectId);
+  },
+  '/api/sujet/modele': (body, config) => {
+    const { dir, subjectId, modelId } = parse(modelBody, body);
+    return changeSubjectModel(config, dir, subjectId, modelId);
+  },
 };
 
 export async function subjectPreviewHtml(dir: string | null, subjectId: string | null, config: Config): Promise<string> {
   const body = parse(subjectBody, { dir, subjectId });
   const read = reading(config, body.dir);
-  return (await subjectPage(subjectContext(config.dataRoot, read.bookId, body.subjectId, read.scenes))).html;
+  return (await subjectPage(subjectContext(config.dataRoot, read.bookId, body.subjectId, read.scenes, qrSourceOf(config, read)))).html;
 }

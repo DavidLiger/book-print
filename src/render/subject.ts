@@ -1,8 +1,13 @@
 // src/render/subject.ts — texte relu et illustrations d'un sujet dans son gabarit (spec §5.2, étape 7). Même HTML que le PDF. Une zone sans image
 // garde un aplat neutre marqué « à venir ». Le QR réel arrive en MP5 : un faux QR tamponné en tient la place. Pas d'export PDF du sujet.
 import fs from 'node:fs';
-import { ESSAI_FICHE_VALUES, ESSAI_PHRASES, fakeQr } from '../../scripts/fixtures/sujet-essai';
+import { fakeQr, PLACEHOLDER_FICHE_VALUES, PLACEHOLDER_PHRASES } from './placeholders';
 import { runSubjectChecks } from '../checks/content';
+import { c17Overlaps } from '../checks/overlaps';
+import { readPdfFacts } from '../checks/pdf-facts';
+import { pdfChecks } from './pdf-checks';
+import { c9Qr, decodeQr, qrDataFaults } from '../checks/qr';
+import type { Measures } from './measure';
 import type { CheckResult } from '../checks/rules';
 import { c5Resolution, c11Rights, ppiOf, type PlacedImage } from '../checks/images';
 import { readCollection, type Collection } from '../data/collection';
@@ -15,6 +20,7 @@ import type { Part } from '../images/contour';
 import type { SubjectLayout } from '../layout/schema';
 import { readPrintBook } from '../data/pricing-file';
 import type { SceneReading } from '../glbi/read';
+import { readQrSvg } from '../glbi/qr-file';
 import { containPpi, placement, targetPixels, visibleCrop, type Crop, type Placement, type Size, type ZoneSizeMm } from '../images/crop';
 import { expectedBlocks, zoneLimit, type ExpectedBlock } from '../research/blocks';
 import { allEntries, illustrationRights, readBookRights } from '../rights/registry';
@@ -27,7 +33,7 @@ import { templateContent } from './gabarit';
 import type { ChainText } from './flow';
 import { blockId } from '../schema/block';
 import { applyBookFiche, RenderRefused, renderHtml, type RenderContent } from './html';
-import { flowHtml, measureFlowed, type Flowed, type HtmlBuilder } from './pdf';
+import { captureQr, flowHtml, renderFlowedPdf, type Flowed, type HtmlBuilder } from './pdf';
 
 type Lang = RenderContent['lang'];
 
@@ -51,6 +57,20 @@ export interface SubjectContext {
   sceneTitle: string;
   legend: string;
   expected: ExpectedBlock[];
+  /** Le QR réel de la scène, lu dans `dist/qr/<bookId>/` (ED6) ; `null` : absent ou illisible, l'aperçu montre un faux QR marqué « QR absent ». */
+  qr: { file: string; url: string; svg: string } | null;
+  /** Pourquoi le SVG du QR a été refusé, s'il existe. */
+  qrFault: string | null;
+  /** `<origin>/s/<sceneId>` ; `null` : origine inconnue (lecture sans GLBInterpreter). */
+  qrExpectedUrl: string | null;
+  /** Fichier attendu dans `dist/qr/<bookId>/`, pour nommer l'absence. */
+  qrExpectedFile: string;
+}
+
+/** Où lire le QR réel : la racine de GLBInterpreter et l'origine du livre (`book.json`). */
+export interface QrSource {
+  glbRoot: string;
+  origin: string | null;
 }
 
 /** Aplat neutre, sans transparence : il marque la place de l'illustration, rien de plus. */
@@ -59,9 +79,9 @@ function placeholderImage(): string {
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 
-/** Le faux QR de l'essai, barré d'un tampon : il ne peut pas passer pour un vrai. */
-function stampedQr(): string {
-  const stamp = '<g transform="rotate(-30 18.5 18.5)"><rect x="-4" y="14" width="45" height="9" fill="#ffffff"/><text x="18.5" y="21" text-anchor="middle" font-family="sans-serif" font-size="6" font-weight="700" fill="#a4261d">FACTICE</text></g>';
+/** Le faux QR, barré d'un tampon « QR absent » : il ne peut pas passer pour un vrai. */
+function absentQr(): string {
+  const stamp = '<g transform="rotate(-30 18.5 18.5)"><rect x="-4" y="14" width="45" height="9" fill="#ffffff"/><text x="18.5" y="21" text-anchor="middle" font-family="sans-serif" font-size="6" font-weight="700" fill="#a4261d">QR absent</text></g>';
   return fakeQr().replace('</svg>', `${stamp}</svg>`);
 }
 
@@ -69,7 +89,7 @@ export function subjectTitle(subject: Subject, scene: SceneReading | undefined, 
   return subject.title[lang] ?? scene?.title?.[lang] ?? '';
 }
 
-export function subjectContext(dataRoot: string, bookId: string, subjectId: string, scenes: SceneReading[]): SubjectContext {
+export function subjectContext(dataRoot: string, bookId: string, subjectId: string, scenes: SceneReading[], qrSource: QrSource | null = null): SubjectContext {
   const { book, error } = readPrintBook(dataRoot, bookId);
   if (!book) throw new RenderRefused(error ?? `Dossier du livre absent : ${bookId}/.`);
   const read = readCollection(dataRoot);
@@ -91,6 +111,13 @@ export function subjectContext(dataRoot: string, bookId: string, subjectId: stri
   const trim = book.edition.trim;
   const lang = book.edition.lang;
   const scene = scenes.find((s) => s.id === subject.sceneId);
+  let qr: SubjectContext['qr'] = null;
+  let qrFault: string | null = null;
+  if (scene?.qr && qrSource) {
+    const read = readQrSvg(qrSource.glbRoot, bookId, scene.qr.file);
+    if ('svg' in read) qr = { ...scene.qr, svg: read.svg };
+    else qrFault = read.error;
+  }
   return {
     dataRoot,
     book,
@@ -108,6 +135,10 @@ export function subjectContext(dataRoot: string, bookId: string, subjectId: stri
     sceneTitle: scene?.title?.[lang] ?? '',
     legend: subject.qrLegend?.[lang] ?? QR_LEGEND_DEFAULT[lang],
     expected: expectedBlocks(template, collection.style.fiche, lang),
+    qr,
+    qrFault,
+    qrExpectedUrl: qrSource?.origin && subject.sceneId ? `${qrSource.origin}/s/${subject.sceneId}` : null,
+    qrExpectedFile: scene?.qr?.file ?? `NN-${subject.sceneId}.svg`,
   };
 }
 
@@ -239,7 +270,7 @@ export function subjectContent(ctx: SubjectContext): RenderContent {
     // L'en-tête écrit d'un encadré (ED4), dans la langue de l'édition.
     if (block.heading !== undefined && (block.heading[ctx.lang] ?? '') !== '') headings[block.zone] = block.heading[ctx.lang]!;
   }
-  return { title: 'Aperçu', lang: ctx.lang, theme: ctx.subject.variant.theme, texts, fiche, ficheMissing: '', ...subjectImages(ctx), qrSvg: stampedQr(), qrLegend: ctx.legend, headings, chains: subjectChains(ctx) };
+  return { title: 'Aperçu', lang: ctx.lang, theme: ctx.subject.variant.theme, texts, fiche, ficheMissing: '', ...subjectImages(ctx), qrSvg: ctx.qr ? ctx.qr.svg : absentQr(), qrLegend: ctx.legend, headings, chains: subjectChains(ctx) };
 }
 
 /**
@@ -256,7 +287,7 @@ export function editorContent(ctx: SubjectContext): RenderContent {
   const fiche = Object.fromEntries(Object.entries(filler.fiche).map(([item, text]) => [item, items.has(item) ? (real.fiche[item] ?? '') : text]));
   const headings = { ...(filler.headings ?? {}), ...(real.headings ?? {}) };
   // Une image déposée et lisible est montrée ; ailleurs, l'image d'essai de l'aperçu d'un modèle, sans cadrage. L'aplat « à venir » et le faux
-  // QR tamponné de l'aperçu d'un sujet portent un texte hors du pack (C7, C8) ; le vrai QR viendra en ED6.
+  // QR « absent » de l'aperçu d'un sujet portent un texte hors du pack (C7, C8) ; le vrai QR, lui, est montré tel quel.
   const placeholder = placeholderImage();
   const images: Record<string, string> = {};
   const placements: NonNullable<RenderContent['placements']> = {};
@@ -265,7 +296,7 @@ export function editorContent(ctx: SubjectContext): RenderContent {
     images[zone] = deposited ? real.images[zone]! : image;
     if (deposited && real.placements?.[zone]) placements[zone] = real.placements[zone];
   }
-  return { ...real, texts, fiche, images, placements, headings, chains: subjectChains(ctx, filler.chains), qrSvg: filler.qrSvg };
+  return { ...real, texts, fiche, images, placements, headings, chains: subjectChains(ctx, filler.chains), qrSvg: ctx.qr ? ctx.qr.svg : filler.qrSvg };
 }
 
 /** Le HTML d'un sujet avec les coupures données ; sans coupure, le HTML final d'un sujet sans chaîne. */
@@ -283,12 +314,30 @@ export function subjectPage(ctx: SubjectContext): Promise<Flowed> {
   return flowHtml(build, content.chains ?? {});
 }
 
-/** C10 et C13 viennent des données, C12 de Chromium : c'est pourquoi ces contrôles sont une action, pas un calcul du parcours. */
-export async function controlSubject(ctx: SubjectContext, research: StoredResearch | null): Promise<CheckResult[]> {
-  const { build, content } = subjectBuilder(ctx);
-  const texts = content.chains ?? {};
-  const { measures, flow } = await measureFlowed(build, texts);
-  return runSubjectChecks({
+/** Ce que les données seules disent (aucun Chromium) : C5, C9 hors capture, C10, C11, C13, C16 et C17 en erreur, une ligne par faute. */
+export function readyErrors(ctx: SubjectContext, research: StoredResearch | null, miseEnPage: string[]): string[] {
+  const { zones, checks } = imageChecks(ctx);
+  const lines = (list: CheckResult[]) => list.filter((c) => c.level === 'erreur').flatMap((c) => c.details.map((d) => `${c.id}, ${d}`));
+  const data = runSubjectChecks({ ...contentInput(ctx, research), measures: { overflows: [] } });
+  return [
+    ...zones.flatMap((z) => (z.fault ? [`C5, ${z.fault}`] : [])),
+    ...lines(checks),
+    ...lines(data.filter((c) => c.id === 'C10' || c.id === 'C13')),
+    ...miseEnPage,
+    ...qrDataFaults(qrInput(ctx)).map((d) => `C9, ${d}`),
+  ];
+}
+
+const qrInput = (ctx: SubjectContext) => ({
+  sceneId: ctx.subject.sceneId ?? null,
+  expectedFile: ctx.qrExpectedFile,
+  qr: ctx.qr ? { file: ctx.qr.file, url: ctx.qr.url } : null,
+  fault: ctx.qrFault,
+  expectedUrl: ctx.qrExpectedUrl,
+});
+
+function contentInput(ctx: SubjectContext, research: StoredResearch | null, chains?: Parameters<typeof runSubjectChecks>[0]['chains'], measures?: Measures) {
+  return {
     blocks: ctx.subject.blocks,
     expected: ctx.expected,
     lang: ctx.lang,
@@ -297,9 +346,25 @@ export async function controlSubject(ctx: SubjectContext, research: StoredResear
     legend: ctx.legend,
     legendMax: zoneLimit(ctx.template, 'qr'),
     claims: research?.claims ?? [],
-    measures,
-    essaiPhrases: ESSAI_PHRASES,
-    essaiValues: ESSAI_FICHE_VALUES,
-    chains: { defs: chainsOf(ctx.template), texts, flow },
-  });
+    measures: measures ?? { overflows: [] },
+    essaiPhrases: PLACEHOLDER_PHRASES,
+    essaiValues: PLACEHOLDER_FICHE_VALUES,
+    ...(chains ? { chains } : {}),
+  };
+}
+
+/**
+ * Tous les contrôles d'un sujet, sur son vrai contenu : C10, C12 et C13 viennent des données et de Chromium, C3, C4, C6, C7 et C8 du PDF du
+ * sujet, C9 du cartouche du QR capturé puis décodé, C17 de la géométrie. « Relu » ne demande que C10, C12 et C13 ; « prêt » demande tout.
+ */
+export async function controlSubject(ctx: SubjectContext, research: StoredResearch | null): Promise<CheckResult[]> {
+  const { build, content } = subjectBuilder(ctx);
+  const texts = content.chains ?? {};
+  const { pdf, measures, flow } = await renderFlowedPdf(build, texts, ctx.trim);
+  const facts = await readPdfFacts(pdf);
+  const subjectChecks = runSubjectChecks(contentInput(ctx, research, { defs: chainsOf(ctx.template), texts, flow }, measures));
+  const capture = ctx.qr ? await captureQr(build, texts) : null;
+  const decoded = capture ? await decodeQr(capture.png) : null;
+  const c9 = c9Qr({ ...qrInput(ctx), capture: capture && { sideMm: capture.sideMm }, decoded });
+  return [...subjectChecks, ...imageChecks(ctx).checks, ...pdfChecks({ facts, measures, pages: ctx.layout }), c9, c17Overlaps(ctx.layout)];
 }

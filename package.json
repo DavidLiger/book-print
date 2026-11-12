@@ -23,7 +23,8 @@
     "test:lanceur": "tsx scripts/test-lanceur.ts",
     "test:mises-en-page": "tsx scripts/test-mises-en-page.ts",
     "test:texte-detoure": "tsx scripts/test-texte-detoure.ts",
-    "test:editeur": "tsx scripts/test-editeur.ts"
+    "test:editeur": "tsx scripts/test-editeur.ts",
+    "test:pret": "tsx scripts/test-pret.ts"
   },
   "keywords": [],
   "author": "",
@@ -33,6 +34,7 @@
     "@fontsource-variable/baloo-2": "5.3.0",
     "@fontsource/andika": "5.3.0",
     "@types/node": "20.19.11",
+    "jsqr": "1.4.0",
     "pdf-lib": "1.17.1",
     "playwright": "1.64.0",
     "sharp": "0.35.5",

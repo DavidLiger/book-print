@@ -187,35 +187,6 @@
       </dialog>
     </section>
 
-    <section id="essai" class="panneau" aria-labelledby="t-essai" hidden>
-      <div class="tete">
-        <h2 id="t-essai">Gabarit 2A : essai</h2>
-        <p class="note">Contenu factice.</p>
-        <button id="essai-recharger" type="button" class="secondaire">Recharger l'aperçu</button>
-      </div>
-      <div id="essai-message"></div>
-      <div id="essai-zone" class="zone-apercu" hidden>
-        <div id="apercu-cadre" class="cadre-apercu">
-          <div id="apercu-echelle" class="echelle-apercu">
-            <iframe id="apercu" class="cadre-page" title="Aperçu de la double page" sandbox scrolling="no"></iframe>
-            <svg id="reperes" class="reperes" aria-hidden="true"></svg>
-          </div>
-        </div>
-        <div class="colonne">
-          <div class="champ"><label for="essai-theme">Thème</label><select id="essai-theme"></select></div>
-          <fieldset>
-            <legend>Repères</legend>
-            <label><input type="checkbox" id="r-bleed" data-layer="bleed"> Fond perdu</label>
-            <label><input type="checkbox" id="r-safe" data-layer="safe"> Zone de sécurité</label>
-            <label><input type="checkbox" id="r-fold" data-layer="fold"> Pli</label>
-            <label><input type="checkbox" id="r-zones" data-layer="zones"> Zones</label>
-          </fieldset>
-          <div class="boutons"><button id="essai-exporter" type="button">Exporter le PDF d'essai</button></div>
-          <div id="essai-resultat" class="liste"></div>
-        </div>
-      </div>
-    </section>
-
     <section id="droits" class="panneau" aria-labelledby="t-droits" hidden>
       <div class="tete">
         <h2 id="t-droits">Registre des droits</h2>
@@ -353,6 +324,14 @@
           <h2 id="t-sujets">Sujets du livre</h2>
           <p id="sujets-total" class="note"></p>
           <div id="sujets-liste" class="defile"></div>
+          <div id="sujet-suppression" class="liste" hidden>
+            <p id="sujet-suppression-texte" class="alerte"></p>
+            <p class="note">Rien n'est effacé : le dossier du sujet et ses illustrations vont dans <code>subjects/.supprimes/</code>. Les droits déjà inscrits restent. Un nouveau sujet sur la même scène reste possible.</p>
+            <div class="boutons">
+              <button id="sujet-suppression-valider" type="button">Supprimer ce sujet</button>
+              <button id="sujet-suppression-annuler" type="button" class="secondaire">Annuler</button>
+            </div>
+          </div>
         </div>
         <div class="colonne">
           <h2>Nouveau sujet</h2>
@@ -384,6 +363,15 @@
             <p id="mp-theme" class="note"></p>
             <button id="mp-controler" type="button" title="C3, C4, C6, C7, C8, C12 et C17 : texte réel là où il existe, remplissage ailleurs.">Contrôler</button>
             <button id="mp-recharger" type="button" class="secondaire">Recharger</button>
+            <button id="mp-modele" type="button" class="secondaire" title="Remplace la mise en page du sujet par un autre modèle de même nombre de pages. L'ancienne est gardée, datée.">Changer de modèle</button>
+          </div>
+          <div id="mp-modele-zone" class="liste" hidden>
+            <p class="note">L'ancienne mise en page est gardée sous <code>layout.&lt;date&gt;.json</code>. La recherche, la relecture et les images ne bougent pas ; une image dont l'élément garde son nom reste posée.</p>
+            <div class="champ"><label for="mp-modele-choix">Nouveau modèle</label><select id="mp-modele-choix"></select></div>
+            <div class="boutons">
+              <button id="mp-modele-valider" type="button">Changer de modèle</button>
+              <button id="mp-modele-annuler" type="button" class="secondaire">Annuler</button>
+            </div>
           </div>
           <div id="mp-message"></div>
           <div class="zone-editeur">
@@ -572,10 +560,19 @@
                 <button id="sa-relu" type="button">Marquer relu</button>
                 <button id="sa-recharger" type="button" class="secondaire">Recharger l'aperçu</button>
               </div>
-              <p class="note">QR factice : le vrai arrive avec le lot suivant. Une zone sans image garde son aplat.</p>
+              <p class="note">Le QR est celui de GLBInterpreter ; sans lui, un faux QR marqué « QR absent » tient sa place. Une zone sans image garde son aplat.</p>
               <div id="sa-resultat" class="liste"></div>
             </div>
           </div>
+        </div>
+
+        <div id="sujet-pret" class="sous-panneau" hidden>
+          <div class="tete">
+            <p class="note">« Prêt » : les étapes du sujet validées, puis tous les contrôles sans erreur (C3 à C13 et C17, dont le QR lu par C9). Une alerte ne bloque pas.</p>
+            <button id="pr-marquer" type="button">Marquer prêt</button>
+            <button id="pr-retirer" type="button" class="secondaire">Retirer « prêt »</button>
+          </div>
+          <div id="pr-resultat" class="liste"></div>
         </div>
       </div>
     </section>

@@ -9,7 +9,7 @@ import { glbiIdSchema, slugSchema, WINDOWS_RESERVED } from '../schema/common';
 import { printBookSchema, type PrintBook } from '../schema/print-book';
 import { storedResearchSchema, type StoredResearch } from '../schema/research';
 import { subjectSchema, type Subject } from '../schema/subject';
-import { copyModel, LAYOUT_FILE } from '../layout/files';
+import { copyModel, fileStamp, LAYOUT_FILE } from '../layout/files';
 import { formatLabel, formatOf, sameFormat } from '../layout/model';
 import { subjectLayoutSchema, type SubjectLayout } from '../layout/schema';
 import { FIRST_SUBJECT_PAGE, templateFits } from '../templates';
@@ -17,6 +17,7 @@ import { GeometryRefused } from '../templates/geometry';
 import { readTemplates, templateOf } from '../templates/files';
 import { readCollection } from './collection';
 import { writeAtomic } from './atomic';
+import { illustrationFolder } from './illustration-file';
 import { bookFolder } from './pricing-file';
 
 export class SubjectRefused extends Error {}
@@ -230,4 +231,94 @@ export function setDefaultStyle(dataRoot: string, bookId: string, styleId: strin
   const next = printBookSchema.parse(styleId === null ? rest : { ...rest, defaultStyle: styleId });
   if (JSON.stringify(next) !== JSON.stringify(book)) writeAtomic(dir, 'print-book.json', json(next));
   return next;
+}
+
+/** Dossier des sujets supprimés : jamais lu comme un sujet, la liste d'un livre vient de `print-book.json`. */
+export const DELETED_DIR = '.supprimes';
+
+export interface DeletedSubject {
+  /** Le dossier du sujet, sous `subjects/`. */
+  folder: string;
+  /** Les illustrations déplacées avec lui, s'il y en avait. */
+  illustrations: boolean;
+}
+
+/**
+ * Supprimer un sujet (ED6, §24.16) : rien n'est effacé. Le dossier du sujet va sous `subjects/.supprimes/<sujetId>.<date>/`, ses illustrations
+ * (et leurs contours) dans le même dossier, sous `illustrations/` ; le sujet sort de la liste de `print-book.json`. Les entrées du registre des
+ * droits restent. Le dossier d'abord, la liste ensuite : une coupure laisse une entrée sans dossier, que le parcours nomme, jamais un sujet perdu.
+ */
+export function deleteSubject(dataRoot: string, bookId: string, id: string, now = new Date()): DeletedSubject {
+  const { dir, book } = requirePrintBook(dataRoot, bookId);
+  if (!book.subjects.includes(id)) throw new SubjectRefused(`Le sujet ${id} ne figure pas dans print-book.json : rien n'est déplacé.`);
+  const folder = subjectFolder(dataRoot, bookId, id);
+  if (!folder) throw new SubjectRefused(`Dossier du sujet ${id} absent : rien à déplacer.`);
+  const root = subjectsDir(dataRoot, bookId)!;
+  const trash = path.join(root, DELETED_DIR);
+  const stat = fs.lstatSync(trash, { throwIfNoEntry: false });
+  if (!stat) fs.mkdirSync(trash);
+  else if (stat.isSymbolicLink() || !stat.isDirectory()) throw new SubjectRefused(`${bookId}/subjects/${DELETED_DIR}/ n'est pas un dossier réel : rien n'est déplacé.`);
+  const target = path.join(trash, `${id}.${fileStamp(now)}`);
+  if (fs.lstatSync(target, { throwIfNoEntry: false })) throw new SubjectRefused(`${bookId}/subjects/${DELETED_DIR}/${path.basename(target)}/ existe déjà : rien n'est déplacé.`);
+  const pictures = illustrationFolder(dataRoot, bookId, id);
+  try {
+    fs.renameSync(folder, target);
+  } catch (e) {
+    throw new SubjectRefused(`Le dossier du sujet ${id} ne peut pas être déplacé (${(e as Error).message}) : le fermer dans les autres programmes, puis recommencer.`);
+  }
+  if (pictures) {
+    try {
+      fs.renameSync(pictures, path.join(target, 'illustrations'));
+    } catch (e) {
+      fs.renameSync(target, folder);
+      throw new SubjectRefused(`Les illustrations du sujet ${id} ne peuvent pas être déplacées (${(e as Error).message}) : rien n'a bougé.`);
+    }
+  }
+  writeAtomic(dir, 'print-book.json', json(printBookSchema.parse({ ...book, subjects: book.subjects.filter((s) => s !== id) })));
+  return { folder: `${bookId}/subjects/${DELETED_DIR}/${path.basename(target)}`, illustrations: pictures !== null };
+}
+
+export interface ChangedModel {
+  /** L'ancien `layout.json`, gardé sous ce nom. */
+  kept: string;
+  /** Le sujet était « prêt » : il repasse à « relu ». */
+  unmarked: boolean;
+}
+
+/**
+ * Changer le modèle d'un sujet (ED6, §24.12) : le `layout.json` actuel est gardé sous `layout.<date>.json`, une nouvelle copie du modèle le
+ * remplace. La recherche, la relecture et les images ne sont pas touchées : une image dont l'élément garde son identifiant reste posée, les
+ * autres restent sur le disque, non montrées (GB1). Un sujet « prêt » repasse à « relu ». Le modèle doit avoir les pages du sujet, son format
+ * et pouvoir commencer où le sujet commence.
+ */
+export function changeModel(dataRoot: string, bookId: string, id: string, modelId: string, now = new Date()): ChangedModel {
+  const { book } = requirePrintBook(dataRoot, bookId);
+  if (!book.subjects.includes(id)) throw new SubjectRefused(`Le sujet ${id} ne figure pas dans print-book.json.`);
+  const subject = readSubject(dataRoot, bookId, id);
+  const folder = subjectFolder(dataRoot, bookId, id)!;
+  const collection = readCollection(dataRoot);
+  const found = templateOf(readTemplates(dataRoot, collection?.style ?? null), modelId);
+  if ('error' in found) throw new SubjectRefused(found.error);
+  const { template } = found;
+  const format = formatOf(template);
+  if (format && !sameFormat(template, book.edition.trim)) throw new SubjectRefused(`La mise en page ${modelId} est faite pour ${formatLabel(format)} : le livre est en ${formatLabel(book.edition.trim)}.`);
+  if (template.pages !== subject.pages) throw new SubjectRefused(`Le modèle ${modelId} a ${template.pages} pages, le sujet en a ${subject.pages}.`);
+  const firstPage = firstPageOf(dataRoot, book, id);
+  if (!templateFits(template, firstPage)) throw new SubjectRefused(`Le modèle ${modelId} ne peut pas commencer en page ${firstPage}.`);
+  let copy;
+  try {
+    copy = copyModel(template, found.sha256, book.edition.trim, collection!.style.margins, firstPage, now);
+  } catch (e) {
+    if (e instanceof GeometryRefused) throw new SubjectRefused(e.message);
+    throw e;
+  }
+  const current = path.join(folder, LAYOUT_FILE);
+  const kept = `layout.${fileStamp(now)}.json`;
+  if (fs.lstatSync(current, { throwIfNoEntry: false })?.isFile()) fs.copyFileSync(current, path.join(folder, kept), fs.constants.COPYFILE_EXCL);
+  else throw new SubjectRefused(`${bookId}/subjects/${id}/${LAYOUT_FILE} absent : le changement de modèle suppose la copie du sujet.`);
+  writeAtomic(folder, LAYOUT_FILE, json(copy));
+  const unmarked = subject.status === 'prêt';
+  const next = subjectSchema.parse({ ...subject, template: modelId, ...(unmarked ? { status: 'relu' } : {}) });
+  if (JSON.stringify(next) !== JSON.stringify(subject)) writeAtomic(folder, SUBJECT_FILE, json(next));
+  return { kept, unmarked };
 }

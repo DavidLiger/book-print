@@ -17,7 +17,7 @@ import { createComfyRuntime } from '../src/server/comfy-actions';
 import { check, finish } from './test-lib';
 
 const SIZES = [{ width: 1920, height: 950 }, { width: 1366, height: 650 }];
-const STEP_IDS = ['livre', 'prix', 'collection', 'gabarits', 'essai', 'droits', 'workflows', 'styles', 'sujets'];
+const STEP_IDS = ['livre', 'prix', 'collection', 'gabarits', 'droits', 'workflows', 'styles', 'sujets'];
 
 const glbRoot = makeGlbi();
 const parent = tempDir();
@@ -66,22 +66,18 @@ const open = async () => {
 const text = async (selector: string) => (await page.textContent(selector)) ?? '';
 const go = (id: string) => page.click(`#etapes button[data-step="${id}"]`);
 const untilTab = (id: string, sign: string) => until(`document.querySelector('#etapes button[data-step="${id}"] .nom-signe')?.getAttribute('aria-label') === '${sign}'`);
-const exportPdf = async () => {
-  await page.click('#essai-exporter');
-  await until(`!document.querySelector('#essai-exporter').disabled && document.querySelector('#essai-resultat table') !== null`);
-};
 const statesText = async () => (await tabs()).map((t) => t.sign).join();
 
 // Parcours de bout en bout, sur le dossier de données vide
 await open();
 {
   const all = await tabs();
-  check('menu : neuf étapes numérotées, dans l’ordre', all.map((t) => t.id).join() === STEP_IDS.join() && all.every((t, i) => t.text.startsWith(String(i + 1))), all);
+  check('menu : huit étapes numérotées, dans l’ordre (plus d’Essai, ED6)', all.map((t) => t.id).join() === STEP_IDS.join() && all.every((t, i) => t.text.startsWith(String(i + 1))), all);
   check('ouverture : première étape non validée', (await current()) === 'livre');
-  check('départ : Livre à faire, le reste verrouillé', (await statesText()) === 'à faire,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée', await statesText());
-  check('étape verrouillée : motif lisible sur l’onglet', (await tab('essai')).text.includes('Valider d\'abord « Livre »'), await tab('essai'));
-  await page.click('#etapes button[data-step="essai"]', { force: true });
-  check('étape verrouillée : ne s’ouvre pas', (await current()) === 'livre' && await page.isHidden('#essai'));
+  check('départ : Livre à faire, le reste verrouillé', (await statesText()) === 'à faire,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée', await statesText());
+  check('étape verrouillée : motif lisible sur l’onglet', (await tab('prix')).text.includes('Valider d\'abord « Livre »'), await tab('prix'));
+  await page.click('#etapes button[data-step="prix"]', { force: true });
+  check('étape verrouillée : ne s’ouvre pas', (await current()) === 'livre' && await page.isHidden('#prix'));
   check('un seul panneau affiché', (await page.locator('.panneau:visible').count()) === 1);
   check('motif de l’étape ouverte affiché', (await text('#motifs')).includes('Créer le dossier'));
   await page.evaluate('window.sansRecharge = true');
@@ -101,7 +97,7 @@ await open();
   check('scénario enregistré, non retenu : Prix à faire', (await tab('prix')).sign === 'à faire');
   await page.click('#prix-scenarios button:has-text("Retenir")');
   await untilTab('prix', 'validée');
-  check('scénario retenu : Collection s’ouvre', (await tab('collection')).sign === 'à faire' && (await tab('essai')).sign === 'verrouillée');
+  check('scénario retenu : Collection s’ouvre', (await tab('collection')).sign === 'à faire' && (await tab('gabarits')).sign === 'verrouillée');
   await page.click('#prix-scenarios button:has-text("Modifier")');
   check('Modifier revient au formulaire', await page.isVisible('#prix-form') && (await page.inputValue('#p-nom')) === 'Essai');
   await page.click('#p-nouveau');
@@ -117,7 +113,7 @@ await open();
   fs.rmSync(gabarit('2A.json'));
   await page.click('#collection-relire');
   await untilTab('gabarits', 'à faire');
-  check('Gabarits : aucun gabarit, à faire ; Essai et Sujets verrouillés', (await tab('essai')).sign === 'verrouillée' && (await tab('sujets')).sign === 'verrouillée' && (await tab('essai')).text.includes('Mises en page'), await tabs());
+  check('Gabarits : aucun gabarit, à faire ; Sujets verrouillé', (await tab('sujets')).sign === 'verrouillée' && (await tab('sujets')).text.includes('Mises en page'), await tabs());
   await go('gabarits');
   await until(`document.querySelector('#ga-liste').textContent.includes('Aucune mise en page')`);
   check('Gabarits : motif et liste vide', (await text('#motifs')).includes('Ajouter les gabarits livrés') && (await text('#ga-liste')).includes('Aucune mise en page'));
@@ -134,7 +130,7 @@ await open();
   fs.writeFileSync(gabarit('4A.json'), '{');
   await page.click('#ga-recharger');
   await untilTab('gabarits', 'erreur');
-  check('gabarit invalide : erreur nommée, Essai verrouillé, 2A toujours affiché', (await text('#ga-liste')).includes('JSON invalide') && (await text('#motifs')).includes('collection/gabarits/4A.json') && (await tab('essai')).sign === 'verrouillée' && (await page.getAttribute('#ga-apercu', 'src'))!.includes('id=2A'));
+  check('gabarit invalide : erreur nommée, Sujets verrouillé, 2A toujours affiché', (await text('#ga-liste')).includes('JSON invalide') && (await text('#motifs')).includes('collection/gabarits/4A.json') && (await tab('sujets')).sign === 'verrouillée' && (await page.getAttribute('#ga-apercu', 'src'))!.includes('id=2A'));
   check('gabarit invalide : jamais réécrit', fs.readFileSync(gabarit('4A.json'), 'utf8') === '{');
   fs.rmSync(gabarit('4A.json'));
   await page.click('#ga-recharger');
@@ -156,35 +152,14 @@ await open();
   check('Mises en page : colonnes de la grille tracées (3 par page)', (await page.locator('#ga-reperes g[data-layer="grille"] rect').count()) === 6 && (await page.evaluate(`document.querySelector('#ga-reperes g[data-layer="grille"]').getAttribute('display')`)) === 'inline');
   check('Mises en page : double page, navigation désactivée à 2 pages', (await text('#ga-pages-texte')).includes('Pages 1–2 sur 2') && await page.isDisabled('#ga-prec') && await page.isDisabled('#ga-suiv'));
   check('Gabarits : contrôle de 2A au texte maximal, sept contrôles affichés (C17 compris)', (await page.locator('#ga-resultat td .signe').count()) === 7 && (await text('#ga-resultat')).includes('C12') && (await text('#ga-resultat')).includes('C3'), await text('#ga-resultat'));
-  await go('essai');
-  await until(`document.querySelector('#apercu').src.includes('/apercu?')`);
-  await exportPdf();
-  await untilTab('essai', 'validée');
-  check('export au vert : Essai validé', (await tab('essai')).state === 'validee');
-  const control = JSON.parse(fs.readFileSync(path.join(dataRoot, BOOK_ID, 'export', 'essai-2A.controle.json'), 'utf8'));
-  check('export : résultat conservé hors du PDF', control.bookId === BOOK_ID && Array.isArray(control.checks) && control.checks.every((c: { level: string }) => c.level === 'ok') && !Number.isNaN(Date.parse(control.date)), control);
-
   const style = path.join(dataRoot, 'collection', 'style.json');
-  const now = new Date();
-  fs.utimesSync(style, now, now);
-  await page.click('#essai-recharger');
-  await untilTab('essai', 'à refaire');
-  check('style.json modifié : à refaire après « Recharger l’aperçu »', (await text('#motifs')).includes('style.json') && (await tab('essai')).state === 'a-faire');
-  await exportPdf();
-  await untilTab('essai', 'validée');
-  check('nouvel export : Essai de nouveau validé', (await tab('essai')).state === 'validee');
   check('aucun rechargement de page pendant le parcours', (await page.evaluate('window.sansRecharge')) === true);
-
-  await page.check('#r-fold');
-  check('repères : le calque s’affiche', (await page.getAttribute('#reperes g[data-layer="fold"]', 'display')) === 'inline');
-  await page.selectOption('#essai-theme', 'ocean');
-  check('thème : l’aperçu suit', ((await page.getAttribute('#apercu', 'src')) ?? '').includes('theme=ocean'));
 
   // Workflows (IC1) : déposés une fois pour la collection
   await page.reload();
   await page.waitForSelector('#etapes li');
   await until(`document.querySelector('#etapes li[data-state="validee"]') !== null`);
-  check('Essai validé, workflows absents : ouverture sur Workflows', (await current()) === 'workflows' && (await text('#motifs')).includes('Déposer le workflow de génération'));
+  check('Mises en page validées, workflows absents : ouverture sur Workflows', (await current()) === 'workflows' && (await text('#motifs')).includes('Déposer le workflow de génération'));
   await until(`document.querySelector('#wf-comfy').textContent.includes('0.43.0')`);
   check('Workflows : ComfyUI vérifié, version affichée', (await text('#wf-comfy')).includes(fake.url));
   check('Workflows : ComfyUI répond, pas de bouton Lancer', await page.isHidden('#wf-lancer'));
@@ -279,21 +254,21 @@ await open();
   await page.reload();
   await page.waitForSelector('#etapes li');
   await until(`document.querySelector('#etapes li[data-state="validee"]') !== null`);
-  check('Essai validé, aucun sujet : ouverture sur Sujets', (await current()) === 'sujets');
+  check('Étapes du livre validées, aucun sujet : ouverture sur Sujets', (await current()) === 'sujets');
 
   await go('prix');
   await page.click('#v-scenarios');
   await page.click('#prix-scenarios button:has-text("Ne plus retenir")');
-  await untilTab('essai', 'verrouillée');
-  check('étape redevenue non validée : la suite se reverrouille', (await statesText()) === 'validée,à faire,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée', await statesText());
-  check('reverrouillage : aucune donnée perdue', fs.existsSync(style) && fs.existsSync(path.join(dataRoot, BOOK_ID, 'export', 'essai-2A.pdf')));
+  await untilTab('gabarits', 'verrouillée');
+  check('étape redevenue non validée : la suite se reverrouille', (await statesText()) === 'validée,à faire,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée', await statesText());
+  check('reverrouillage : aucune donnée perdue', fs.existsSync(style));
   await page.reload();
   await until(`document.querySelector('#etapes li[data-state="a-faire"]') !== null`);
   check('réouverture : première étape non validée, sans mémoire d’onglet', (await current()) === 'prix');
   await page.click('#v-scenarios');
   await page.click('#prix-scenarios button:has-text("Retenir")');
-  await untilTab('essai', 'validée');
-  check('scénario de nouveau retenu : le parcours revient', (await statesText()) === 'validée,validée,validée,validée,validée,alerte,validée,alerte,à faire', await statesText());
+  await untilTab('gabarits', 'validée');
+  check('scénario de nouveau retenu : le parcours revient', (await statesText()) === 'validée,validée,validée,validée,alerte,validée,alerte,à faire', await statesText());
 }
 
 // Sujet réel, de la création à « relu »
@@ -327,7 +302,7 @@ const levels = () => page.evaluate(`[...document.querySelectorAll('#sa-resultat 
   await page.click('#s-creer');
   await until(`document.querySelector('#sujet-message').textContent.includes('alpha')`);
   check('création : le total suit', (await text('#sujets-total')).includes('2 pages de sujets') && (await text('#sujets-total')).includes('page 8'), await text('#sujets-total'));
-  check('création : Essai reste validé', (await tab('essai')).sign === 'validée');
+  check('création : Mises en page reste validée', (await tab('gabarits')).sign === 'validée');
   check('création : le sujet est dans la liste', (await text('#sujets-liste')).includes('alpha fr') && (await tab('sujets')).sign === 'à faire');
   check('création : thème suivant proposé', (await page.inputValue('#s-theme')) === 'ocean');
   await page.selectOption('#s-scene', 'alpha');
@@ -409,12 +384,20 @@ const levels = () => page.evaluate(`[...document.querySelectorAll('#sa-resultat 
   check('aperçu : le texte réel est dans le cadre', ((await page.frameLocator('#sa-page').locator('[data-zone="chapeau"]').textContent()) ?? '').includes('Fictivore'));
   check('aperçu : titre de la scène', (await page.frameLocator('#sa-page').locator('[data-zone="titre"]').textContent()) === 'alpha fr');
   check('aperçu : numéros réels', (await page.frameLocator('#sa-page').locator('section').first().getAttribute('data-page')) === '6');
-  check('aperçu : illustration et QR marqués', ((await page.frameLocator('#sa-page').locator('[data-zone="illustration"]').getAttribute('src')) ?? '').includes('venir') && ((await page.frameLocator('#sa-page').locator('[data-zone="qr"]').textContent()) ?? '').includes('FACTICE'));
+  check('aperçu : illustration à venir et QR réel (ED6)', ((await page.frameLocator('#sa-page').locator('[data-zone="illustration"]').getAttribute('src')) ?? '').includes('venir') && ((await page.frameLocator('#sa-page').locator('[data-zone="qr"]').textContent()) ?? '').includes('FACTICE') === false && (await page.frameLocator('#sa-page').locator('[data-zone="qr"] svg[data-qr]').count()) === 1);
   await page.check('input[data-sujet-layer="zones"]');
   check('aperçu : repères repris de l’essai', (await page.getAttribute('#sa-reperes g[data-layer="zones"]', 'display')) === 'inline' && (await page.locator('#sa-reperes text').count()) > 5);
   await runControl('#sa-relu');
   check('relu refusé : blocs à valider', (await text('#sa-resultat')).includes('à valider') && subjectFile().status === 'brouillon', await text('#sa-resultat'));
-  check('contrôles : verts sur des textes corrects', (await levels()).join() === 'C10:contrôle réussi,C12:contrôle réussi,C13:contrôle réussi', await levels());
+  check('contrôles : verts sur des textes corrects (C7 signale l’aplat « à venir » sans image, C9 lit le QR réel)', (await levels()).join() === 'C10:contrôle réussi,C12:contrôle réussi,C13:contrôle réussi,C5:contrôle réussi,C11:contrôle réussi,C3:contrôle réussi,C4:contrôle réussi,C6:contrôle réussi,C7:erreur,C8:contrôle réussi,C9:contrôle réussi,C17:contrôle réussi', await levels());
+
+  // ED6 : étape Prêt (refus nommé), changement de modèle (zone annulable).
+  check('Prêt : verrouillée tant que Relecture, Illustrations et Aperçu ne sont pas validés', (await subTab('sujet-pret')) === 'verrouillée' && subjectFile().status === 'brouillon', await subTab('sujet-pret'));
+  await goSub('sujet-mise-en-page');
+  await until(`!document.querySelector('#mp-modele').disabled`);
+  await page.click('#mp-modele');
+  await until(`document.querySelector('#mp-message').textContent.includes('Aucun autre modèle')`);
+  check('Changer de modèle : un seul modèle compatible, message clair, zone fermée, rien n’est changé', await page.isHidden('#mp-modele-zone') && subjectFile().template === '2A');
 
   await goSub('sujet-relecture');
   for (const id of ['chapeau', 'texte', 'fiche-taille', 'fiche-poids', 'fiche-epoque', 'fiche-regime', 'fiche-lieu']) {
@@ -627,7 +610,7 @@ const framingOf = () => subjectFile().illustrations[0].framing;
   await page.click('#sujets-liste tr:has-text("alpha fr") button:has-text("Ouvrir")');
   await until(`document.querySelector('#sous-etapes button[aria-current="step"]') !== null`);
   const sub = await page.evaluate(`[...document.querySelectorAll('#sous-etapes button')].map((b) => b.dataset.step).join()`);
-  check('étapes du sujet : Mise en page d’abord, Illustrations entre Relecture et Aperçu', sub === 'sujet-mise-en-page,sujet-recherche,sujet-relecture,sujet-illustrations,sujet-apercu', sub);
+  check('étapes du sujet : Mise en page d’abord, Illustrations entre Relecture et Aperçu, Prêt en dernier', sub === 'sujet-mise-en-page,sujet-recherche,sujet-relecture,sujet-illustrations,sujet-apercu,sujet-pret', sub);
   check('sujet relu sans image : s’ouvre sur Illustrations', await page.isVisible('#il-depot') && (await subTab('sujet-illustrations')) === 'à faire');
   await until(`document.querySelector('#il-cible').textContent !== ''`);
   check('taille cible affichée', (await text('#il-cible')).includes('1838 × 2775'));
@@ -853,13 +836,6 @@ async function everyStep(label: string): Promise<void> {
   await page.click('#ga-controler');
   await until(`!document.querySelector('#ga-controler').disabled && document.querySelector('#ga-resultat table') !== null`);
   await fits(`${label}, Gabarits, contrôle`);
-  await go('essai');
-  await until(`document.querySelector('#apercu-echelle').style.transform !== ''`);
-  await page.waitForTimeout(50);
-  await fits(`${label}, Essai`);
-  const preview = await page.evaluate(previewFit('#apercu-cadre', '#apercu-echelle')) as { inside: boolean; width: number; height: number };
-  check(`${label}, Essai : double page entière et lisible`, preview.inside && preview.height > 300 && Math.abs(preview.width / preview.height - 12.25 / 9.25) < 0.02, preview);
-  check(`${label}, Essai : repères et export à côté de l’aperçu`, await page.isVisible('#r-fold') && await page.isVisible('#essai-exporter'));
   await go('droits');
   await until(`document.querySelector('#dr-commun table') !== null`);
   await fits(`${label}, Droits`);
@@ -1021,12 +997,6 @@ await page.route('**/api/create', patchJson(({ result }) => {
   result.alerts = many('Alerte', 20);
 }));
 await page.route('**/api/collection/create', patchJson(({ result }) => { result.kept = many('Conservé', 40); }));
-await page.route('**/api/essai/export', patchJson((r) => {
-  for (const c of r.checks) {
-    c.level = 'erreur';
-    c.details = many('Détail', 8);
-  }
-}));
 for (const size of SIZES) {
   await page.setViewportSize(size);
   await open();
@@ -1038,8 +1008,6 @@ for (const size of SIZES) {
   await go('collection');
   await page.click('#collection-creer');
   await until(`document.querySelector('#collection-resultat').textContent.includes('Conservé 40')`);
-  await go('essai');
-  await exportPdf();
   await everyStep(`${size.width} × ${size.height}, listes longues`);
   await go('prix');
   await page.click('#v-simulateur');
@@ -1052,7 +1020,7 @@ await page.unrouteAll({ behavior: 'ignoreErrors' });
   await open();
   await until(`document.querySelector('#etapes li[data-state="validee"]') !== null`);
   const labels = await page.evaluate(`[...document.querySelectorAll('#etapes .nom-signe')].map((e) => [e.getAttribute('role'), e.getAttribute('aria-label'), e.textContent])`) as string[][];
-  check('signes : image nommée, texte visible', labels.length === 9 && labels.every(([role, label, text]) => role === 'img' && !!label && !!text), labels);
+  check('signes : image nommée, texte visible', labels.length === 8 && labels.every(([role, label, text]) => role === 'img' && !!label && !!text), labels);
 }
 
 // Configuration invalide : le menu reste affiché et dit quoi corriger.

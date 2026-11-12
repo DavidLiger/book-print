@@ -19,7 +19,7 @@ import { placeLayout, startFault } from '../src/layout/place';
 import { layoutSchema, subjectLayoutSchema } from '../src/layout/schema';
 import { readFacts } from '../src/parcours/facts';
 import { computeParcours, STEPS, type ParcoursFacts } from '../src/parcours/steps';
-import { buildEssai, packFonts } from '../src/render/essai';
+import { buildEssai, packFonts } from './fixtures/essai-2a';
 import { controlTemplate, templateContent, templatePreview } from '../src/render/gabarit';
 import { renderHtml } from '../src/render/html';
 import { measureHtml, renderPdf } from '../src/render/pdf';

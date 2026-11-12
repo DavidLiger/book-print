@@ -22,7 +22,7 @@ import { placeLayout } from '../src/layout/place';
 import { mergeImport } from '../src/research/import';
 import { readBook } from '../src/glbi/read';
 import { subjectContext } from '../src/render/subject';
-import { packFonts } from '../src/render/essai';
+import { packFonts } from './fixtures/essai-2a';
 import { templateContent } from '../src/render/gabarit';
 import { renderHtml } from '../src/render/html';
 import { renderPdf } from '../src/render/pdf';
@@ -371,14 +371,14 @@ const expected = (doc: Dict) => layoutJson(layoutSchema.parse(doc));
 
   // Premier enregistrement de 2A, sans changement : version 1 archivée, conversion écrite, HTML de l'essai identique aux cinq thèmes.
   const themes = ['foret', 'ocean', 'volcan', 'savane', 'crepuscule'];
-  const essai = async () => Promise.all(themes.map(async (t) => (await get(`/apercu?bookId=${BOOK_ID}&theme=${t}`)).body));
+  const essai = async () => Promise.all(themes.map(async (t) => (await get(`/apercu-gabarit?bookId=${BOOK_ID}&id=2A&theme=${t}`)).body));
   const before = await essai();
   const saved = await post('/api/mise-en-page/enregistrer', { bookId: BOOK_ID, id: '2A', empreinte: twoA.data.empreinte, document: twoA.data.document });
   const archives = fs.existsSync(gabarit('archives')) ? fs.readdirSync(gabarit('archives')) : [];
   check('premier enregistrement de 2A : version 1 gardée dans archives/, octet pour octet', saved.status === 200 && archives.length === 1 && /^2A\.\d{4}-\d\d-\d\dT[\d-]+Z\.json$/.test(archives[0]!) && bytes(path.join(gabarit('archives'), archives[0]!)).equals(v1), { status: saved.status, archives });
   check('premier enregistrement de 2A : conversion écrite, version 2', bytes(gabarit('2A.json')).toString() === expected(twoA.data.document) && saved.data.version === 2 && saved.data.empreinte === sha256(bytes(gabarit('2A.json'))));
   const after = await essai();
-  check('premier enregistrement de 2A : HTML de l’essai identique aux cinq thèmes', before.every((h, i) => h === after[i] && h.length > 1000));
+  check('premier enregistrement de 2A : HTML de l’aperçu de 2A identique aux cinq thèmes (route /apercu-gabarit depuis ED6)', before.every((h, i) => h === after[i] && h.length > 1000));
   check('archive : jamais lue comme modèle', !readTemplates(dataRoot, readCollection(dataRoot)!.style).entries.some((e) => e.id.includes('.') || e.file.includes('archives')));
 
   // Enregistrement d'un modèle version 2 : le fichier écrit est le document validé, rien n'est écrit sans changement.

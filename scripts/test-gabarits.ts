@@ -14,7 +14,7 @@ import { cleanPng, storeIllustration } from '../src/data/illustration-store';
 import { createSubject, SubjectRefused, updateSubject } from '../src/data/subject-file';
 import { readFacts } from '../src/parcours/facts';
 import { computeParcours, STEPS, type ParcoursFacts } from '../src/parcours/steps';
-import { buildEssai, essaiFor, packFonts } from '../src/render/essai';
+import { buildEssai, packFonts } from './fixtures/essai-2a';
 import { controlTemplate, fillerText, templatePreview } from '../src/render/gabarit';
 import { RenderRefused, renderHtml } from '../src/render/html';
 import { measureHtml, renderPdf } from '../src/render/pdf';
@@ -225,10 +225,12 @@ function pngPixels(buf: Buffer): Buffer {
   const subject = createSubject(dataRoot, BOOK_ID, { sceneId: 'alpha', pages: 2, template: '2A', theme: 'foret' }, ['alpha'], ['foret']);
   const merged = mergeImport(makeResearch(), null, subject, expectedBlocks(two, read.style.fiche, 'fr'));
   updateSubject(dataRoot, BOOK_ID, 'alpha', () => ({ subject: merged.subject, research: merged.research }));
-  got['sujet-sans-image'] = hash(subjectHtml(subjectContext(dataRoot, BOOK_ID, 'alpha', scenes)));
+  // ED6 : le tampon du faux QR dit « QR absent » au lieu de « FACTICE » ; le reste du HTML est celui de la base, octet pour octet.
+  const asBase = (html: string) => html.replace('>QR absent<', '>FACTICE<');
+  got['sujet-sans-image'] = hash(asBase(subjectHtml(subjectContext(dataRoot, BOOK_ID, 'alpha', scenes))));
   storeIllustration(dataRoot, BOOK_ID, 'alpha', 'illustration', await cleanPng(makePng(420, 640, 3, (x, y) => [(x * 3) % 256, (y * 5) % 256, (x + y) % 256])));
   updateSubject(dataRoot, BOOK_ID, 'alpha', (d) => ({ ...d, subject: { ...d.subject, illustrations: d.subject.illustrations.map((i) => ({ ...i, framing: { focusX: 0.3, focusY: 0.6, zoom: 1.4 } })) } }));
-  got['sujet-avec-image'] = hash(subjectHtml(subjectContext(dataRoot, BOOK_ID, 'alpha', scenes)));
+  got['sujet-avec-image'] = hash(asBase(subjectHtml(subjectContext(dataRoot, BOOK_ID, 'alpha', scenes))));
   for (const [name, want] of Object.entries(BASE)) check(`identité de 2A : ${name}, HTML de la base`, got[name] === want, got[name]);
   check('identité de 2A : 2A de la collection égal au 2A livré', JSON.stringify(two) === JSON.stringify(TEMPLATE_2A));
   const html = buildEssai(SIX_NINE, read, 'foret', two).html;
@@ -295,22 +297,6 @@ function pngPixels(buf: Buffer): Buffer {
   const droite = { ...structuredClone(TEMPLATE_2A), id: '2D', start: 'droite' };
   put(dataRoot, 'collection/gabarits/2D.json', droite);
   check('aperçu : un gabarit qui commence à droite est posé en page impaire', templatePreview(dataRoot, BOOK_ID, '2D').layout[0]!.number === 7);
-}
-
-// Essai : 2A lu dans la collection, absent ou invalide nommé ; une zone ajoutée à 2A reçoit le remplissage.
-{
-  const dataRoot = newData();
-  createCollection(dataRoot);
-  check('essai : 2A de la collection', essaiFor(dataRoot, BOOK_ID).layout.length === 2);
-  const saved = fs.readFileSync(gabarit(dataRoot, '2A.json'));
-  fs.rmSync(gabarit(dataRoot, '2A.json'));
-  expectThrows('essai : 2A absent, « Ajouter les gabarits livrés »', () => essaiFor(dataRoot, BOOK_ID), RenderRefused, 'Ajouter les gabarits livrés');
-  fs.writeFileSync(gabarit(dataRoot, '2A.json'), '{');
-  expectThrows('essai : 2A invalide, son erreur, sans proposer l’ajout', () => essaiFor(dataRoot, BOOK_ID), RenderRefused, 'Gabarit 2A invalide');
-  const t = JSON.parse(saved.toString('utf8'));
-  t.sheets[0].zones.push({ id: 'savais-tu', type: 'encadre', bleed: false, encadre: 'savais-tu', box: { outer: { from: 'securite', mm: 0 }, inner: { from: 'securite', mm: 0 }, top: { from: 'securite', mm: 100 }, heightMm: 30 }, constraints: { maxChars: 80 } });
-  put(dataRoot, 'collection/gabarits/2A.json', t);
-  check('essai : une zone ajoutée à 2A est remplie, sans refus', essaiFor(dataRoot, BOOK_ID).html.includes(`<span data-fill>${fillerText(80)}</span>`));
 }
 
 // Sujets : blocs attendus après un changement de gabarit ; gabarit absent ou invalide.
@@ -381,9 +367,8 @@ function pngPixels(buf: Buffer): Buffer {
   check('code : la lecture des gabarits n’écrit rien', !/writeFile|writeNew|appendFile|renameSync|mkdirSync|rmSync|ensureDir\(/.test(code));
 }
 
-// Étape Gabarits, verrou d'Essai et de Sujets, fraîcheur d'Essai
+// Étape Gabarits, verrou de Sujets
 {
-  const LONG_AGO = 1_000_000;
   const facts = (): ParcoursFacts => ({
     configError: null,
     book: { bookId: 'dino', errors: [], alerts: [] },
@@ -391,7 +376,6 @@ function pngPixels(buf: Buffer): Buffer {
     pricing: { error: null, retained: true, retainedErrors: [], deviation: [], bookAlert: null },
     collection: { exists: true, error: null },
     gabarits: { error: null, valid: 2, invalid: [], orphans: [], overlaps: [] },
-    essai: { renderError: null, control: { dateMs: 2 * LONG_AGO, errors: [], alerts: [] }, controlError: null, styleMs: LONG_AGO, printBookMs: LONG_AGO, templateMs: LONG_AGO, bookChanged: null },
     droits: { error: null, missing: 0, faults: [], toCheck: [] },
     workflows: { error: null, todo: [], faults: [] },
     styles: { error: null, count: 1, faults: [], todo: [], alerts: [] },
@@ -404,23 +388,20 @@ function pngPixels(buf: Buffer): Buffer {
   };
   const at = (steps: ReturnType<typeof run>, id: string) => steps.find((s) => s.id === id)!;
   check('registre : Gabarits après Collection, l’exige', STEPS.findIndex((s) => s.id === 'gabarits') === STEPS.findIndex((s) => s.id === 'collection') + 1 && STEPS.find((s) => s.id === 'gabarits')!.requires.join() === 'collection');
-  check('registre : Essai et Sujets exigent Gabarits', STEPS.find((s) => s.id === 'essai')!.requires.join() === 'gabarits' && STEPS.find((s) => s.id === 'sujets')!.requires.join() === 'gabarits');
+  check('registre : Sujets exige Gabarits, et il n’y a plus d’étape Essai', !STEPS.some((s) => s.id === 'essai') && STEPS.find((s) => s.id === 'sujets')!.requires.join() === 'gabarits');
   check('Gabarits : validée', at(run(), 'gabarits').state === 'validee');
   const none = run((f) => { f.gabarits.valid = 0; });
   check('Gabarits : aucun gabarit, à faire, motif', at(none, 'gabarits').state === 'a-faire' && at(none, 'gabarits').reasons[0]!.includes('Ajouter les gabarits livrés'));
-  check('Gabarits à faire : Essai et Sujets verrouillés, renvoi à Mises en page', ['essai', 'sujets'].every((id) => at(none, id).state === 'verrouillee' && at(none, id).reasons[0] === 'Valider d\'abord « Mises en page ».'));
+  check('Gabarits à faire : Sujets verrouillé, renvoi à Mises en page', ['sujets'].every((id) => at(none, id).state === 'verrouillee' && at(none, id).reasons[0] === 'Valider d\'abord « Mises en page ».'));
   check('Gabarits à faire : Droits reste ouvert', at(none, 'droits').state === 'validee');
   const invalid = run((f) => { f.gabarits.invalid = ['collection/gabarits/4A.json : JSON invalide']; });
-  check('Gabarits : un fichier invalide, erreur, fichier nommé', at(invalid, 'gabarits').state === 'erreur' && at(invalid, 'gabarits').reasons[0]!.includes('4A.json') && at(invalid, 'essai').state === 'verrouillee');
+  check('Gabarits : un fichier invalide, erreur, fichier nommé', at(invalid, 'gabarits').state === 'erreur' && at(invalid, 'gabarits').reasons[0]!.includes('4A.json') && at(invalid, 'sujets').state === 'verrouillee');
   const orphan = run((f) => { f.gabarits.orphans = ['alpha : gabarit 4B absent de collection/gabarits/.']; });
   check('Gabarits : sujet sur un gabarit absent, erreur', at(orphan, 'gabarits').state === 'erreur' && at(orphan, 'gabarits').reasons[0]!.startsWith('alpha'));
   const folder = run((f) => { f.gabarits.error = 'collection/gabarits/ n\'est pas un dossier réel'; });
   check('Gabarits : dossier refusé, erreur', at(folder, 'gabarits').state === 'erreur');
   const locked = run((f) => { f.collection.exists = false; });
   check('Gabarits verrouillé tant que Collection n’est pas validée', at(locked, 'gabarits').state === 'verrouillee');
-  const newer = run((f) => { f.essai.templateMs = 3 * LONG_AGO; });
-  check('Essai : 2A.json modifié après l’export, à refaire, fichier nommé', at(newer, 'essai').state === 'a-faire' && at(newer, 'essai').stateLabel === 'à refaire' && at(newer, 'essai').reasons[0]!.includes('collection/gabarits/2A.json'));
-  check('Essai : 2A.json absent, rien de plus vieux', at(run((f) => { f.essai.templateMs = null; }), 'essai').state === 'validee');
 }
 
 // Routes

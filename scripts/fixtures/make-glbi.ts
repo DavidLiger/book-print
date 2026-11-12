@@ -1,8 +1,9 @@
 // scripts/fixtures/make-glbi.ts — faux repo GLBInterpreter et faux dossier de données, dans un dossier temporaire.
-// Données synthétiques : aucun contenu réel. Le faux QR n'est pas un QR : ce lot ne lit pas le contenu des SVG.
+// Données synthétiques : aucun contenu réel. Depuis ED6, les SVG de `dist/qr/` sont de vrais QR, fabriqués par `qr-encode.ts` : ils portent l'URL de leur scène.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { qrSvg } from './qr-encode';
 
 export const BOOK_DIR = 'livre-test';
 export const BOOK_ID = 'livre-test';
@@ -66,7 +67,8 @@ export function makeGlbi(): string {
   put(root, 'out/book.json', { ...bookJson(), files: [] });
   put(root, 'out/scenes/alpha.json', scene('alpha'));
   put(root, 'out/scenes/beta.json', scene('beta'));
-  for (const f of ['01-alpha.svg', '02-beta.svg', 'jeu.svg']) put(root, `dist/qr/${BOOK_ID}/${f}`, '<svg xmlns="http://www.w3.org/2000/svg"/>\n');
+  const qr: Record<string, string> = { '01-alpha.svg': `${ORIGIN}/s/alpha`, '02-beta.svg': `${ORIGIN}/s/beta`, 'jeu.svg': `${ORIGIN}/jeu` };
+  for (const [f, url] of Object.entries(qr)) put(root, `dist/qr/${BOOK_ID}/${f}`, `${qrSvg(url)}\n`);
   put(root, `dist/qr/${BOOK_ID}/urls.txt`, urlsTxt());
   // Le dossier d'essai existe chez David : il ne doit jamais être lu.
   put(root, `dist/qr-essai/${BOOK_ID}/alpha.svg`, '<svg xmlns="http://www.w3.org/2000/svg"/>\n');

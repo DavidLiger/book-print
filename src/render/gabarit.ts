@@ -1,8 +1,8 @@
 // src/render/gabarit.ts — aperçu d'un gabarit de la collection (GB1, étape Gabarits). Contenu synthétique, à la longueur maximale de chaque zone :
 // ce qui tient là tiendra avec un vrai texte. Même HTML que le PDF. Le contrôle rend le PDF en mémoire, sans rien écrire, et n'est pas conservé.
-import { essaiImage, fakeQr } from '../../scripts/fixtures/sujet-essai';
+import { fakeQr, placeholderImage } from './placeholders';
 import { readPdfFacts } from '../checks/pdf-facts';
-import { runChecks, type CheckResult } from '../checks/rules';
+import type { CheckResult } from '../checks/rules';
 import { readCollection } from '../data/collection';
 import { readPrintBook } from '../data/pricing-file';
 import { c17Overlaps } from '../checks/overlaps';
@@ -10,7 +10,7 @@ import { chainsOf, elementsOf, placeMiseEnPage, previewFirstPage, type MiseEnPag
 import { chainFaults } from '../checks/content';
 import { readTemplates, templateOf } from '../templates/files';
 import type { LayoutPage, Trim } from '../templates/geometry';
-import { FONT_PACK } from './fonts';
+import { pdfChecks } from './pdf-checks';
 import type { ChainText } from './flow';
 import { applyBookFiche, renderHtml, RenderRefused, type RenderContent } from './html';
 import { flowHtml, renderFlowedPdf, type Flowed, type HtmlBuilder } from './pdf';
@@ -54,7 +54,7 @@ export function fillerChains(template: MiseEnPage): Record<string, ChainText> {
 }
 
 export function fillerImages(template: MiseEnPage, trim: Trim): Record<string, string> {
-  return Object.fromEntries(zonesOf(template).filter((z) => z.type === 'illustration').map((z) => [z.id, essaiImage(trim)]));
+  return Object.fromEntries(zonesOf(template).filter((z) => z.type === 'illustration').map((z) => [z.id, placeholderImage(trim)]));
 }
 
 /** Contenu de l'aperçu d'un gabarit : remplissage partout, valeurs de fiche et légende du QR à leur longueur maximale. */
@@ -115,12 +115,10 @@ export function templatePreview(dataRoot: string, bookId: string, id: string, th
 }
 
 /** Contrôles du rendu, sur le texte à la longueur maximale. C12 ne porte ici que sur le débordement mesuré. */
-const KEPT = ['C3', 'C4', 'C6', 'C7', 'C8'];
-
 export async function controlTemplate(preview: TemplatePreview): Promise<CheckResult[]> {
   const { pdf, measures, flow } = await renderFlowedPdf(preview.build, preview.chains, preview.trim);
   const facts = await readPdfFacts(pdf);
-  const checks = runChecks({ facts, measures, pages: preview.layout, pack: Object.values(FONT_PACK).map(({ family, pdfName }) => ({ family, pdfName })) }).filter((c) => KEPT.includes(c.id));
+  const checks = pdfChecks({ facts, measures, pages: preview.layout });
   const over = [
     ...measures.overflows.map((o) => `page ${o.page}, ${o.item ? `fiche, ${o.item}` : o.zone} : déborde de ${o.overMm.toFixed(2).replace('.', ',')} mm`),
     ...chainFaults(flow, preview.chains, chainsOf(preview.template)),

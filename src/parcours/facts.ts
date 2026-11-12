@@ -11,14 +11,12 @@ import { readBook, type SceneReading } from '../glbi/read';
 import { evaluate, resolvePages } from '../pricing/calc';
 import { loadRates } from '../pricing/rates';
 import { deviation } from '../pricing/scenarios';
-import { bookSnapshot, essaiFor, readEssaiControl } from '../render/essai';
 import { RenderRefused } from '../render/html';
-import { imageChecks, strayIllustrations, subjectContext, subjectTitle } from '../render/subject';
+import { imageChecks, readyErrors, strayIllustrations, subjectContext, subjectTitle, type QrSource } from '../render/subject';
 import { applyBookFiche } from '../render/html';
 import { blocksGap, duplicateFault, expectedBlocks } from '../research/blocks';
 import { reviewState } from '../schema/block';
 import { readTemplates, templateOf, TEMPLATES_DIR } from '../templates/files';
-import { ESSAI_TEMPLATE_FILE } from '../render/essai';
 import { missingDefaults, readBookRights, readCollectionRights, RightsRefused } from '../rights/registry';
 import type { PrintBook } from '../schema/print-book';
 import type { ConfigState } from '../server/config';
@@ -74,31 +72,6 @@ function collectionFacts(dataRoot: string): ParcoursFacts['collection'] {
     if (e instanceof CollectionRefused) return { exists: true, error: e.message };
     throw e;
   }
-}
-
-function renderFault(dataRoot: string, bookId: string): string | null {
-  try {
-    essaiFor(dataRoot, bookId);
-    return null;
-  } catch (e) {
-    if (e instanceof RenderRefused || e instanceof GeometryRefused) return e.message;
-    throw e;
-  }
-}
-
-function essaiFacts(dataRoot: string, book: PrintBook, dir: string): ParcoursFacts['essai'] {
-  const { bookId } = book;
-  const { control, error } = readEssaiControl(dataRoot, bookId);
-  const ids = (level: string) => (control?.checks ?? []).filter((c) => c.level === level).map((c) => c.id);
-  return {
-    renderError: renderFault(dataRoot, bookId),
-    control: control && { dateMs: Date.parse(control.date), errors: ids('erreur'), alerts: ids('alerte') },
-    controlError: error,
-    styleMs: mtime(path.join(fs.realpathSync.native(dataRoot), 'collection', 'style.json')),
-    printBookMs: mtime(path.join(dir, 'print-book.json')),
-    templateMs: mtime(path.join(fs.realpathSync.native(dataRoot), ...ESSAI_TEMPLATE_FILE.split('/'))),
-    bookChanged: control?.book === undefined ? null : control.book !== bookSnapshot(book),
-  };
 }
 
 function droitsFacts(dataRoot: string, bookId: string): ParcoursFacts['droits'] {
@@ -268,9 +241,9 @@ export function subjectLayoutFacts(dataRoot: string, book: PrintBook, subject: S
 /** Une partie opaque que le contour d'un détouré découpe (ED2) : sa taille et sa place, en pixels de l'image. */
 export const partAlert = (zone: string, p: Part) => `${zone} : partie détachée de ${p.pixels} px, de (${p.gauche}, ${p.haut}) à (${p.droite}, ${p.bas}), coupée par le contour`;
 
-function illustrationFacts(dataRoot: string, bookId: string, id: string, scenes: SceneReading[]): SubjectFacts['illustrations'] {
+function illustrationFacts(dataRoot: string, bookId: string, id: string, scenes: SceneReading[], qr: QrSource): SubjectFacts['illustrations'] {
   try {
-    const ctx = subjectContext(dataRoot, bookId, id, scenes);
+    const ctx = subjectContext(dataRoot, bookId, id, scenes, qr);
     const { zones, checks } = imageChecks(ctx);
     const details = (level: string) => checks.filter((c) => c.level === level).flatMap((c) => c.details.map((d) => `${c.id}, ${d}`));
     // Une partie opaque détachée est découpée par le contour (ED2) : l'alerte la nomme.
@@ -282,12 +255,23 @@ function illustrationFacts(dataRoot: string, bookId: string, id: string, scenes:
   }
 }
 
-function subjectFacts(dataRoot: string, book: PrintBook, id: string, scenes: SceneReading[]): SubjectFacts {
+/** Les contrôles que les données donnent, pour un sujet « prêt » seulement (ED6) : un sujet qui ne se pose plus n'en a pas, son erreur est déjà dite. */
+function readyFor(dataRoot: string, bookId: string, id: string, scenes: SceneReading[], qr: QrSource, research: Parameters<typeof readyErrors>[1], facts: SubjectFacts): SubjectFacts['ready'] {
+  try {
+    return { errors: readyErrors(subjectContext(dataRoot, bookId, id, scenes, qr), research, facts.miseEnPage.errors) };
+  } catch (e) {
+    if (e instanceof RenderRefused || e instanceof GeometryRefused || e instanceof SubjectRefused || e instanceof CollectionRefused || e instanceof RightsRefused || e instanceof PricingRefused) return { errors: [e.message] };
+    throw e;
+  }
+}
+
+function subjectFacts(dataRoot: string, book: PrintBook, id: string, scenes: SceneReading[], qr: QrSource): SubjectFacts {
   const empty: SubjectFacts = {
     id, title: id, error: null, status: null, pages: 0, template: null, theme: null,
     templateError: null, blocksGap: { missing: [], extra: [] }, miseEnPage: { source: null, errors: [] }, duplicateBlocks: null,
     research: { state: 'absent', error: null }, blocks: { total: 0, valide: 0, aRelire: 0, aReprendre: 0 }, claims: { total: 0, propose: 0 },
     illustrations: { error: null, zones: 0, missing: 0, errors: [], alerts: [] },
+    ready: { errors: [] },
   };
   let subject;
   try {
@@ -306,13 +290,14 @@ function subjectFacts(dataRoot: string, book: PrintBook, id: string, scenes: Sce
     template: subject.template,
     theme: subject.variant.theme,
     blocks: { total: subject.blocks.length, valide: count('valide'), aRelire: count('a-relire'), aReprendre: count('a-reprendre') },
-    illustrations: illustrationFacts(dataRoot, book.bookId, id, scenes),
+    illustrations: illustrationFacts(dataRoot, book.bookId, id, scenes, qr),
     ...subjectLayoutFacts(dataRoot, book, subject),
   };
   try {
     const research = readResearch(dataRoot, book.bookId, id);
-    if (research) return { ...facts, research: { state: 'ok', error: null }, claims: { total: research.claims.length, propose: research.claims.filter((c) => c.status === 'propose').length } };
-    return facts;
+    const withReady = (f: SubjectFacts): SubjectFacts => (f.status === 'prêt' ? { ...f, ready: readyFor(dataRoot, book.bookId, id, scenes, qr, research, f) } : f);
+    if (research) return withReady({ ...facts, research: { state: 'ok', error: null }, claims: { total: research.claims.length, propose: research.claims.filter((c) => c.status === 'propose').length } });
+    return withReady(facts);
   } catch (e) {
     if (e instanceof SubjectRefused) return { ...facts, research: { state: 'invalide', error: e.message } };
     throw e;
@@ -327,7 +312,6 @@ export function readFacts(state: ConfigState, dir: string | null): ParcoursFacts
     pricing: { error: null, retained: false, retainedErrors: [], deviation: [], bookAlert: null },
     collection: { exists: false, error: null },
     gabarits: { error: null, valid: 0, invalid: [], orphans: [], overlaps: [] },
-    essai: { renderError: null, control: null, controlError: null, styleMs: null, printBookMs: null, templateMs: null, bookChanged: null },
     droits: { error: null, missing: 0, faults: [], toCheck: [] },
     workflows: { error: null, todo: [], faults: [] },
     styles: { error: null, count: 0, faults: [], todo: [], alerts: [] },
@@ -357,11 +341,11 @@ export function readFacts(state: ConfigState, dir: string | null): ParcoursFacts
   facts.collection = collectionFacts(dataRoot);
   if (facts.collection.exists && !facts.collection.error) {
     facts.gabarits = gabaritFacts(dataRoot, book);
-    facts.essai = essaiFacts(dataRoot, book, folder);
     facts.droits = droitsFacts(dataRoot, bookId);
     facts.workflows = workflowFacts(dataRoot, bookId);
     facts.styles = styleFacts(dataRoot, book);
   }
-  facts.subjects = book.subjects.map((id) => subjectFacts(dataRoot, book, id, reading.scenes));
+  const qr: QrSource = { glbRoot, origin: reading.origin };
+  facts.subjects = book.subjects.map((id) => subjectFacts(dataRoot, book, id, reading.scenes, qr));
   return facts;
 }

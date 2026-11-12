@@ -16,7 +16,6 @@ import { addMissingDefaults, ensureIllustrationRights, setIllustrationRights } f
 import { readFacts } from '../src/parcours/facts';
 import { computeParcours, isValidated, STEPS, type ParcoursFacts, type StepDef, type SubjectFacts } from '../src/parcours/steps';
 import type { ScenarioInput } from '../src/pricing/scenarios';
-import { bookSnapshot, ESSAI_CONTROL_FILE, readEssaiControl } from '../src/render/essai';
 import { createPrintServer } from '../src/server/app';
 import { BOOK_DIR, BOOK_ID, dirLink, makeGlbi, put, tempDir } from './fixtures/make-glbi';
 import { makePng } from './fixtures/make-png';
@@ -27,7 +26,7 @@ const goodSubject = (over: Partial<SubjectFacts> = {}): SubjectFacts => ({
   id: 'alpha', title: 'Alpha', error: null, status: 'relu', pages: 2, template: '2A', theme: 'foret',
   templateError: null, blocksGap: { missing: [], extra: [] }, miseEnPage: { source: 'layout.json', errors: [] }, duplicateBlocks: null,
   research: { state: 'ok', error: null }, blocks: { total: 7, valide: 7, aRelire: 0, aReprendre: 0 }, claims: { total: 3, propose: 0 },
-  illustrations: { error: null, zones: 1, missing: 0, errors: [], alerts: [] }, ...over,
+  illustrations: { error: null, zones: 1, missing: 0, errors: [], alerts: [] }, ready: { errors: [] }, ...over,
 });
 const good = (): ParcoursFacts => ({
   configError: null,
@@ -36,7 +35,6 @@ const good = (): ParcoursFacts => ({
   pricing: { error: null, retained: true, retainedErrors: [], deviation: [], bookAlert: null },
   collection: { exists: true, error: null },
   gabarits: { error: null, valid: 1, invalid: [], orphans: [], overlaps: [] },
-  essai: { renderError: null, control: { dateMs: 2 * LONG_AGO, errors: [], alerts: [] }, controlError: null, styleMs: LONG_AGO, printBookMs: LONG_AGO, templateMs: LONG_AGO, bookChanged: null },
   droits: { error: null, missing: 0, faults: [], toCheck: [] },
   workflows: { error: null, todo: [], faults: [] },
   styles: { error: null, count: 1, faults: [], todo: [], alerts: [] },
@@ -58,21 +56,22 @@ const expectStep = (name: string, id: string, change: Change, state: string, rea
 // Registre
 const bookSteps = STEPS.filter((s) => s.scope === 'livre');
 const subjectSteps = STEPS.filter((s) => s.scope === 'sujet');
-check('registre : Livre, Prix, Collection, Gabarits, Essai, Droits, Workflows, Styles, Sujets, dans cet ordre', bookSteps.map((s) => s.id).join() === 'livre,prix,collection,gabarits,essai,droits,workflows,styles,sujets');
+check('registre : Livre, Prix, Collection, Gabarits, Droits, Workflows, Styles, Sujets, dans cet ordre', bookSteps.map((s) => s.id).join() === 'livre,prix,collection,gabarits,droits,workflows,styles,sujets');
 check('registre : Styles exige Workflows (IC2)', STEPS.find((s) => s.id === 'styles')!.requires.join() === 'workflows');
 check('registre : Workflows exige Droits', STEPS.find((s) => s.id === 'workflows')!.requires.join() === 'droits');
-check('registre : Prix, Collection et Essai dépendent de l’étape précédente', bookSteps.slice(0, 4).every((s, i) => s.requires.join() === (bookSteps[i - 1]?.id ?? '')));
-check('registre : Sujets exige Gabarits et non Essai', STEPS.find((s) => s.id === 'sujets')!.requires.join() === 'gabarits');
+check('registre : Prix, Collection et Gabarits dépendent de l’étape précédente', bookSteps.slice(0, 4).every((s, i) => s.requires.join() === (bookSteps[i - 1]?.id ?? '')));
+check('registre : Sujets exige Gabarits ; plus d’étape Essai (ED6)', !STEPS.some((s) => s.id === 'essai') && STEPS.find((s) => s.id === 'sujets')!.requires.join() === 'gabarits');
 check('registre : Droits exige Collection', STEPS.find((s) => s.id === 'droits')!.requires.join() === 'collection');
-check('registre : second niveau, Mise en page d’abord, Illustrations entre Relecture et Aperçu', subjectSteps.map((s) => s.label).join() === 'Mise en page,Recherche,Relecture,Illustrations,Aperçu');
+check('registre : second niveau, Mise en page d’abord, Illustrations entre Relecture et Aperçu', subjectSteps.map((s) => s.label).join() === 'Mise en page,Recherche,Relecture,Illustrations,Aperçu,Prêt');
 check('registre : Recherche exige Mise en page (ED1)', subjectSteps[1]!.requires.join() === 'sujet-mise-en-page');
 check('registre : Illustrations exige Recherche', subjectSteps[3]!.requires.join() === 'sujet-recherche');
 check('registre : Aperçu exige Recherche, pas Relecture', subjectSteps[4]!.requires.join() === 'sujet-recherche');
-check('numéros 1 à 9', run().steps.map((s) => s.number).join() === '1,2,3,4,5,6,7,8,9');
-check('second niveau : numéroté à part', run().subjects[0]!.steps.map((s) => s.number).join() === '1,2,3,4,5');
+check('numéros 1 à 8', run().steps.map((s) => s.number).join() === '1,2,3,4,5,6,7,8');
+check('registre : Prêt exige Relecture, Illustrations et Aperçu (ED6)', subjectSteps[5]!.requires.join() === 'sujet-relecture,sujet-illustrations,sujet-apercu');
+check('second niveau : numéroté à part', run().subjects[0]!.steps.map((s) => s.number).join() === '1,2,3,4,5,6');
 
 // Tout au vert
-check('tout est validé', states() === 'validee,validee,validee,validee,validee,validee,validee,validee,validee', states());
+check('tout est validé', states() === 'validee,validee,validee,validee,validee,validee,validee,validee', states());
 check('tout validé : ouverture sur la dernière étape', run().open === 'sujets');
 check('tout validé : aucun motif', run().steps.every((s) => s.reasons.length === 0));
 
@@ -86,7 +85,7 @@ expectStep('Livre : print-book.json absent, à faire', 'livre', (f) => { f.folde
 expectStep('Livre : print-book.json invalide, erreur', 'livre', (f) => { f.folder.printBook = 'invalide'; f.folder.printBookError = 'pageBudget'; }, 'erreur', 'pageBudget');
 expectStep('Livre : dossier refusé, erreur', 'livre', (f) => { f.folder.error = 'pas un dossier réel'; }, 'erreur', 'dossier réel');
 expectStep('Livre : alerte de lecture', 'livre', (f) => { f.book!.alerts = ['a']; }, 'alerte', '1 alerte de lecture');
-check('Livre : une alerte ne verrouille pas la suite', states((f) => { f.book!.alerts = ['a']; }) === 'alerte,validee,validee,validee,validee,validee,validee,validee,validee');
+check('Livre : une alerte ne verrouille pas la suite', states((f) => { f.book!.alerts = ['a']; }) === 'alerte,validee,validee,validee,validee,validee,validee,validee');
 
 // Prix
 expectStep('Prix : aucun scénario retenu, à faire', 'prix', (f) => { f.pricing.retained = false; }, 'a-faire', 'Retenir un scénario');
@@ -94,26 +93,11 @@ expectStep('Prix : pricing.json invalide, erreur', 'prix', (f) => { f.pricing.er
 expectStep('Prix : scénario retenu en erreur', 'prix', (f) => { f.pricing.retainedErrors = ['Format absent']; }, 'erreur', 'Scénario retenu : Format absent');
 expectStep('Prix : écart avec print-book.json, alerte', 'prix', (f) => { f.pricing.deviation = ['Pages : 44 et 46']; }, 'alerte', 'Pages');
 expectStep('Prix : print-book.json illisible, alerte', 'prix', (f) => { f.pricing.bookAlert = 'écart non contrôlé'; }, 'alerte', 'écart non contrôlé');
-check('Prix : une alerte ne verrouille pas la suite', states((f) => { f.pricing.deviation = ['x']; }) === 'validee,alerte,validee,validee,validee,validee,validee,validee,validee');
+check('Prix : une alerte ne verrouille pas la suite', states((f) => { f.pricing.deviation = ['x']; }) === 'validee,alerte,validee,validee,validee,validee,validee,validee');
 
 // Collection
 expectStep('Collection : absente, à faire', 'collection', (f) => { f.collection.exists = false; }, 'a-faire', 'Créer la collection');
 expectStep('Collection : invalide, erreur', 'collection', (f) => { f.collection.error = 'style.json invalide'; }, 'erreur', 'style.json');
-
-// Essai
-const noControl: Change = (f) => { f.essai.control = null; };
-expectStep('Essai : aucun export, à faire', 'essai', noControl, 'a-faire', 'Exporter');
-expectStep('Essai : rendu impossible, erreur', 'essai', (f) => { f.essai.renderError = 'ne tient pas'; }, 'erreur', 'ne tient pas');
-expectStep('Essai : contrôle en erreur', 'essai', (f) => { f.essai.control!.errors = ['C3', 'C4']; }, 'erreur', 'C3, C4 en erreur');
-expectStep('Essai : contrôle en alerte', 'essai', (f) => { f.essai.control!.alerts = ['C8']; }, 'alerte', 'C8 en alerte');
-expectStep('Essai : fichier de contrôle illisible, à refaire', 'essai', (f) => { f.essai.control = null; f.essai.controlError = 'illisible.'; }, 'a-faire', 'Relancer', 'à refaire');
-expectStep('Essai : style.json plus récent, à refaire', 'essai', (f) => { f.essai.styleMs = 3 * LONG_AGO; }, 'a-faire', 'collection/style.json modifié', 'à refaire');
-expectStep('Essai : print-book.json plus récent, à refaire', 'essai', (f) => { f.essai.printBookMs = 3 * LONG_AGO; }, 'a-faire', 'print-book.json modifié', 'à refaire');
-expectStep('Essai : même date que le style, à refaire', 'essai', (f) => { f.essai.styleMs = f.essai.control!.dateMs; }, 'a-faire', 'modifié', 'à refaire');
-expectStep('Essai : périmé et en erreur, à refaire d’abord', 'essai', (f) => { f.essai.styleMs = 3 * LONG_AGO; f.essai.control!.errors = ['C3']; }, 'a-faire', 'modifié', 'à refaire');
-expectStep('Essai : format ou fiche changés depuis l’export, à refaire', 'essai', (f) => { f.essai.bookChanged = true; }, 'a-faire', 'print-book.json modifié', 'à refaire');
-check('Essai : subjects seul a changé, reste validé malgré la date', step('essai', (f) => { f.essai.bookChanged = false; f.essai.printBookMs = 3 * LONG_AGO; }).state === 'validee');
-expectStep('Essai : les deux fichiers plus récents', 'essai', (f) => { f.essai.styleMs = 3 * LONG_AGO; f.essai.printBookMs = 3 * LONG_AGO; }, 'a-faire', 'collection/style.json et print-book.json', 'à refaire');
 
 // Droits (MP4)
 expectStep('Droits : registre illisible, erreur', 'droits', (f) => { f.droits.error = 'rights.json invalide'; }, 'erreur', 'rights.json invalide');
@@ -162,19 +146,16 @@ check('Illustrations : sans image, Sujets reste validé', step('sujets', withIma
 
 // Verrouillage et réouverture
 const noBook: Change = (f) => { f.book = null; };
-check('verrouillage : tout après Livre', states(noBook) === 'a-faire,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee', states(noBook));
-check('verrouillage : le motif nomme la première étape à valider', step('essai', noBook).reasons[0] === 'Valider d\'abord « Livre ».' && step('prix', noBook).reasons[0] === 'Valider d\'abord « Livre ».');
+check('verrouillage : tout après Livre', states(noBook) === 'a-faire,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee', states(noBook));
+check('verrouillage : le motif nomme la première étape à valider', step('gabarits', noBook).reasons[0] === 'Valider d\'abord « Livre ».' && step('prix', noBook).reasons[0] === 'Valider d\'abord « Livre ».');
 check('verrouillage : libellé', step('prix', noBook).stateLabel === 'verrouillée');
 const noScenario: Change = (f) => { f.pricing.retained = false; };
-check('étape redevenue non validée : les suivantes se reverrouillent', states(noScenario) === 'validee,a-faire,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee', states(noScenario));
-check('reverrouillage : Essai renvoie à Prix', step('essai', noScenario).reasons[0] === 'Valider d\'abord « Prix ».');
-check('une erreur verrouille aussi la suite', states((f) => { f.pricing.error = 'x'; }) === 'validee,erreur,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee');
+check('étape redevenue non validée : les suivantes se reverrouillent', states(noScenario) === 'validee,a-faire,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee', states(noScenario));
+check('reverrouillage : Mises en page renvoie à Prix', step('gabarits', noScenario).reasons[0] === 'Valider d\'abord « Prix ».');
+check('une erreur verrouille aussi la suite', states((f) => { f.pricing.error = 'x'; }) === 'validee,erreur,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee');
 check('collection présente et prix non validé : Collection reste verrouillée', step('collection', noScenario).state === 'verrouillee');
 check('réouverture : première étape non validée, Livre', run(noBook).open === 'livre');
 check('réouverture : première étape non validée, Prix', run(noScenario).open === 'prix');
-check('réouverture : première étape non validée, Essai', run(noControl).open === 'essai');
-check('réouverture : une alerte ne retient pas', run((f) => { f.book!.alerts = ['a']; f.essai.control = null; }).open === 'essai');
-check('réouverture : à refaire retient', run((f) => { f.essai.styleMs = 3 * LONG_AGO; }).open === 'essai');
 check('isValidated : validée et alerte seulement', isValidated('validee') && isValidated('alerte') && !isValidated('a-faire') && !isValidated('erreur') && !isValidated('verrouillee'));
 
 // Sujets
@@ -184,10 +165,7 @@ expectStep('Sujets : un sujet en brouillon, à faire', 'sujets', oneSubject({ st
 expectStep('Sujets : un sujet sur deux à relire', 'sujets', (f) => { f.subjects = [goodSubject(), goodSubject({ id: 'b', status: 'brouillon' })]; }, 'a-faire', '1 sujet à relire, sur 2');
 expectStep('Sujets : sujet illisible, erreur', 'sujets', oneSubject({ error: 'subject.json invalide' }), 'erreur', 'alpha : subject.json invalide');
 check('Sujets : prêt compte comme relu', step('sujets', oneSubject({ status: 'prêt' })).state === 'validee');
-check('Sujets : Essai à refaire ne le verrouille pas', step('sujets', noControl).state === 'validee');
-check('Sujets : une couleur modifiée ne reverrouille pas le contenu', step('sujets', (f) => { f.essai.styleMs = 3 * LONG_AGO; }).state === 'validee');
 check('Sujets : verrouillé par Collection', step('sujets', (f) => { f.collection.exists = false; }).state === 'verrouillee' && step('sujets', (f) => { f.collection.exists = false; }).reasons[0] === 'Valider d\'abord « Collection ».');
-check('Essai à faire : ouverture sur Essai, Sujets accessible', run(noControl).open === 'essai');
 
 // Second niveau
 const levelOf = (over: Partial<SubjectFacts>) => {
@@ -217,7 +195,13 @@ const allRead: Partial<SubjectFacts> = { status: 'brouillon' };
 check('Relecture : tous les blocs validés', sub(allRead, 'sujet-relecture').state === 'validee');
 check('Aperçu : brouillon, à faire', sub(allRead, 'sujet-apercu').state === 'a-faire' && sub(allRead, 'sujet-apercu').reasons[0]!.includes('marquer relu'));
 check('Aperçu : relu, validé', sub({}, 'sujet-apercu').state === 'validee');
-check('tout validé : ouverture sur Aperçu', levelOf({}).open === 'sujet-apercu');
+check('tout validé sauf Prêt : ouverture sur Prêt (ED6)', levelOf({}).open === 'sujet-pret');
+check('Prêt : relu, à faire, avec le geste à faire', sub({}, 'sujet-pret').state === 'a-faire' && sub({}, 'sujet-pret').reasons[0]!.includes('Marquer le sujet prêt'));
+check('Prêt : marqué prêt, contrôles sans erreur, validé', sub({ status: 'prêt' }, 'sujet-pret').state === 'validee');
+const readyBroken = sub({ status: 'prêt', ready: { errors: ['C9 : QR absent : 01-alpha.svg introuvable', 'C13 : texte de remplissage'] } }, 'sujet-pret');
+check('Prêt : marqué prêt mais un contrôle repasse en erreur, étape en erreur nommant chaque contrôle', readyBroken.state === 'erreur' && readyBroken.reasons.join(' ').includes('C9') && readyBroken.reasons.join(' ').includes('C13') && readyBroken.reasons.join(' ').includes('marqué prêt'), readyBroken);
+check('Prêt : l\'erreur ne dépend que des données, le statut écrit reste prêt', goodSubject({ status: 'prêt' }).status === 'prêt');
+check('Prêt : non marqué, des erreurs de contrôle ne passent pas l\'étape en erreur', sub({ ready: { errors: ['C9 : QR absent'] } }, 'sujet-pret').state === 'a-faire');
 {
   const custom: StepDef = { id: 'sujet-texte', label: 'Texte', scope: 'sujet', requires: [], evaluate: (_f, s) => ({ state: 'a-faire', reasons: [s?.id ?? 'x'] }) };
   const parcours = computeParcours(good(), [...STEPS.filter((s) => s.scope === 'livre'), custom]);
@@ -245,8 +229,6 @@ const config = { ok: true as const, config: { glbRoot, dataRoot } };
 const onDisk = (dir: string | null = BOOK_DIR) => computeParcours(readFacts(config, dir));
 const stateOf = (id: string) => onDisk().steps.find((s) => s.id === id)!;
 const listing = (root: string): string[] => fs.readdirSync(root, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? listing(path.join(root, e.name)) : [path.join(root, e.name)])).sort();
-const controlPath = `${BOOK_ID}/export/${ESSAI_CONTROL_FILE}`;
-const control = (date: Date, level = 'ok') => ({ schemaVersion: 1, date: date.toISOString(), bookId: BOOK_ID, theme: 'foret', checks: [{ id: 'C1', label: 'Pages', level, details: [] }] });
 
 check('fichiers : configuration invalide', computeParcours(readFacts({ ok: false, message: 'absent' }, BOOK_DIR)).steps[0]!.state === 'erreur');
 check('fichiers : aucun livre choisi', onDisk(null).steps[0]!.reasons[0] === 'Choisir un livre.');
@@ -278,72 +260,24 @@ check('fichiers : scénario retenu, Prix passe', isValidated(prixState.state), p
   check('fichiers : scénario retenu faux, Prix en erreur', stateOf('prix').state === 'erreur' && stateOf('prix').reasons[0]!.includes('nombre pair'), stateOf('prix'));
   put(dataRoot, pricingFile, saved);
 }
-check('fichiers : collection absente, Collection à faire', stateOf('collection').state === 'a-faire' && stateOf('essai').state === 'verrouillee');
+check('fichiers : collection absente, Collection à faire', stateOf('collection').state === 'a-faire' && stateOf('gabarits').state === 'verrouillee');
 createCollection(dataRoot);
-check('fichiers : collection créée, Essai à faire', stateOf('collection').state === 'validee' && stateOf('essai').state === 'a-faire');
+check('fichiers : collection créée, Mises en page validées par les gabarits livrés', stateOf('collection').state === 'validee' && stateOf('gabarits').state === 'validee');
 check('fichiers : aucun sujet, Sujets à faire', stateOf('sujets').state === 'a-faire');
 {
   const style = path.join(dataRoot, 'collection', 'style.json');
   const saved = fs.readFileSync(style, 'utf8');
   put(dataRoot, 'collection/style.json', '{}');
-  check('fichiers : style invalide, Collection en erreur', stateOf('collection').state === 'erreur' && stateOf('essai').state === 'verrouillee');
+  check('fichiers : style invalide, Collection en erreur', stateOf('collection').state === 'erreur' && stateOf('gabarits').state === 'verrouillee');
   put(dataRoot, 'collection/style.json', saved);
 
-  const past = new Date(Date.now() - 3_600_000);
-  fs.utimesSync(style, past, past);
-  fs.utimesSync(path.join(dataRoot, BOOK_ID, 'print-book.json'), past, past);
-  put(dataRoot, controlPath, control(new Date()));
-  check('export conservé : Essai validé', stateOf('essai').state === 'validee', stateOf('essai'));
-  check('export conservé : relu tel quel', readEssaiControl(dataRoot, BOOK_ID).control?.theme === 'foret');
-  put(dataRoot, controlPath, control(new Date(), 'alerte'));
-  check('export avec une alerte : Essai en alerte', stateOf('essai').state === 'alerte' && stateOf('essai').reasons[0]!.includes('C1'));
-  put(dataRoot, controlPath, control(new Date(), 'erreur'));
-  check('export avec une erreur : Essai en erreur', stateOf('essai').state === 'erreur' && stateOf('essai').reasons[0]!.includes('C1'));
-  put(dataRoot, controlPath, control(new Date()));
-  const future = new Date(Date.now() + 60_000);
-  fs.utimesSync(style, future, future);
-  check('style.json modifié : à refaire', stateOf('essai').stateLabel === 'à refaire' && stateOf('essai').reasons[0]!.includes('style.json'), stateOf('essai'));
-  fs.utimesSync(style, past, past);
-  fs.utimesSync(path.join(dataRoot, BOOK_ID, 'print-book.json'), future, future);
-  check('print-book.json modifié : à refaire', stateOf('essai').stateLabel === 'à refaire' && stateOf('essai').reasons[0]!.includes('print-book.json'));
-  fs.utimesSync(path.join(dataRoot, BOOK_ID, 'print-book.json'), past, past);
-  put(dataRoot, controlPath, '{');
-  check('contrôle : JSON illisible, à refaire', stateOf('essai').stateLabel === 'à refaire' && stateOf('essai').reasons[0]!.includes(ESSAI_CONTROL_FILE));
-  put(dataRoot, controlPath, { ...control(new Date()), bookId: 'autre' });
-  check('contrôle : autre livre, à refaire', stateOf('essai').stateLabel === 'à refaire');
-  put(dataRoot, controlPath, { ...control(new Date()), date: 'hier' });
-  check('contrôle : date invalide, à refaire', stateOf('essai').stateLabel === 'à refaire');
-  put(dataRoot, controlPath, { ...control(new Date()), plus: 1 });
-  check('contrôle : clé inconnue, à refaire', stateOf('essai').stateLabel === 'à refaire');
-  put(dataRoot, controlPath, control(new Date()));
-
-  // Un format qui ne tient pas : la collection reste valide, l'essai est impossible.
-  const bookFile = path.join(dataRoot, BOOK_ID, 'print-book.json');
-  const book = JSON.parse(fs.readFileSync(bookFile, 'utf8'));
-  put(dataRoot, `${BOOK_ID}/print-book.json`, { ...book, edition: { ...book.edition, trim: { widthIn: 2, heightIn: 3 } } });
-  check('format trop petit : Essai en erreur', stateOf('essai').state === 'erreur' && stateOf('essai').reasons[0]!.includes('ne tient pas'), stateOf('essai'));
-  put(dataRoot, `${BOOK_ID}/print-book.json`, book);
-  fs.utimesSync(bookFile, past, past);
 }
 {
-  // Créer un sujet écrit `subjects` dans print-book.json : l'essai ne redevient pas à refaire.
   const bookFile = path.join(dataRoot, BOOK_ID, 'print-book.json');
   const book = JSON.parse(fs.readFileSync(bookFile, 'utf8'));
-  put(dataRoot, controlPath, { ...control(new Date()), book: bookSnapshot(book) });
   createSubject(dataRoot, BOOK_ID, { sceneId: 'alpha', pages: 2, template: '2A', theme: 'foret' }, ['alpha', 'beta'], ['foret']);
-  const now = new Date(Date.now() + 60_000);
-  fs.utimesSync(bookFile, now, now);
-  check('sujet créé : print-book.json plus récent, Essai reste validé', stateOf('essai').state === 'validee', stateOf('essai'));
   const after = JSON.parse(fs.readFileSync(bookFile, 'utf8'));
-  put(dataRoot, `${BOOK_ID}/print-book.json`, { ...after, edition: { ...after.edition, trim: { widthIn: 6, heightIn: 8 } } });
-  check('format changé : Essai à refaire', stateOf('essai').stateLabel === 'à refaire' && stateOf('essai').reasons[0]!.includes('print-book.json'));
-  put(dataRoot, `${BOOK_ID}/print-book.json`, after);
-  const fiche = [{ id: 'taille', picto: 'taille', label: { fr: 'Longueur', en: 'Length', es: 'Largo' } }];
-  put(dataRoot, `${BOOK_ID}/print-book.json`, { ...after, fiche });
-  check('fiche du livre changée : Essai à refaire', stateOf('essai').stateLabel === 'à refaire');
-  put(dataRoot, `${BOOK_ID}/print-book.json`, { ...after, fiche: [{ ...fiche[0], picto: 'inconnu' }] });
-  check('fiche du livre, pictogramme inconnu : Essai en erreur', stateOf('essai').state === 'erreur' && stateOf('essai').reasons[0]!.includes('pictogramme inconnu'), stateOf('essai'));
-  put(dataRoot, `${BOOK_ID}/print-book.json`, after);
+  void book;
 
   // Faits d'un sujet, lus sur les fichiers
   const facts = () => onDisk().subjects[0]!;
@@ -506,7 +440,7 @@ const post = (body: unknown, h: Record<string, string> = headers) => request(por
 
 const reply = await post({ dir: BOOK_DIR });
 const view = JSON.parse(reply.body);
-check('route : étapes et ouverture', reply.status === 200 && view.steps.length === 9 && view.open === 'workflows' && view.steps[6].reasons.join().includes('Déposer le workflow de génération') && view.steps[3].stateLabel === 'validée' && view.steps[4].stateLabel === 'validée' && view.subjects.length === 1 && view.subjects[0].steps.length === 5, view);
+check('route : étapes et ouverture', reply.status === 200 && view.steps.length === 8 && view.open === 'workflows' && view.steps[5].reasons.join().includes('Déposer le workflow de génération') && view.steps[3].stateLabel === 'validée' && view.subjects.length === 1 && view.subjects[0].steps.length === 6, view);
 check('route : livre non choisi', JSON.parse((await post({ dir: null })).body).open === 'livre');
 check('route : GET refusé', (await request(port, { method: 'GET', path: '/api/parcours', headers })).status === 405);
 const { 'x-book-print': _h, ...noHeader } = headers;

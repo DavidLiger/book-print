@@ -15,7 +15,7 @@ import { slugSchema } from '../schema/common';
 import { ILLUSTRATION_KINDS } from '../schema/rights';
 import { framingSchema } from '../schema/subject';
 import type { Config } from './config';
-import { reading } from './subject-actions';
+import { qrSourceOf, reading } from './subject-actions';
 
 export class BadImageRequest extends Error {}
 export class UploadTooLarge extends Error {}
@@ -37,7 +37,7 @@ function parse<T extends z.ZodType>(schema: T, value: unknown): z.infer<T> {
 
 export function context(config: Config, dir: string, subjectId: string): SubjectContext {
   const read = reading(config, dir);
-  return subjectContext(config.dataRoot, read.bookId, subjectId, read.scenes);
+  return subjectContext(config.dataRoot, read.bookId, subjectId, read.scenes, qrSourceOf(config, read));
 }
 
 export function requireZone(ctx: SubjectContext, zone: string): void {

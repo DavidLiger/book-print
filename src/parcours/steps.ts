@@ -37,6 +37,8 @@ export interface SubjectFacts {
     errors: string[];
     alerts: string[];
   };
+  /** Contrôles que les données seules donnent (C5, C9 hors capture, C10, C11, C13, C16, C17), lus pour un sujet « prêt » : une ligne par faute, qui commence par le contrôle (ED6). */
+  ready: { errors: string[] };
 }
 
 export interface ParcoursFacts {
@@ -58,18 +60,6 @@ export interface ParcoursFacts {
     orphans: string[];
     /** C17 sur chaque mise en page du format du livre (ED1). */
     overlaps: string[];
-  };
-  essai: {
-    /** Le livre et la collection ne se rendent pas : l'export est impossible. */
-    renderError: string | null;
-    control: { dateMs: number; errors: string[]; alerts: string[] } | null;
-    controlError: string | null;
-    styleMs: number | null;
-    printBookMs: number | null;
-    /** Date de `collection/gabarits/2A.json` (GB1). */
-    templateMs: number | null;
-    /** Le format ou la fiche ont changé depuis l'export. `null` : export d'avant MP3, seule la date de `print-book.json` le dit. */
-    bookChanged: boolean | null;
   };
   droits: {
     /** Un registre illisible. */
@@ -188,21 +178,6 @@ function gabarits({ gabarits: g }: ParcoursFacts): StepVerdict {
   return { state: 'validee', reasons: [] };
 }
 
-function essai({ essai: e }: ParcoursFacts): StepVerdict {
-  if (e.renderError) return { state: 'erreur', reasons: [e.renderError] };
-  if (e.controlError) return { state: 'a-faire', redo: true, reasons: [`${e.controlError} Relancer l'export.`] };
-  if (!e.control) return { state: 'a-faire', reasons: ['Exporter le PDF d\'essai.'] };
-  const { control } = e;
-  const styleNewer = e.styleMs !== null && e.styleMs >= control.dateMs;
-  const bookNewer = e.bookChanged ?? (e.printBookMs !== null && e.printBookMs >= control.dateMs);
-  const templateNewer = e.templateMs !== null && e.templateMs >= control.dateMs;
-  const newer = ([['collection/style.json', styleNewer], ['collection/gabarits/2A.json', templateNewer], ['print-book.json', bookNewer]] as const).filter(([, changed]) => changed);
-  if (newer.length > 0) return { state: 'a-faire', redo: true, reasons: [`${newer.map(([name]) => name).join(' et ')} modifié après le dernier export : relancer l'export.`] };
-  if (control.errors.length > 0) return { state: 'erreur', reasons: [`${control.errors.join(', ')} en erreur dans le dernier export.`] };
-  if (control.alerts.length > 0) return { state: 'alerte', reasons: [`${control.alerts.join(', ')} en alerte dans le dernier export.`] };
-  return { state: 'validee', reasons: [] };
-}
-
 function droits({ droits: d }: ParcoursFacts): StepVerdict {
   if (d.error) return { state: 'erreur', reasons: [d.error] };
   if (d.faults.length > 0) return { state: 'erreur', reasons: d.faults };
@@ -290,19 +265,32 @@ function sujetIllustrations(_f: ParcoursFacts, s?: SubjectFacts): StepVerdict {
   return { state: 'validee', reasons: [] };
 }
 
+/**
+ * Prêt (ED6) : le statut est écrit, la page le recalcule (MP-20). Un sujet « prêt » dont un contrôle repasse en erreur le dit, contrôle nommé ;
+ * Chromium n'est lancé qu'à « Marquer prêt » et à « Contrôler », pas à chaque lecture.
+ */
+function sujetPret(_f: ParcoursFacts, s?: SubjectFacts): StepVerdict {
+  const fault = unreadable(s);
+  if (fault) return fault;
+  if (s?.status !== 'prêt') return { state: 'a-faire', reasons: ['Marquer le sujet prêt : tous les contrôles doivent être sans erreur.'] };
+  if (s.ready.errors.length > 0) return { state: 'erreur', reasons: s.ready.errors.map((e) => `${e} (sujet marqué prêt)`) };
+  return { state: 'validee', reasons: [] };
+}
+
 function sujetApercu(_f: ParcoursFacts, s?: SubjectFacts): StepVerdict {
   if (s && isRelu(s)) return { state: 'validee', reasons: [] };
   return { state: 'a-faire', reasons: ['Contrôler le sujet, puis le marquer relu.'] };
 }
 
 /**
- * Sujets exige Gabarits et non Essai : une couleur modifiée ne reverrouille pas tout le contenu. Essai reste jusqu'à MP5.
- * Gabarits exige Collection (GB1) : ses fichiers y vivent et ses zones lisent le style. Essai et Sujets l'exigent : ils posent un gabarit.
+ * Sujets exige Gabarits : une couleur modifiée ne reverrouille pas tout le contenu. L'étape Essai a disparu en ED6.
+ * Gabarits exige Collection (GB1) : ses fichiers y vivent et ses zones lisent le style. Sujets l'exige : il pose un gabarit.
  * Droits exige Collection : le registre commun y vit. Sujets ne l'exige pas : une licence à revoir ne reverrouille pas le contenu.
  * Workflows exige Droits : ses cases viennent du registre. Sujets ne l'exige pas : le dépôt manuel d'une image reste possible sans ComfyUI.
  * Styles exige Workflows : le style de base en vient, et un aperçu passe par eux. Sujets ne l'exige pas non plus.
  * Illustrations exige Recherche et ne touche pas `relu`, qui porte sur le texte.
  * Mises en page (ex-Gabarits, ED1) garde l'identifiant `gabarits`. Recherche exige Mise en page (ED1) : les blocs attendus en viennent.
+ * Prêt (ED6) exige Relecture, Illustrations et Aperçu.
  * Aperçu exige Recherche et non Relecture : un bloc allongé repasse à relire, et c'est justement dans l'aperçu que se voit son débordement.
  */
 export const STEPS: StepDef[] = [
@@ -310,7 +298,6 @@ export const STEPS: StepDef[] = [
   { id: 'prix', label: 'Prix', scope: 'livre', requires: ['livre'], evaluate: prix },
   { id: 'collection', label: 'Collection', scope: 'livre', requires: ['prix'], evaluate: collection },
   { id: 'gabarits', label: 'Mises en page', scope: 'livre', requires: ['collection'], evaluate: gabarits },
-  { id: 'essai', label: 'Essai', scope: 'livre', requires: ['gabarits'], evaluate: essai },
   { id: 'droits', label: 'Droits', scope: 'livre', requires: ['collection'], evaluate: droits },
   { id: 'workflows', label: 'Workflows', scope: 'livre', requires: ['droits'], evaluate: workflows },
   { id: 'styles', label: 'Styles', scope: 'livre', requires: ['workflows'], evaluate: styles },
@@ -320,6 +307,7 @@ export const STEPS: StepDef[] = [
   { id: 'sujet-relecture', label: 'Relecture', scope: 'sujet', requires: ['sujet-recherche'], evaluate: sujetRelecture },
   { id: 'sujet-illustrations', label: 'Illustrations', scope: 'sujet', requires: ['sujet-recherche'], evaluate: sujetIllustrations },
   { id: 'sujet-apercu', label: 'Aperçu', scope: 'sujet', requires: ['sujet-recherche'], evaluate: sujetApercu },
+  { id: 'sujet-pret', label: 'Prêt', scope: 'sujet', requires: ['sujet-relecture', 'sujet-illustrations', 'sujet-apercu'], evaluate: sujetPret },
 ];
 
 const LABELS: Record<StepState, string> = { 'a-faire': 'à faire', validee: 'validée', alerte: 'alerte', erreur: 'erreur', verrouillee: 'verrouillée' };
