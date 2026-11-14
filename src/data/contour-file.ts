@@ -24,9 +24,11 @@ export const contourFileSchema = z
     points: z.array(point).min(3, 'contour : 3 points au moins'),
     empreinte: z.string().regex(/^[0-9a-f]{64}$/, 'empreinte : SHA-256 en hexadécimal'),
     autresParties: z.array(partSchema),
+    /** Trous du détouré (ED5) ; absent d'un fichier d'ED2 : aucun trou. */
+    trous: z.array(z.array(point).min(3, 'trou : 3 points au moins')).default([]),
   })
   .superRefine((c, ctx) => {
-    if (c.points.some(([x, y]) => x < 0 || y < 0 || x > c.image.width || y > c.image.height)) ctx.addIssue({ code: 'custom', path: ['points'], message: 'point hors de l\'image' });
+    if ([...c.points, ...c.trous.flat()].some(([x, y]) => x < 0 || y < 0 || x > c.image.width || y > c.image.height)) ctx.addIssue({ code: 'custom', path: ['points'], message: 'point hors de l\'image' });
   });
 export type ContourFile = z.infer<typeof contourFileSchema>;
 
@@ -40,6 +42,7 @@ export function contourFile(contour: Contour, png: Buffer): ContourFile {
     points: contour.points,
     empreinte: sha256(png),
     autresParties: contour.autresParties,
+    ...(contour.trous.length > 0 ? { trous: contour.trous } : {}),
   });
 }
 
@@ -89,7 +92,7 @@ export function withOutlines(pages: LayoutPage[], dataRoot: string, bookId: stri
     zones: page.zones.map((zone) => {
       if (!zone.detoure || !illustrated(zone.id)) return zone;
       const read = subjectContour(dataRoot, bookId, subjectId, zone.id);
-      return read?.state === 'ok' ? { ...zone, outline: outlineIn(zone.rect, { width: read.contour.image.width, height: read.contour.image.height, points: read.contour.points }) } : zone;
+      return read?.state === 'ok' ? { ...zone, outline: outlineIn(zone.rect, { width: read.contour.image.width, height: read.contour.image.height, points: read.contour.points, trous: read.contour.trous }) } : zone;
     }),
   }));
 }

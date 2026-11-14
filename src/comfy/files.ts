@@ -82,6 +82,8 @@ export const candidatesSchema = z.strictObject({
     /** Droit de la référence du style, `null` sans référence. */
     rights: z.string().nullable(),
   }),
+  /** Détouré (ED5) : gris d'aplatissement, empreintes du rendu RVBA et du rendu aplati envoyé. */
+  detoure: z.strictObject({ fond: z.number().int().min(0).max(255), rendu: sha, aplati: sha }).optional(),
   inputs: z.strictObject({ rendu: sha, mist: sha, reference: z.strictObject({ name: z.string(), sha256: sha }).nullable() }),
   size: z.strictObject({ width: z.number().int().positive(), height: z.number().int().positive() }),
   /** `seconds` : génération et correction ; `correctionSeconds` : la correction seule, faite par l'outil. */

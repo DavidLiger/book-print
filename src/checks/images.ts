@@ -33,6 +33,8 @@ export interface LinkedImage {
   zone: string;
   /** Identifiants rattachés ; `null` : aucune entrée `illustrations[]` dans `rights.json`. */
   rights: string[] | null;
+  /** Image générée par l'outil : un modèle d'IA est alors exigé. Absent : généré (cas strict). Faux : dépôt manuel, rien d'IA à créditer (ED5). */
+  aiGenerated?: boolean;
 }
 
 /** `registry` : les entrées des deux registres. La présence dans les pages de crédits attend ces pages (MP6) : le libellé le dit. */
@@ -42,7 +44,7 @@ export function c11Rights(images: LinkedImage[], registry: ReadonlyMap<string, R
   const once = (list: string[], line: string) => {
     if (!list.includes(line)) list.push(line);
   };
-  for (const { zone, rights } of images) {
+  for (const { zone, rights, aiGenerated = true } of images) {
     if (rights === null) {
       errors.push(`${zone} : image absente du registre`);
       continue;
@@ -52,8 +54,9 @@ export function c11Rights(images: LinkedImage[], registry: ReadonlyMap<string, R
       if (!entry) errors.push(`${zone} : droit inconnu du registre, ${id}`);
       return entry ? [entry] : [];
     });
-    if (!entries.some((e) => e.kind === 'modele-ia')) errors.push(`${zone} : aucun modèle d'IA rattaché`);
-    if (!entries.some((e) => e.kind === 'modele-3d')) alerts.push(`${zone} : aucun modèle 3D rattaché`);
+    if (rights.length === 0) errors.push(`${zone} : aucun droit rattaché`);
+    if (aiGenerated && !entries.some((e) => e.kind === 'modele-ia')) errors.push(`${zone} : aucun modèle d'IA rattaché`);
+    if (aiGenerated && !entries.some((e) => e.kind === 'modele-3d')) alerts.push(`${zone} : aucun modèle 3D rattaché`);
     for (const e of entries) {
       if (!e.license) once(errors, `${e.id} : licence manquante`);
       if (!e.credit) once(errors, `${e.id} : crédit vide`);

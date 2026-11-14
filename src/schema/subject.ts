@@ -40,6 +40,8 @@ export const generationSchema = z.strictObject({
     generated: sha256Schema,
     corrected: sha256Schema,
   }),
+  /** Détouré généré (ED5) : gris d'aplatissement et empreintes du rendu RVBA, du rendu aplati envoyé à ComfyUI et de l'alpha agrandi. */
+  detoure: z.strictObject({ fond: z.number().int().min(0).max(255), rendu: sha256Schema, aplati: sha256Schema, alpha: sha256Schema }).optional(),
 });
 export type Generation = z.infer<typeof generationSchema>;
 

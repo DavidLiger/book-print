@@ -29,7 +29,8 @@ export const illustrationRightsSchema = z.strictObject({
   zone: slugSchema,
   file: z.string(),
   rights: uniqueList(slugSchema, 'droit'),
-  aiGenerated: z.literal(true),
+  /** Vrai pour une image générée par l'outil (traçabilité `generation`), faux pour un dépôt manuel (ED5). */
+  aiGenerated: z.boolean(),
 });
 export type IllustrationRights = z.infer<typeof illustrationRightsSchema>;
 

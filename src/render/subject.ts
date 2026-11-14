@@ -160,6 +160,8 @@ export interface ZoneImage {
   ppi: number | null;
   /** Droits rattachés ; `null` : pas d'entrée dans `rights.json`. */
   rights: string[] | null;
+  /** Image générée par l'outil (ED5) : C11 n'exige un modèle d'IA que pour elle. */
+  aiGenerated: boolean;
   /** Détouré (ED2) : image entière dans sa boîte, sans cadrage, et les parties opaques que le contour découpe. */
   detoure: boolean;
   parts: Part[];
@@ -172,7 +174,7 @@ export function zoneImages(ctx: SubjectContext): ZoneImage[] {
     const size = sizeOf(zone);
     const illustration = subject.illustrations.find((i) => i.zone === zone.id) ?? null;
     const detoure = zone.detoure === true;
-    const base = { zone: zone.id, size, target: targetPixels(size), illustration, image: null, fault: null, crop: null, ppi: null, rights: illustrationRights(rights, subject.id, zone.id)?.rights ?? null, detoure, parts: [] };
+    const base = { zone: zone.id, size, target: targetPixels(size), illustration, image: null, fault: null, crop: null, ppi: null, rights: illustrationRights(rights, subject.id, zone.id)?.rights ?? null, aiGenerated: illustrationRights(rights, subject.id, zone.id)?.aiGenerated ?? true, detoure, parts: [] };
     if (!illustration) return base;
     const file = illustrationFile(dataRoot, book.bookId, subject.id, zone.id);
     if (file.state === 'absent') return { ...base, fault: `${zone.id} : fichier absent du disque, le redéposer.` };
@@ -206,7 +208,7 @@ export function imageChecks(ctx: SubjectContext): ImageChecks {
   const zones = zoneImages(ctx);
   const registry = allEntries(ctx.collection.rights, readBookRights(ctx.dataRoot, ctx.book.bookId));
   const placed = zones.flatMap((z) => (z.image && z.illustration && !z.fault ? [{ zone: z.zone, image: z.image, size: z.size, framing: z.illustration.framing, contain: z.detoure }] : []));
-  const linked = zones.filter((z) => z.illustration).map((z) => ({ zone: z.zone, rights: z.rights }));
+  const linked = zones.filter((z) => z.illustration).map((z) => ({ zone: z.zone, rights: z.rights, aiGenerated: z.aiGenerated }));
   return { zones, checks: [c5Resolution(placed), c11Rights(linked, registry)] };
 }
 

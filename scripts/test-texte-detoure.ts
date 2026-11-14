@@ -641,7 +641,7 @@ async function pdfImages(pdf: Uint8Array): Promise<{ count: number; smask: numbe
   check('parcours : contour absent, Illustrations en erreur', JSON.stringify(gone.subjects?.find((s: Dict) => s.id === 'alpha')?.illustrations?.errors ?? []).includes('contour absent'));
   check('sujet : sans contour valide, l’aplat (pas le fond blanc)', !subjectContour(dataRoot, BOOK_ID, 'alpha', 'animal') || subjectHtml(subjectContext(dataRoot, BOOK_ID, 'alpha', SCENES)).includes('image/svg+xml'));
   await deposit('animal', await detourePng(800, 900), true);
-  // image-externe : ajoutée au registre du livre, rattachée à l'illustration ; C11 inchangé (modèle d'IA toujours exigé).
+  // image-externe : ajoutée au registre du livre, rattachée à l'illustration ; C11 (ED5) : modèle d'IA exigé seulement pour une image générée.
   const reg = path.join(dataRoot, BOOK_ID, 'rights.json');
   const rights = JSON.parse(fs.readFileSync(reg, 'utf8'));
   rights.entries.push({ id: 'carte-test', kind: 'image-externe', name: 'Carte de test', author: 'Auteur', license: 'CC BY 4.0', url: 'https://exemple.org', credit: 'Carte : Auteur', commercialOk: 'oui' });
@@ -650,7 +650,9 @@ async function pdfImages(pdf: Uint8Array): Promise<{ count: number; smask: numbe
   const lb = JSON.parse(linked.body);
   check('route : image-externe proposée et rattachée à l’illustration', linked.status === 200 && lb.entries.some((e: Dict) => e.id === 'carte-test') && lb.zones.find((x: Dict) => x.zone === 'animal').rights.includes('carte-test'), linked.status);
   const c11 = lb.checks.find((c: Dict) => c.id === 'C11');
-  check('C11 inchangé : image-externe seule, modèle d’IA toujours exigé', c11.level === 'erreur' && c11.details.some((d: string) => d.includes('aucun modèle d\'IA')), c11);
+  check('C11 (ED5) : image déposée à la main, image-externe seule suffit, aucun modèle d’IA exigé', c11.level === 'ok' && !c11.details.some((d: string) => d.includes('modèle d\'IA')), c11);
+  const written = JSON.parse(fs.readFileSync(reg, 'utf8')).illustrations.find((i: Dict) => i.subject === 'alpha' && i.zone === 'animal');
+  check('aiGenerated (ED5) : faux pour un détouré déposé, sans droit modèle d’IA', written?.aiGenerated === false, written);
   // Aperçus coupés par les routes.
   const ap = await request({ method: 'GET', path: `/apercu-gabarit?bookId=${BOOK_ID}&id=2X` });
   check('route : aperçu d’un modèle à chaîne, texte coupé', ap.status === 200 && ap.body.includes('data-para="p1"') && ap.body.includes('class="lettrine"'));

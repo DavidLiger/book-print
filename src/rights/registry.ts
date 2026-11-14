@@ -115,18 +115,20 @@ export function addBookEntries(dataRoot: string, bookId: string, entries: Rights
 
 export const illustrationRights = (book: RightsFile, subject: string, zone: string): IllustrationRights | undefined => book.illustrations.find((i) => i.subject === subject && i.zone === zone);
 
-/** Crée l'entrée d'une illustration au dépôt, en gardant les droits déjà rattachés : un remplacement ne les perd pas (décision de David). */
-export function ensureIllustrationRights(dataRoot: string, bookId: string, subject: string, zone: string): void {
+/** Crée l'entrée d'une illustration au dépôt, en gardant les droits déjà rattachés : un remplacement ne les perd pas (décision de David). `aiGenerated` suit l'image déposée. */
+export function ensureIllustrationRights(dataRoot: string, bookId: string, subject: string, zone: string, aiGenerated = true): void {
   rewrite(requireBook(dataRoot, bookId), bookLabel(bookId), (file) => {
-    if (illustrationRights(file, subject, zone)) return file;
-    return { ...file, illustrations: [...file.illustrations, { subject, zone, file: illustrationFileName(subject, zone), rights: [], aiGenerated: true as const }] };
+    const current = illustrationRights(file, subject, zone);
+    if (current) return current.aiGenerated === aiGenerated ? file : { ...file, illustrations: file.illustrations.map((i) => (i === current ? { ...i, aiGenerated } : i)) };
+    return { ...file, illustrations: [...file.illustrations, { subject, zone, file: illustrationFileName(subject, zone), rights: [], aiGenerated }] };
   });
 }
 
-export function setIllustrationRights(dataRoot: string, bookId: string, subject: string, zone: string, rights: string[]): void {
+/** `aiGenerated` : si donné, remplace la valeur de l'entrée (vrai pour une image générée ou un droit `modele-ia` rattaché, ED5). */
+export function setIllustrationRights(dataRoot: string, bookId: string, subject: string, zone: string, rights: string[], aiGenerated?: boolean): void {
   rewrite(requireBook(dataRoot, bookId), bookLabel(bookId), (file) => {
     if (!illustrationRights(file, subject, zone)) throw new RightsRefused(`Aucune image dans la zone ${zone} : la déposer d'abord.`);
-    return { ...file, illustrations: file.illustrations.map((i) => (i.subject === subject && i.zone === zone ? { ...i, rights } : i)) };
+    return { ...file, illustrations: file.illustrations.map((i) => (i.subject === subject && i.zone === zone ? { ...i, rights, ...(aiGenerated !== undefined ? { aiGenerated } : {}) } : i)) };
   });
 }
 

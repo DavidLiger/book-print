@@ -241,6 +241,10 @@ red('C13, titre de remplissage', filler({ title: 'Lorem ipsum' }), 'titre');
   check('C11 : une erreur passe avant une alerte', c11Rights([{ zone: 'a', rights: ['ia'] }, { zone: 'b', rights: null }], registry()).level === 'erreur');
   const map = registry(entry('x', 'modele-3d', { credit: '' }));
   check('C11 : une entrée fautive n’est citée qu’une fois', c11Rights([{ zone: 'a', rights: ['ia', 'x'] }, { zone: 'b', rights: ['ia', 'x'] }], map).details.length === 1, c11Rights([{ zone: 'a', rights: ['ia', 'x'] }, { zone: 'b', rights: ['ia', 'x'] }], map));
+  check('C11 : image non générée, aucun modèle d’IA exigé', c11Rights([{ zone: 'a', rights: ['x'], aiGenerated: false }], registry(entry('x', 'image-externe'))).level !== 'erreur', c11Rights([{ zone: 'a', rights: ['x'], aiGenerated: false }], registry(entry('x', 'image-externe'))));
+  check('C11 : image générée, modèle d’IA exigé', c11Rights([{ zone: 'a', rights: ['x'], aiGenerated: true }], registry(entry('x', 'image-externe'))).details.some((d) => d.includes('modèle d\'IA')));
+  check('C11 : aiGenerated absent, cas strict', c11Rights([{ zone: 'a', rights: ['x'] }], registry(entry('x', 'image-externe'))).level === 'erreur');
+  check('C11 : image non générée sans aucun droit, rouge', c11Rights([{ zone: 'a', rights: [], aiGenerated: false }], registry()).details.join().includes('aucun droit rattaché'));
   check('entrée : complète, aucune faute', entryFaults(entry('x', 'police')).length === 0);
   check('entrée : licence et crédit manquants', entryFaults(entry('x', 'police', { license: '', credit: '' })).join() === 'licence manquante,crédit vide');
 }

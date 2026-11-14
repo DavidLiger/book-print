@@ -339,7 +339,7 @@ await new Promise((resolve) => server.close(resolve));
   check('dépôt : accepté, dimensions relues', first.status === 200 && firstView.deposited === true && firstView.width === 120 && firstView.height === 180, first.body.slice(0, 300));
   check('dépôt : fichier gardé, aucun temporaire', fs.existsSync(kept) && noTemp() && fs.readdirSync(illustrations).join() === 'illustration.png');
   check('dépôt : subject.json porte zone, fichier, dimensions, cadrage', JSON.stringify(readJson(subjectFile).illustrations) === JSON.stringify([{ zone: 'illustration', file: 'illustrations/alpha/illustration.png', width: 120, height: 180, framing: { focusX: 0.5, focusY: 0.5, zoom: 1 } }]));
-  check('dépôt : rights.json porte le lien et aiGenerated', JSON.stringify(readJson(rightsFile).illustrations) === JSON.stringify([{ subject: 'alpha', zone: 'illustration', file: 'illustrations/alpha/illustration.png', rights: [], aiGenerated: true }]));
+  check('dépôt à la main : rights.json porte le lien, aiGenerated faux (ED5)', JSON.stringify(readJson(rightsFile).illustrations) === JSON.stringify([{ subject: 'alpha', zone: 'illustration', file: 'illustrations/alpha/illustration.png', rights: [], aiGenerated: false }]));
   check('dépôt : le statut du sujet ne bouge pas', readJson(subjectFile).status === statusBefore);
   check('dépôt : vue, taille cible calculée', firstView.zones[0].target.width === 1838 && firstView.zones[0].target.height === 2775 && firstView.zones[0].ppi < 300, firstView.zones[0]);
   const stored = fs.readFileSync(kept);

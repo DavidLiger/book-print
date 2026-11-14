@@ -52,6 +52,7 @@ const styleInput = z.strictObject({
     tile: z.strictObject({ strength: z.number(), start: z.number(), end: z.number() }),
   }),
   colorDosage: z.number(),
+  fondDetoure: z.number().optional(),
   reference: referenceInput,
   upscale: z.strictObject({ prompt: z.string().max(STYLE_TEXT_MAX), negative: z.string().max(STYLE_TEXT_MAX) }),
 });

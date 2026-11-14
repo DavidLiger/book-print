@@ -59,6 +59,8 @@ export const styleSchema = z
     }),
     /** Correction de couleurs du §13.2 : 1 pour le livre 1, 0 sans correction. */
     colorDosage: unit('dosage des couleurs'),
+    /** Gris (0 à 255) sur lequel un rendu détouré RVBA est aplati avant l'envoi à ComfyUI (ED5). Réglable par style : 128 par défaut. */
+    fondDetoure: z.number({ error: 'fond du détouré : nombre attendu' }).int('fond du détouré : entier attendu').min(0, 'fond du détouré : 0 au moins').max(255, 'fond du détouré : 255 au plus').default(128),
     reference: referenceSchema,
     /** Prompts de l'agrandissement (nœuds 6 et 7 du second graphe, question 12) : Ultimate SD Upscale garde son propre style. */
     upscale: z.strictObject({ prompt: text('prompt de l\'agrandissement', STYLE_TEXT_MAX), negative: text('négatif de l\'agrandissement', STYLE_TEXT_MAX) }),

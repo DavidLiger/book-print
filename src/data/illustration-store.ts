@@ -55,7 +55,7 @@ export function storeIllustration(dataRoot: string, bookId: string, subjectId: s
       throw e;
     }
   }
-  ensureIllustrationRights(dataRoot, bookId, subjectId, zone);
+  ensureIllustrationRights(dataRoot, bookId, subjectId, zone, options.generation !== undefined);
   if (options.rights) setIllustrationRights(dataRoot, bookId, subjectId, zone, options.rights);
   const entry: Illustration = { zone, file: illustrationFileName(subjectId, zone), width: image.width, height: image.height, framing: DEFAULT_FRAMING, ...(options.generation ? { generation: options.generation } : {}) };
   updateSubject(dataRoot, bookId, subjectId, (data) => ({ ...data, subject: { ...data.subject, illustrations: [...data.subject.illustrations.filter((i) => i.zone !== zone), entry] } }));

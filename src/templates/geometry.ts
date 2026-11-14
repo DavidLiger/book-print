@@ -69,6 +69,8 @@ export interface Outline {
   points: [number, number][];
   /** Le même polygone en pourcentage de l'image, pour `clip-path`. */
   percent: [number, number][];
+  /** Trous (ED5), en pourcentage de l'image : découpés avec le polygone en règle pair-impair. */
+  trous?: [number, number][][];
 }
 export interface LayoutPage {
   number: number;

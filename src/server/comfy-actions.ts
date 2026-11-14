@@ -12,9 +12,11 @@ import { cacheImage, clearCandidates, correctedName, inputFile, inputName, INPUT
 import { colorWords } from '../comfy/prompt';
 import { QueueRefused, TaskQueue, type QueueSnapshot } from '../comfy/queue';
 import { defaultRunDeps, runGeneration, runUpscale, type RunDeps } from '../comfy/run';
-import { outputPixels, renderSize, sizeText, zoneKind, ZONE_KIND_LABELS } from '../comfy/size';
+import { COLOR_RGBA, MIST_MIN_LEVELS, mistLevels, renderAlphaFault } from '../comfy/detoure';
+import type { Size } from '../images/crop';
+import { outputPixels, sizeText, zoneKind, zoneRenderSize, ZONE_KIND_LABELS } from '../comfy/size';
 import { defaultPrompt, depositWorkflow, effectiveRights, readWorkflows, setWorkflowRights, workflowsReady, type Workflows, type WorkflowState } from '../comfy/workflow-file';
-import { SPECS, WORKFLOW_KINDS, WORKFLOW_LABELS, WORKFLOW_RIGHTS_KINDS, WorkflowRefused } from '../comfy/workflow';
+import { sha256, SPECS, WORKFLOW_KINDS, WORKFLOW_LABELS, WORKFLOW_RIGHTS_KINDS, WorkflowRefused } from '../comfy/workflow';
 import { illustrationFile, illustrationFolder } from '../data/illustration-file';
 import { SubjectRefused, updateSubject } from '../data/subject-file';
 import { ImageRefused, MAX_UPLOAD_BYTES } from '../images/clean';
@@ -157,16 +159,19 @@ function stylesView(ctx: SubjectContext, registry: Registry): Json[] {
   return readStyles(ctx.dataRoot).map((s) => ({ id: s.id, name: s.state === 'ok' ? s.style.name : s.id, faults: styleFaults(s, registry) }));
 }
 
+/** Le prompt du workflow décrit une scène : un détouré demande un prompt de zone (ED5, question 5). */
+const DETOURE_PROMPT_REASON = 'Zone détourée sans prompt de zone : décrire l\'animal seul, sans décor.';
+
 function zoneView(ctx: SubjectContext, workflows: Workflows, rt: ComfyRuntime, styles: Json[]): Json[] {
   const { dataRoot, book, subject } = ctx;
   const fallback = defaultPrompt(workflows);
   return zoneImages(ctx).map((z) => {
     const kind = zoneKind(z.size, ctx.trim);
-    const render = kind ? renderSize(ctx.trim, kind) : null;
-    const reason = !kind
-      ? `La zone ${z.zone} n'est ni une page pleine ni une double page : pas de génération, déposer l'image à la main.`
-      : !render
-        ? `Le format ${ctx.trim.widthIn} × ${ctx.trim.heightIn}" n'a pas de taille de rendu retenue (§13.2) : pas de génération.`
+    const render = zoneRenderSize(z.size, ctx.trim);
+    const reason = !render
+      ? `Le format ${ctx.trim.widthIn} × ${ctx.trim.heightIn}" n'a pas de taille de rendu retenue (§13.2) : pas de génération.`
+      : z.detoure && (subject.generationPrompts?.[z.zone] ?? '').trim() === ''
+        ? DETOURE_PROMPT_REASON
         : null;
     const inputs = Object.fromEntries(
       INPUT_KINDS.map((k) => {
@@ -174,7 +179,9 @@ function zoneView(ctx: SubjectContext, workflows: Workflows, rt: ComfyRuntime, s
         if (f.state !== 'ok') return [k, { state: f.state, name: inputName(z.zone, k), message: f.state === 'refuse' ? f.message : null }];
         const size = { width: f.header.width, height: f.header.height };
         const fits = render !== null && size.width === render.width && size.height === render.height;
-        return [k, { state: fits ? 'ok' : 'refuse', name: inputName(z.zone, k), size, message: fits ? null : `${inputName(z.zone, k)} en ${sizeText(size)}, ${render ? sizeText(render) : '?'} attendus : le redéposer.` }];
+        const noAlpha = z.detoure && k === 'rendu' && f.header.colorType !== COLOR_RGBA;
+        const message = !fits ? `${inputName(z.zone, k)} en ${sizeText(size)}, ${render ? sizeText(render) : '?'} attendus : le redéposer.` : noAlpha ? `${inputName(z.zone, k)} sans transparence : une zone détourée demande un rendu PNG RVBA, le redéposer.` : null;
+        return [k, { state: message === null ? 'ok' : 'refuse', name: inputName(z.zone, k), size, message }];
       }),
     );
     const prompt = subject.generationPrompts?.[z.zone] ?? fallback ?? '';
@@ -187,7 +194,7 @@ function zoneView(ctx: SubjectContext, workflows: Workflows, rt: ComfyRuntime, s
     return {
       zone: z.zone,
       kind,
-      kindLabel: kind ? ZONE_KIND_LABELS[kind] : null,
+      kindLabel: ZONE_KIND_LABELS[kind],
       reason,
       render,
       output: outputPixels(z.size),
@@ -253,17 +260,16 @@ function changePrompt(config: Config, value: z.infer<typeof promptBody>, rt: Com
 /** Zone prête à générer : type, format, entrées aux tailles du §13.2. Rend ce que la tâche emporte. */
 function generationInputs(ctx: SubjectContext, zone: string) {
   const z = zoneImages(ctx).find((i) => i.zone === zone)!;
-  const kind = zoneKind(z.size, ctx.trim);
-  if (!kind) throw new SubjectRefused(`La zone ${zone} n'est ni une page pleine ni une double page : pas de génération.`);
-  const render = renderSize(ctx.trim, kind);
+  const render = zoneRenderSize(z.size, ctx.trim);
   if (!render) throw new SubjectRefused(`Le format ${ctx.trim.widthIn} × ${ctx.trim.heightIn}" n'a pas de taille de rendu retenue (§13.2).`);
   const files = INPUT_KINDS.map((k) => {
     const f = inputFile(ctx.dataRoot, ctx.book.bookId, ctx.subject.id, zone, k);
     if (f.state !== 'ok') throw new SubjectRefused(f.state === 'refuse' ? f.message : `Déposer d'abord ${k === 'rendu' ? 'le rendu' : 'la passe Mist'} (${inputName(zone, k)}).`);
     if (f.header.width !== render.width || f.header.height !== render.height) throw new SubjectRefused(`${inputName(zone, k)} en ${f.header.width} × ${f.header.height} px, ${sizeText(render)} attendus.`);
+    if (z.detoure && k === 'rendu' && f.header.colorType !== COLOR_RGBA) throw new SubjectRefused(`${inputName(zone, k)} sans transparence : une zone détourée demande un rendu PNG RVBA.`);
     return fs.readFileSync(f.path);
   });
-  return { z, render, rendu: files[0]!, mist: files[1]! };
+  return { z, render, rendu: files[0]!, mist: files[1]!, detoure: z.detoure === true };
 }
 
 function readyWorkflows(config: Config, bookId: string) {
@@ -279,15 +285,17 @@ function launch(config: Config, value: z.infer<typeof launchBody>, rt: ComfyRunt
   requireZone(ctx, zone);
   const address = origin(config);
   const { generation, workflows } = readyWorkflows(config, ctx.book.bookId);
-  const { render, rendu, mist } = generationInputs(ctx, zone);
+  const { render, rendu, mist, detoure } = generationInputs(ctx, zone);
   const styleId = zoneStyleId(ctx.book, ctx.subject, zone);
   if (styleId === null) throw new StyleRefused('Aucun style : choisir le style par défaut du livre (étape Styles), ou un style pour cette zone.');
   const style = styleRun(config.dataRoot, styleId, registryOf(ctx));
   const seeds = new Set<number>(value.seed !== undefined ? [value.seed] : []);
   while (seeds.size < (value.seed !== undefined ? 1 : SEEDS_PER_RUN)) seeds.add(rt.seed());
-  const prompt = ctx.subject.generationPrompts?.[zone] ?? defaultPrompt(workflows)!;
+  const zonePrompt = ctx.subject.generationPrompts?.[zone];
+  if (detoure && (zonePrompt === undefined || zonePrompt.trim() === '')) throw new SubjectRefused(DETOURE_PROMPT_REASON);
+  const prompt = zonePrompt ?? defaultPrompt(workflows)!;
   const job = {
-    dataRoot: config.dataRoot, bookId: ctx.book.bookId, subjectId, zone, origin: address, prompt, seeds: [...seeds], rendu, mist, renderSize: render,
+    dataRoot: config.dataRoot, bookId: ctx.book.bookId, subjectId, zone, origin: address, prompt, seeds: [...seeds], rendu, mist, renderSize: render, ...(detoure ? { detoure: { fond: style.style.fondDetoure } } : {}),
     workflow: { entry: generation.entry, graph: generation.graph }, style,
   };
   const task = rt.queue.add({ kind: 'generation', zoneKey: zoneKeyOf(ctx.book.bookId, subjectId, zone), label: `génération ${subjectId}/${zone}, style ${style.style.name}`, run: (c) => runGeneration(job, c, rt.deps) });
@@ -309,12 +317,18 @@ function upscale(config: Config, value: z.infer<typeof upscaleBody>, rt: ComfyRu
   // La confirmation vient avant le calcul : deux minutes plus tard, il serait trop tard pour annuler.
   const exists = illustrationFile(config.dataRoot, bookId, subjectId, zone).state !== 'absent';
   if ((exists || z.illustration) && !confirm) return { needsConfirm: true };
+  let detoure: { rendu: Buffer; renderSize: Size } | undefined;
+  if (z.detoure) {
+    const inputs = generationInputs(ctx, zone);
+    if (!candidates.detoure || sha256(inputs.rendu) !== candidates.detoure.rendu) throw new SubjectRefused('Le rendu RVBA a changé depuis la génération : relancer « Générer ».');
+    detoure = { rendu: inputs.rendu, renderSize: inputs.render };
+  }
   const registry = registryOf(ctx);
   const models3d = (z.rights ?? []).filter((id) => registry.get(id)?.kind === 'modele-3d');
   // La référence vient du style tracé avec les candidats, plus du workflow (question 6).
   const rights = [...new Set([...models3d, ...effectiveRights(generation), ...effectiveRights(agrandissement), ...(candidates.style.rights ? [candidates.style.rights] : [])])];
   const job = {
-    dataRoot: config.dataRoot, bookId, subjectId, zone, origin: address, seed, corrected, candidates, output: outputPixels(z.size),
+    dataRoot: config.dataRoot, bookId, subjectId, zone, origin: address, seed, corrected, candidates, output: outputPixels(z.size), ...(detoure ? { detoure } : {}),
     workflows: { generation: generation.entry, agrandissement: { entry: agrandissement.entry, graph: agrandissement.graph } }, rights,
   };
   const task = rt.queue.add({ kind: 'agrandissement', zoneKey: zoneKeyOf(bookId, subjectId, zone), label: `agrandissement ${subjectId}/${zone}, graine ${seed}`, run: (c) => runUpscale(job, c, rt.deps) });
@@ -371,8 +385,7 @@ export async function depositEntry(query: URLSearchParams, req: http.IncomingMes
     if (rt.queue.busy(zoneKeyOf(bookId, subject, zone)).includes('generation')) throw new SubjectRefused('Une génération de cette zone est dans la file : attendre sa fin pour changer ses entrées.');
     const z = zoneImages(ctx).find((i) => i.zone === zone)!;
     const zk = zoneKind(z.size, ctx.trim);
-    if (!zk) throw new SubjectRefused(`La zone ${zone} n'est ni une page pleine ni une double page : pas de génération.`);
-    const render = renderSize(ctx.trim, zk);
+    const render = zoneRenderSize(z.size, ctx.trim);
     if (!render) throw new SubjectRefused(`Le format ${ctx.trim.widthIn} × ${ctx.trim.heightIn}" n'a pas de taille de rendu retenue (§13.2).`);
     const folder = illustrationFolder(config.dataRoot, bookId, subject, true)!;
     const target = path.join(folder, inputName(zone, kind as InputKind));
@@ -382,8 +395,18 @@ export async function depositEntry(query: URLSearchParams, req: http.IncomingMes
     await receive(req, tmp);
     const header = readPngHeaderOfFile(tmp);
     if (!header) throw new ImageRefused('Ce fichier n\'est pas un PNG.');
+    if (z.detoure && kind === 'rendu' && header.colorType !== COLOR_RGBA) throw new ImageRefused('Rendu sans transparence : une zone détourée demande un PNG RVBA (alpha du rendu Blender).');
     if (header.width !== render.width || header.height !== render.height) {
-      throw new ImageRefused(`${kind === 'rendu' ? 'Rendu' : 'Passe Mist'} en ${header.width} × ${header.height} px : ${sizeText(render)} attendus pour une ${ZONE_KIND_LABELS[zk]} en ${ctx.trim.widthIn} × ${ctx.trim.heightIn}".`);
+      throw new ImageRefused(`${kind === 'rendu' ? 'Rendu' : 'Passe Mist'} en ${header.width} × ${header.height} px : ${sizeText(render)} attendus pour cette zone (${ZONE_KIND_LABELS[zk]}) en ${ctx.trim.widthIn} × ${ctx.trim.heightIn}".`);
+    }
+    let warning: string | null = null;
+    if (z.detoure && kind === 'rendu') {
+      const fault = await renderAlphaFault(fs.readFileSync(tmp));
+      if (fault) throw new ImageRefused(fault);
+    }
+    if (kind === 'mist') {
+      const levels = await mistLevels(fs.readFileSync(tmp));
+      if (levels < MIST_MIN_LEVELS) warning = `Mist sans dégradé (${levels} niveaux distincts) : régler Start et Depth sur l'animal.`;
     }
     try {
       fs.renameSync(tmp, target);
@@ -394,7 +417,7 @@ export async function depositEntry(query: URLSearchParams, req: http.IncomingMes
     }
     tmp = null;
     clearCandidates(config.dataRoot, bookId, subject, zone);
-    return { deposited: { kind, size: { width: header.width, height: header.height } }, ...generateState(config, dir, subject, rt) };
+    return { deposited: { kind, size: { width: header.width, height: header.height }, warning }, ...generateState(config, dir, subject, rt) };
   } finally {
     depositing = false;
     if (tmp) fs.rmSync(tmp, { force: true });

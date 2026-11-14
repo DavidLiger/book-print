@@ -10,6 +10,8 @@ export class ContourRefused extends Error {}
 /** 50 % d'alpha : un pixel est opaque à partir de 128. */
 export const ALPHA_THRESHOLD = 128;
 export const SIMPLIFY_PX = 0.5;
+/** Un trou compte à partir de 0,5 % de la surface de l'image : en dessous, le polygone le comble (ED5). */
+export const HOLE_MIN_RATIO = 0.005;
 
 export interface Part {
   pixels: number;
@@ -26,6 +28,8 @@ export interface Contour {
   points: [number, number][];
   /** Parties opaques détachées de la plus grande, de la plus grande à la plus petite : découpées par le contour. */
   autresParties: Part[];
+  /** Trous de la plus grande partie (ED5), mêmes unités que `points` : découpés en règle pair-impair. Vide pour un détouré déposé sans trou. */
+  trous: [number, number][][];
 }
 
 /** Parties opaques, en 8-connexité. `mark` reçoit l'étiquette de chaque pixel (1, 2…), 0 pour un pixel transparent. */
@@ -212,7 +216,37 @@ export function contourOf(alpha: Uint8Array, width: number, height: number, epsi
   const points = epsilon > 0 ? simplify(traced, epsilon) : traced;
   // Une partie dans un trou de la plus grande reste dans le contour : elle n'est pas découpée, rien à signaler.
   const cut = order.slice(1).map((o) => o.p).filter((p) => !insidePolygon((p.gauche + p.droite) / 2, (p.haut + p.bas) / 2, traced));
-  return { width, height, seuil: ALPHA_THRESHOLD, points, autresParties: cut };
+  // Trous (ED5) : régions du fond cernées par la partie gardée, d'au moins HOLE_MIN_RATIO de l'image. Les îlots dans un trou sont perdus.
+  const hollow = new Uint8Array(width * height);
+  for (let i = 0; i < hollow.length; i++) hollow[i] = keep[i] ? 0 : 1;
+  const holeParts = label(hollow, width, height);
+  const trous: [number, number][][] = [];
+  const touching = new Set<number>();
+  for (let x = 0; x < width; x++) {
+    touching.add(holeParts.mark[x]!);
+    touching.add(holeParts.mark[(height - 1) * width + x]!);
+  }
+  for (let y = 0; y < height; y++) {
+    touching.add(holeParts.mark[y * width]!);
+    touching.add(holeParts.mark[y * width + width - 1]!);
+  }
+  const wanted = new Set<number>();
+  holeParts.parts.forEach((p, i) => {
+    if (!touching.has(i + 1) && p.pixels >= HOLE_MIN_RATIO * width * height) wanted.add(i + 1);
+  });
+  for (const id of wanted) {
+    const m = new Uint8Array(width * height);
+    let start = -1;
+    for (let i = 0; i < m.length; i++) {
+      if (holeParts.mark[i] === id) {
+        m[i] = 1;
+        if (start < 0) start = i;
+      }
+    }
+    const t = trace(m, width, height, start);
+    trous.push(epsilon > 0 ? simplify(t, epsilon) : t);
+  }
+  return { width, height, seuil: ALPHA_THRESHOLD, points, autresParties: cut, trous };
 }
 
 /** Place de l'image entière, centrée dans sa boîte, à la plus grande taille qui y tient (décision de David, ED2). */
@@ -228,7 +262,7 @@ export function containRect(box: Rect, image: { width: number; height: number })
 }
 
 /** Le contour ramené sur la page : l'image entière dans sa boîte, ses sommets en mm et en pourcentage de l'image. */
-export function outlineIn(box: Rect, contour: Pick<Contour, 'width' | 'height' | 'points'>): Outline {
+export function outlineIn(box: Rect, contour: Pick<Contour, 'width' | 'height' | 'points'> & { trous?: [number, number][][] }): Outline {
   const image = containRect(box, contour);
   const sx = (image.right - image.left) / contour.width;
   const sy = (image.bottom - image.top) / contour.height;
@@ -236,6 +270,7 @@ export function outlineIn(box: Rect, contour: Pick<Contour, 'width' | 'height' |
     image,
     points: contour.points.map(([x, y]) => [image.left + x * sx, image.top + y * sy]),
     percent: contour.points.map(([x, y]) => [(x / contour.width) * 100, (y / contour.height) * 100]),
+    ...(contour.trous && contour.trous.length > 0 ? { trous: contour.trous.map((t) => t.map(([x, y]): [number, number] => [(x / contour.width) * 100, (y / contour.height) * 100])) } : {}),
   };
 }
 

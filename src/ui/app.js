@@ -2248,6 +2248,7 @@ async function uploadEntry(kind, file) {
   gen.view = data;
   showGenerate();
   message.replaceChildren(el('p', `${kind === 'rendu' ? 'Rendu' : 'Passe Mist'} gardé : ${data.deposited.size.width} × ${data.deposited.size.height} px.`, 'bien'));
+  if (data.deposited.warning) message.append(el('p', data.deposited.warning, 'note'));
 }
 
 /** Style de la zone (IC2) : le choix propre de la zone, ou le style par défaut du livre, présélectionné. */
@@ -2333,7 +2334,7 @@ function fillReferenceSelect(view, selected) {
   if (selected) select.value = selected;
 }
 
-const STYLE_FIELDS = ['st-nom', 'st-description', 'st-prompt', 'st-negatif', 'st-denoise', 'st-poids', 'st-dosage', 'st-profondeur', 'st-canny', 'st-tile', 'st-tile-debut', 'st-tile-fin', 'st-ref-type', 'st-ref-droit', 'st-gris', 'st-ag-prompt', 'st-ag-negatif'];
+const STYLE_FIELDS = ['st-nom', 'st-description', 'st-prompt', 'st-negatif', 'st-denoise', 'st-poids', 'st-dosage', 'st-fond', 'st-profondeur', 'st-canny', 'st-tile', 'st-tile-debut', 'st-tile-fin', 'st-ref-type', 'st-ref-droit', 'st-gris', 'st-ag-prompt', 'st-ag-negatif'];
 
 function writeStyleForm(x) {
   const st = x?.state === 'ok' ? x.style : null;
@@ -2350,6 +2351,7 @@ function writeStyleForm(x) {
   $('st-denoise').value = String(st.denoise);
   $('st-poids').value = String(st.ipAdapterWeight);
   $('st-dosage').value = String(st.colorDosage);
+  $('st-fond').value = String(st.fondDetoure);
   $('st-profondeur').value = String(st.controlnet.depth.strength);
   $('st-canny').value = String(st.controlnet.canny.strength);
   $('st-tile').value = String(st.controlnet.tile.strength);
@@ -2398,6 +2400,7 @@ function readStyleForm() {
     ipAdapterWeight: n('st-poids'),
     controlnet: { depth: { strength: n('st-profondeur') }, canny: { strength: n('st-canny') }, tile: { strength: n('st-tile'), start: n('st-tile-debut'), end: n('st-tile-fin') } },
     colorDosage: n('st-dosage'),
+    fondDetoure: n('st-fond'),
     reference,
     upscale: { prompt: $('st-ag-prompt').value, negative: $('st-ag-negatif').value },
   };

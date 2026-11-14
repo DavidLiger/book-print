@@ -134,7 +134,9 @@ function changeRights(config: Config, value: z.infer<typeof rightsBody>): Json {
     if (!entry) throw new SubjectRefused(`Droit inconnu du registre : ${id}.`);
     if (!ILLUSTRATION_KINDS.includes(entry.kind)) throw new SubjectRefused(`${id} ne se rattache pas à une illustration.`);
   }
-  setIllustrationRights(config.dataRoot, bookId, subjectId, zone, [...new Set(rights)]);
+  const generated = ctx.subject.illustrations.some((i) => i.zone === zone && i.generation !== undefined);
+  const hasAiModel = rights.some((id) => registry.get(id)?.kind === 'modele-ia');
+  setIllustrationRights(config.dataRoot, bookId, subjectId, zone, [...new Set(rights)], generated || hasAiModel);
   return view(config, dir, subjectId);
 }
 

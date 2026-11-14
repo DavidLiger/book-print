@@ -212,7 +212,8 @@ check('droits : sans nom refusé', !rightsFileSchema.safeParse({ ...defaultRight
 {
   const image = { subject: 'alpha', zone: 'illustration', file: 'illustrations/alpha/illustration.png', rights: ['andika'], aiGenerated: true };
   check('droits : illustration complète acceptée', rightsFileSchema.safeParse({ ...defaultRights, illustrations: [image] }).success);
-  check('droits : aiGenerated faux refusé', !rightsFileSchema.safeParse({ ...defaultRights, illustrations: [{ ...image, aiGenerated: false }] }).success);
+  check('droits : aiGenerated faux accepté (ED5, image déposée à la main)', rightsFileSchema.safeParse({ ...defaultRights, illustrations: [{ ...image, aiGenerated: false }] }).success);
+  check('droits : aiGenerated absent refusé', !rightsFileSchema.safeParse({ ...defaultRights, illustrations: [{ subject: 'alpha', zone: 'illustration', file: 'illustrations/alpha/illustration.png', rights: ['andika'] }] }).success);
   check('droits : illustration en double refusée', !rightsFileSchema.safeParse({ ...defaultRights, illustrations: [image, image] }).success);
   check('droits : droit cité deux fois refusé', !rightsFileSchema.safeParse({ ...defaultRights, illustrations: [{ ...image, rights: ['a', 'a'] }] }).success);
 }

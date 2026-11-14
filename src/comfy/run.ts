@@ -4,10 +4,12 @@
 import fs from 'node:fs';
 import { storeIllustration } from '../data/illustration-store';
 import { cleanPng } from '../images/clean';
+import { contourOf, ContourRefused, type Contour } from '../images/contour';
 import type { Size } from '../images/crop';
 import type { Generation } from '../schema/subject';
 import { ComfyClient, ComfyError, executionError, type HistoryEntry, type ImageFile } from './client';
 import { correctColors } from './colors';
+import { alphaForOutput, fingerprint, flattenOnGray } from './detoure';
 import { keepImageChunks } from '../images/png';
 import { writePreview } from '../styles/files';
 import { generationGraph, upscaleFields } from '../styles/graph';
@@ -145,6 +147,8 @@ export interface GenerationJob {
   rendu: Buffer;
   mist: Buffer;
   renderSize: Size;
+  /** Zone détourée (ED5) : `rendu` est un RVBA, aplati sur ce gris avant l'envoi. */
+  detoure?: { fond: number };
   workflow: { entry: WorkflowEntry; graph: Graph };
   style: StyleRun;
 }
@@ -156,7 +160,8 @@ export async function runGeneration(job: GenerationJob, ctx: TaskContext, deps: 
   const { version } = await client.systemStats();
   if (ctx.cancelled()) throw new TaskCancelled('annulée avant son envoi');
   ctx.progress('dépôt du rendu et de la Mist');
-  const renduName = await client.upload(comfyInputName(bookId, subjectId, zone, 'rendu'), job.rendu);
+  const sentRendu = job.detoure ? await flattenOnGray(job.rendu, job.detoure.fond) : job.rendu;
+  const renduName = await client.upload(comfyInputName(bookId, subjectId, zone, 'rendu'), sentRendu);
   const mistName = await client.upload(comfyInputName(bookId, subjectId, zone, 'mist'), job.mist);
   const reference = await uploadReference(client, job.style);
   const { style } = job.style;
@@ -179,7 +184,7 @@ export async function runGeneration(job: GenerationJob, ctx: TaskContext, deps: 
     writeCacheFile(dir, generatedName(seed), image.png);
     ctx.progress(`${step} : correction des couleurs`);
     const correctionStart = deps.now().getTime();
-    const corrected = await correct(image.png, job.rendu, style.colorDosage);
+    const corrected = await correct(image.png, sentRendu, style.colorDosage);
     const correctionSeconds = Math.round((deps.now().getTime() - correctionStart) / 100) / 10;
     writeCacheFile(dir, correctedName(seed), corrected);
     candidates.push({ seed, generated: sha256(image.png), corrected: sha256(corrected), fields, seconds: Math.round((deps.now().getTime() - start) / 100) / 10, correctionSeconds });
@@ -192,6 +197,7 @@ export async function runGeneration(job: GenerationJob, ctx: TaskContext, deps: 
     dosage: style.colorDosage,
     workflow: { file: job.workflow.entry.file, date: job.workflow.entry.date, sha256: job.workflow.entry.sha256 },
     style: { id: job.style.id, sha256: job.style.sha256, upscale: style.upscale, rights: referenceRights(style) },
+    ...(job.detoure ? { detoure: { fond: job.detoure.fond, rendu: sha256(job.rendu), aplati: sha256(sentRendu) } } : {}),
     inputs: { rendu: sha256(job.rendu), mist: sha256(job.mist), reference },
     size: job.renderSize,
     candidates,
@@ -211,6 +217,8 @@ export interface UpscaleJob {
   corrected: Buffer;
   candidates: Candidates;
   output: Size;
+  /** Zone détourée (ED5) : le rendu RVBA et sa taille, dont l'alpha donne le contour de l'image finale. */
+  detoure?: { rendu: Buffer; renderSize: Size };
   workflows: { generation: WorkflowEntry; agrandissement: { entry: WorkflowEntry; graph: Graph } };
   /** Droits de l'image finale : ceux des deux workflows, la référence du style et les modèles 3D déjà rattachés à la zone. */
   rights: string[];
@@ -232,6 +240,21 @@ export async function runUpscale(job: UpscaleJob, ctx: TaskContext, deps: RunDep
   if (image.width !== job.output.width || image.height !== job.output.height) throw new ComfyError(`Image agrandie en ${image.width} × ${image.height} px, ${job.output.width} × ${job.output.height} attendus.`);
   ctx.progress('nettoyage et rangement');
   const cleaned = await cleanPng(image.png);
+  let contour: Contour | undefined;
+  let detoure: Generation['detoure'];
+  if (job.detoure) {
+    const cand = job.candidates.detoure;
+    if (!cand) throw new ComfyError('Candidats sans trace de détouré : relancer la génération.');
+    ctx.progress('alpha et contour');
+    const alpha = await alphaForOutput(job.detoure.rendu, job.detoure.renderSize, job.output);
+    try {
+      contour = contourOf(new Uint8Array(alpha.buffer, alpha.byteOffset, alpha.length), job.output.width, job.output.height);
+    } catch (e) {
+      if (e instanceof ContourRefused) throw new ComfyError(`Rendu RVBA inutilisable : ${e.message}`);
+      throw e;
+    }
+    detoure = { fond: cand.fond, rendu: cand.rendu, aplati: cand.aplati, alpha: fingerprint(alpha) };
+  }
   const generation: Generation = {
     date: deps.now().toISOString(),
     comfyuiVersion: version,
@@ -245,8 +268,9 @@ export async function runUpscale(job: UpscaleJob, ctx: TaskContext, deps: RunDep
     },
     fields: { generation: candidate.fields, agrandissement: fields },
     inputs: { rendu: job.candidates.inputs.rendu, mist: job.candidates.inputs.mist, reference: job.candidates.inputs.reference, generated: candidate.generated, corrected: candidate.corrected },
+    ...(detoure ? { detoure } : {}),
   };
-  storeIllustration(dataRoot, bookId, subjectId, zone, cleaned, { generation, rights: job.rights });
+  storeIllustration(dataRoot, bookId, subjectId, zone, cleaned, { generation, rights: job.rights, ...(contour ? { contour } : {}) });
   return `Image finale rangée : ${cleaned.width} × ${cleaned.height} px, graine ${seed}, ${mmss(deps.now().getTime() - start)} de calcul.`;
 }
 

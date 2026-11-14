@@ -24,7 +24,8 @@
     "test:mises-en-page": "tsx scripts/test-mises-en-page.ts",
     "test:texte-detoure": "tsx scripts/test-texte-detoure.ts",
     "test:editeur": "tsx scripts/test-editeur.ts",
-    "test:pret": "tsx scripts/test-pret.ts"
+    "test:pret": "tsx scripts/test-pret.ts",
+    "test:detoure": "tsx scripts/test-detoure.ts"
   },
   "keywords": [],
   "author": "",

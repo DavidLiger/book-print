@@ -266,8 +266,19 @@ function detoureMarkup(zone: LayoutZone, attrs: string, src: string): string {
   const o = zone.outline;
   if (!o) return `<img ${attrs} src="${src}" alt="">`;
   const r = zone.rect;
-  const polygon = o.percent.map(([x, y]) => `${Math.round(x * 1e4) / 1e4}% ${Math.round(y * 1e4) / 1e4}%`).join(',');
-  return `<div ${attrs}><img src="${src}" alt="" style="left:${mm(o.image.left - r.left)};top:${mm(o.image.top - r.top)};width:${mm(o.image.right - o.image.left)};height:${mm(o.image.bottom - o.image.top)};clip-path:polygon(${polygon})"></div>`;
+  const wMm = o.image.right - o.image.left;
+  const hMm = o.image.bottom - o.image.top;
+  // Sans trou : polygone en pourcentages. Avec trous : chemin pair-impair en px CSS (96 px par pouce), toujours vectoriel dans le PDF (ED5).
+  let clip: string;
+  if (o.trous && o.trous.length > 0) {
+    const cw = (wMm / 25.4) * 96;
+    const ch = (hMm / 25.4) * 96;
+    const sub = (pts: [number, number][]) => `M${pts.map(([x, y]) => `${Math.round(((x * cw) / 100) * 1e3) / 1e3} ${Math.round(((y * ch) / 100) * 1e3) / 1e3}`).join('L')}Z`;
+    clip = `path(evenodd,'${[o.percent, ...o.trous].map(sub).join('')}')`;
+  } else {
+    clip = `polygon(${o.percent.map(([x, y]) => `${Math.round(x * 1e4) / 1e4}% ${Math.round(y * 1e4) / 1e4}%`).join(',')})`;
+  }
+  return `<div ${attrs}><img src="${src}" alt="" style="left:${mm(o.image.left - r.left)};top:${mm(o.image.top - r.top)};width:${mm(wMm)};height:${mm(hMm)};clip-path:${clip}"></div>`;
 }
 
 function zoneMarkup(zone: LayoutZone, page: LayoutPage, style: Style, content: RenderContent, pictos: Record<string, string>, ranks: Map<string, number>): string {
