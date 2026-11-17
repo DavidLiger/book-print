@@ -262,7 +262,9 @@ function chainMarkup(zone: LayoutZone, page: LayoutPage, content: RenderContent,
     const text = cuts ? boxMarkup(chain, at === 0 ? 0 : cuts[at - 1]!, cuts[at]!) : '';
     return `<div class="colonne" data-cadre data-chaine="${esc(id)}" data-boite="${at}" style="left:${mm(left)};top:0;width:${mm(col)};height:${mm(height)}"><div class="flux" data-fill>${wrapFloats(box, shapes)}${text}</div></div>`;
   });
-  return `<div class="zone texte chaine" data-zone="${zone.id}" data-type="${zone.type}" style="${boxStyle(zone.rect)}">${boxes.join('')}</div>`;
+  // Corps d'une chaîne générée (MP6b) : en style en ligne, seulement s'il est donné ; sans lui, le HTML ne change pas.
+  const size = chain.corpsPt === undefined ? '' : `;font-size:${chain.corpsPt}pt`;
+  return `<div class="zone texte chaine" data-zone="${zone.id}" data-type="${zone.type}" style="${boxStyle(zone.rect)}${size}">${boxes.join('')}</div>`;
 }
 
 /** Détouré (ED2, spec §24.6) : l'image RVB entière, centrée dans sa boîte, découpée par son contour. Sans contour, l'aplat remplit la boîte. */

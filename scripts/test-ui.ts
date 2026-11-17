@@ -18,7 +18,7 @@ import { createComfyRuntime } from '../src/server/comfy-actions';
 import { check, finish } from './test-lib';
 
 const SIZES = [{ width: 1920, height: 950 }, { width: 1366, height: 650 }];
-const STEP_IDS = ['livre', 'prix', 'collection', 'gabarits', 'droits', 'workflows', 'styles', 'sujets', 'livre-complet'];
+const STEP_IDS = ['livre', 'prix', 'collection', 'gabarits', 'droits', 'workflows', 'styles', 'sujets', 'livre-complet', 'export'];
 
 const glbRoot = makeGlbi();
 const parent = tempDir();
@@ -73,9 +73,9 @@ const statesText = async () => (await tabs()).map((t) => t.sign).join();
 await open();
 {
   const all = await tabs();
-  check('menu : neuf étapes numérotées, dans l’ordre (Livre complet, MP6a)', all.map((t) => t.id).join() === STEP_IDS.join() && all.every((t, i) => t.text.startsWith(String(i + 1))), all);
+  check('menu : dix étapes numérotées, dans l’ordre (Export, MP6b)', all.map((t) => t.id).join() === STEP_IDS.join() && all.every((t, i) => t.text.startsWith(String(i + 1))), all);
   check('ouverture : première étape non validée', (await current()) === 'livre');
-  check('départ : Livre à faire, le reste verrouillé', (await statesText()) === 'à faire,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée', await statesText());
+  check('départ : Livre à faire, le reste verrouillé', (await statesText()) === 'à faire,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée', await statesText());
   check('étape verrouillée : motif lisible sur l’onglet', (await tab('prix')).text.includes('Valider d\'abord « Livre »'), await tab('prix'));
   await page.click('#etapes button[data-step="prix"]', { force: true });
   check('étape verrouillée : ne s’ouvre pas', (await current()) === 'livre' && await page.isHidden('#prix'));
@@ -266,7 +266,7 @@ await open();
   await page.click('#v-scenarios');
   await page.click('#prix-scenarios button:has-text("Ne plus retenir")');
   await untilTab('gabarits', 'verrouillée');
-  check('étape redevenue non validée : la suite se reverrouille', (await statesText()) === 'validée,à faire,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée', await statesText());
+  check('étape redevenue non validée : la suite se reverrouille', (await statesText()) === 'validée,à faire,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée', await statesText());
   check('reverrouillage : aucune donnée perdue', fs.existsSync(style));
   await page.reload();
   await until(`document.querySelector('#etapes li[data-state="a-faire"]') !== null`);
@@ -274,7 +274,7 @@ await open();
   await page.click('#v-scenarios');
   await page.click('#prix-scenarios button:has-text("Retenir")');
   await untilTab('gabarits', 'validée');
-  check('scénario de nouveau retenu : le parcours revient', (await statesText()) === 'validée,validée,validée,validée,alerte,validée,alerte,à faire,erreur', await statesText());
+  check('scénario de nouveau retenu : le parcours revient', (await statesText()) === 'validée,validée,validée,validée,alerte,validée,alerte,à faire,erreur,verrouillée', await statesText());
 }
 
 // Sujet réel, de la création à « relu »
@@ -1026,7 +1026,7 @@ await page.unrouteAll({ behavior: 'ignoreErrors' });
   await open();
   await until(`document.querySelector('#etapes li[data-state="validee"]') !== null`);
   const labels = await page.evaluate(`[...document.querySelectorAll('#etapes .nom-signe')].map((e) => [e.getAttribute('role'), e.getAttribute('aria-label'), e.textContent])`) as string[][];
-  check('signes : image nommée, texte visible', labels.length === 9 && labels.every(([role, label, text]) => role === 'img' && !!label && !!text), labels);
+  check('signes : image nommée, texte visible', labels.length === 10 && labels.every(([role, label, text]) => role === 'img' && !!label && !!text), labels);
 }
 
 // Configuration invalide : le menu reste affiché et dit quoi corriger.

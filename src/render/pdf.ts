@@ -109,3 +109,51 @@ export function captureQr(build: HtmlBuilder, chains: Record<string, ChainText>)
     4,
   );
 }
+
+/** Une partie du livre à imprimer (MP6b) : son HTML (celui de son aperçu), ses chaînes, et si son QR doit être capturé (C9). */
+export interface PartInput {
+  build: HtmlBuilder;
+  chains: Record<string, ChainText>;
+  qr: boolean;
+}
+export interface PartRender extends Rendered, Flowed {
+  capture: QrCapture | null;
+}
+
+/**
+ * Le livre entier (MP6b) : chaque partie dans le même Chromium, l'une après l'autre, avec le HTML de son aperçu (coupé d'abord s'il a des chaînes),
+ * mesurée puis imprimée ; le cartouche du QR capturé à 4 fois la définition dans une seconde page. Un seul Chromium pour tout le livre.
+ */
+export async function renderParts(items: PartInput[], trim: Trim): Promise<PartRender[]> {
+  const size = pageSize(trim);
+  const { chromium } = await import('playwright');
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.emulateMedia({ media: 'print' });
+    const zoom = await browser.newPage({ deviceScaleFactor: 4 });
+    await zoom.emulateMedia({ media: 'print' });
+    const out: PartRender[] = [];
+    for (const item of items) {
+      await load(page, item.build());
+      const flowed = hasChains(item.chains) ? await flowIn(page, item.build, item.chains) : { html: item.build(), flow: {} };
+      // Une page sans texte (page de garde, pages vides) ne charge pas toutes ses polices : C7 dirait « police non chargée ». Toutes les polices
+      // du HTML final sont chargées avant la mesure ; une police chargée sans être employée n'entre pas dans le PDF.
+      await page.evaluate('Promise.all(Array.from(document.fonts).map((f) => f.load())).then(() => true)');
+      const measures = (await page.evaluate(MEASURE_SCRIPT)) as Measures;
+      const pdf = await page.pdf({ width: `${size.widthIn}in`, height: `${size.heightIn}in`, printBackground: true, preferCSSPageSize: true });
+      let capture: QrCapture | null = null;
+      if (item.qr) {
+        await load(zoom, flowed.html);
+        const cartouche = await zoom.$('.qr');
+        const svg = await zoom.$('.qr svg[data-qr]');
+        const box = svg ? await svg.boundingBox() : null;
+        if (cartouche && box) capture = { sideMm: (Math.min(box.width, box.height) * 25.4) / 96, png: await cartouche.screenshot({ type: 'png' }) };
+      }
+      out.push({ pdf, measures, chromium: browser.version(), ...flowed, capture });
+    }
+    return out;
+  } finally {
+    await browser.close();
+  }
+}

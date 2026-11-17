@@ -26,7 +26,8 @@
     "test:editeur": "tsx scripts/test-editeur.ts",
     "test:pret": "tsx scripts/test-pret.ts",
     "test:detoure": "tsx scripts/test-detoure.ts",
-    "test:livre": "tsx scripts/test-livre.ts"
+    "test:livre": "tsx scripts/test-livre.ts",
+    "test:export": "tsx scripts/test-export.ts"
   },
   "keywords": [],
   "author": "",

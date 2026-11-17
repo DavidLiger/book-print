@@ -374,3 +374,11 @@ button[aria-pressed="true"] { background: var(--action); color: var(--carte); }
 .carte .entete-bloc .etat, .carte .texte-bloc .etat { color: var(--doux); }
 .carte .entete-bloc[data-state="valide"] .etat, .carte .texte-bloc[data-state="valide"] .etat { color: var(--bien); }
 .carte .entete-bloc[data-state="a-reprendre"] .etat, .carte .texte-bloc[data-state="a-reprendre"] .etat { color: var(--erreur); }
+
+/* MP6b : rapport de l'export, dans son cadre. */
+#export .rapport { white-space: pre-wrap; font-size: 12px; margin: 0; }
+#ex-resultat p { margin: 0 0 4px; }
+/* Le cadre du glossaire reste dans sa colonne : un fieldset ne rétrécit pas sous son contenu sans min-width: 0. */
+#export fieldset { min-width: 0; }
+#ex-g-depot { flex: 1 1 100%; min-width: 0; }
+#ex-g-depot input { max-width: 100%; }

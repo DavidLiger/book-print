@@ -18,6 +18,8 @@ export interface ChainText {
   cadres: string[];
   lettrine: boolean;
   paragraphs: ChainParagraph[];
+  /** Corps d'une chaîne générée (MP6b) ; absent : celui du texte courant. */
+  corpsPt?: number;
 }
 /** Fin (exclue) de la tranche de jetons de chaque boîte, dans l'ordre des boîtes ; et les mots restés après la dernière boîte (C12). */
 export interface ChainCut {

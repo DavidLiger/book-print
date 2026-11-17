@@ -42,6 +42,8 @@ const good = (): ParcoursFacts => ({
   subjects: [goodSubject()],
   // MP6a : un livre complet sans faute.
   livre: { parts: [{ kind: 'page', id: 'titre', place: 'debut', firstPage: 1, pages: 1, side: 'droite', start: 'droite', status: null, errors: [] }], total: 24, notes: false, errors: [], alerts: [] },
+  // MP6b : un export réussi, rien de changé depuis.
+  export: { result: { ok: true, date: '2026-11-17T00:00:00.000Z', errors: 0 }, fresh: true },
 });
 type Change = (f: ParcoursFacts) => void;
 const run = (change: Change = () => {}) => {
@@ -59,7 +61,7 @@ const expectStep = (name: string, id: string, change: Change, state: string, rea
 // Registre
 const bookSteps = STEPS.filter((s) => s.scope === 'livre');
 const subjectSteps = STEPS.filter((s) => s.scope === 'sujet');
-check('registre : Livre, Prix, Collection, Gabarits, Droits, Workflows, Styles, Sujets, Livre complet, dans cet ordre', bookSteps.map((s) => s.id).join() === 'livre,prix,collection,gabarits,droits,workflows,styles,sujets,livre-complet');
+check('registre : Livre, Prix, Collection, Gabarits, Droits, Workflows, Styles, Sujets, Livre complet, Export, dans cet ordre', bookSteps.map((s) => s.id).join() === 'livre,prix,collection,gabarits,droits,workflows,styles,sujets,livre-complet,export');
 check('registre : Styles exige Workflows (IC2)', STEPS.find((s) => s.id === 'styles')!.requires.join() === 'workflows');
 check('registre : Workflows exige Droits', STEPS.find((s) => s.id === 'workflows')!.requires.join() === 'droits');
 check('registre : Prix, Collection et Gabarits dépendent de l’étape précédente', bookSteps.slice(0, 4).every((s, i) => s.requires.join() === (bookSteps[i - 1]?.id ?? '')));
@@ -69,13 +71,13 @@ check('registre : second niveau, Mise en page d’abord, Illustrations entre Rel
 check('registre : Recherche exige Mise en page (ED1)', subjectSteps[1]!.requires.join() === 'sujet-mise-en-page');
 check('registre : Illustrations exige Recherche', subjectSteps[3]!.requires.join() === 'sujet-recherche');
 check('registre : Aperçu exige Recherche, pas Relecture', subjectSteps[4]!.requires.join() === 'sujet-recherche');
-check('numéros 1 à 9', run().steps.map((s) => s.number).join() === '1,2,3,4,5,6,7,8,9');
+check('numéros 1 à 10', run().steps.map((s) => s.number).join() === '1,2,3,4,5,6,7,8,9,10');
 check('registre : Prêt exige Relecture, Illustrations et Aperçu (ED6)', subjectSteps[5]!.requires.join() === 'sujet-relecture,sujet-illustrations,sujet-apercu');
 check('second niveau : numéroté à part', run().subjects[0]!.steps.map((s) => s.number).join() === '1,2,3,4,5,6');
 
 // Tout au vert
-check('tout est validé', states() === 'validee,validee,validee,validee,validee,validee,validee,validee,validee', states());
-check('tout validé : ouverture sur la dernière étape', run().open === 'livre-complet');
+check('tout est validé', states() === 'validee,validee,validee,validee,validee,validee,validee,validee,validee,validee', states());
+check('tout validé : ouverture sur la dernière étape', run().open === 'export');
 check('tout validé : aucun motif', run().steps.every((s) => s.reasons.length === 0));
 
 // Livre
@@ -88,7 +90,7 @@ expectStep('Livre : print-book.json absent, à faire', 'livre', (f) => { f.folde
 expectStep('Livre : print-book.json invalide, erreur', 'livre', (f) => { f.folder.printBook = 'invalide'; f.folder.printBookError = 'pageBudget'; }, 'erreur', 'pageBudget');
 expectStep('Livre : dossier refusé, erreur', 'livre', (f) => { f.folder.error = 'pas un dossier réel'; }, 'erreur', 'dossier réel');
 expectStep('Livre : alerte de lecture', 'livre', (f) => { f.book!.alerts = ['a']; }, 'alerte', '1 alerte de lecture');
-check('Livre : une alerte ne verrouille pas la suite', states((f) => { f.book!.alerts = ['a']; }) === 'alerte,validee,validee,validee,validee,validee,validee,validee,validee');
+check('Livre : une alerte ne verrouille pas la suite', states((f) => { f.book!.alerts = ['a']; }) === 'alerte,validee,validee,validee,validee,validee,validee,validee,validee,validee');
 
 // Prix
 expectStep('Prix : aucun scénario retenu, à faire', 'prix', (f) => { f.pricing.retained = false; }, 'a-faire', 'Retenir un scénario');
@@ -96,7 +98,7 @@ expectStep('Prix : pricing.json invalide, erreur', 'prix', (f) => { f.pricing.er
 expectStep('Prix : scénario retenu en erreur', 'prix', (f) => { f.pricing.retainedErrors = ['Format absent']; }, 'erreur', 'Scénario retenu : Format absent');
 expectStep('Prix : écart avec print-book.json, alerte', 'prix', (f) => { f.pricing.deviation = ['Pages : 44 et 46']; }, 'alerte', 'Pages');
 expectStep('Prix : print-book.json illisible, alerte', 'prix', (f) => { f.pricing.bookAlert = 'écart non contrôlé'; }, 'alerte', 'écart non contrôlé');
-check('Prix : une alerte ne verrouille pas la suite', states((f) => { f.pricing.deviation = ['x']; }) === 'validee,alerte,validee,validee,validee,validee,validee,validee,validee');
+check('Prix : une alerte ne verrouille pas la suite', states((f) => { f.pricing.deviation = ['x']; }) === 'validee,alerte,validee,validee,validee,validee,validee,validee,validee,validee');
 
 // Collection
 expectStep('Collection : absente, à faire', 'collection', (f) => { f.collection.exists = false; }, 'a-faire', 'Créer la collection');
@@ -149,13 +151,13 @@ check('Illustrations : sans image, Sujets reste validé', step('sujets', withIma
 
 // Verrouillage et réouverture
 const noBook: Change = (f) => { f.book = null; };
-check('verrouillage : tout après Livre', states(noBook) === 'a-faire,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee', states(noBook));
+check('verrouillage : tout après Livre', states(noBook) === 'a-faire,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee', states(noBook));
 check('verrouillage : le motif nomme la première étape à valider', step('gabarits', noBook).reasons[0] === 'Valider d\'abord « Livre ».' && step('prix', noBook).reasons[0] === 'Valider d\'abord « Livre ».');
 check('verrouillage : libellé', step('prix', noBook).stateLabel === 'verrouillée');
 const noScenario: Change = (f) => { f.pricing.retained = false; };
-check('étape redevenue non validée : les suivantes se reverrouillent', states(noScenario) === 'validee,a-faire,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee', states(noScenario));
+check('étape redevenue non validée : les suivantes se reverrouillent', states(noScenario) === 'validee,a-faire,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee', states(noScenario));
 check('reverrouillage : Mises en page renvoie à Prix', step('gabarits', noScenario).reasons[0] === 'Valider d\'abord « Prix ».');
-check('une erreur verrouille aussi la suite', states((f) => { f.pricing.error = 'x'; }) === 'validee,erreur,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee');
+check('une erreur verrouille aussi la suite', states((f) => { f.pricing.error = 'x'; }) === 'validee,erreur,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee,verrouillee');
 check('collection présente et prix non validé : Collection reste verrouillée', step('collection', noScenario).state === 'verrouillee');
 check('réouverture : première étape non validée, Livre', run(noBook).open === 'livre');
 check('réouverture : première étape non validée, Prix', run(noScenario).open === 'prix');
@@ -209,8 +211,14 @@ check('Prêt : non marqué, des erreurs de contrôle ne passent pas l\'étape en
   const custom: StepDef = { id: 'sujet-texte', label: 'Texte', scope: 'sujet', requires: [], evaluate: (_f, s) => ({ state: 'a-faire', reasons: [s?.id ?? 'x'] }) };
   const parcours = computeParcours(good(), [...STEPS.filter((s) => s.scope === 'livre'), custom]);
   check('sujet : calculé pour chaque sujet, hors des étapes du livre', parcours.subjects[0]!.steps[0]!.reasons[0] === 'alpha' && parcours.steps.every((s) => s.scope === 'livre'));
-  check('sujet : ne change pas l’ouverture du livre', parcours.open === 'livre-complet');
+  check('sujet : ne change pas l’ouverture du livre', parcours.open === 'export');
 }
+// Export (MP6b) : exige Livre complet ; à faire sans export, en erreur après un export refusé, à refaire si un fichier a changé depuis.
+expectStep('Export : aucun export, à faire', 'export', (f) => { f.export = { result: null, fresh: false }; }, 'a-faire', 'Exporter le livre');
+expectStep('Export : dernier export refusé, erreur', 'export', (f) => { f.export = { result: { ok: false, date: '2026-11-17T00:00:00.000Z', errors: 2 }, fresh: true }; }, 'erreur', '2 erreurs');
+expectStep('Export : un fichier a changé depuis, à refaire', 'export', (f) => { f.export = { result: { ok: true, date: '2026-11-17T00:00:00.000Z', errors: 0 }, fresh: false }; }, 'a-faire', 'a changé', 'à refaire');
+expectStep('Export : résultat illisible, à refaire', 'export', (f) => { f.export = { result: 'illisible', fresh: false }; }, 'a-faire', 'illisible', 'à refaire');
+expectStep('Export : Livre complet en erreur, verrouillée', 'export', (f) => { f.livre!.errors.push('C2, 23 pages'); }, 'verrouillee', 'Livre complet', 'verrouillée');
 check('requires inconnu : verrouillée, sans planter', computeParcours(good(), [{ id: 'a', label: 'A', scope: 'livre', requires: ['rien'], evaluate: () => ({ state: 'validee', reasons: [] }) }]).steps[0]!.state === 'verrouillee');
 
 // Lecture des faits sur des fichiers
@@ -445,7 +453,7 @@ const post = (body: unknown, h: Record<string, string> = headers) => request(por
 
 const reply = await post({ dir: BOOK_DIR });
 const view = JSON.parse(reply.body);
-check('route : étapes et ouverture', reply.status === 200 && view.steps.length === 9 && view.open === 'workflows' && view.steps[5].reasons.join().includes('Déposer le workflow de génération') && view.steps[3].stateLabel === 'validée' && view.subjects.length === 1 && view.subjects[0].steps.length === 6, view);
+check('route : étapes et ouverture', reply.status === 200 && view.steps.length === 10 && view.open === 'workflows' && view.steps[5].reasons.join().includes('Déposer le workflow de génération') && view.steps[3].stateLabel === 'validée' && view.subjects.length === 1 && view.subjects[0].steps.length === 6, view);
 check('route : livre non choisi', JSON.parse((await post({ dir: null })).body).open === 'livre');
 check('route : GET refusé', (await request(port, { method: 'GET', path: '/api/parcours', headers })).status === 405);
 const { 'x-book-print': _h, ...noHeader } = headers;

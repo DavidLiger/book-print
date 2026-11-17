@@ -884,7 +884,26 @@ const Editeur = (() => {
           });
         })));
       }
-      box.append(node('p', 'Paragraphes', 'titre-liste'));
+      // MP6b : texte généré (sources, crédits, glossaire), pour un modèle ou une page du livre ; son corps ; pas de paragraphes.
+      if (config.texteFixe) {
+        box.append(field('Texte généré', selectInput([['', 'aucun'], ['sources', 'sources'], ['credits', 'crédits'], ['glossaire', 'glossaire']], c.genere ?? '', (v) => change((chain) => {
+          if (!v) {
+            delete chain.genere;
+            delete chain.corpsPt;
+            if (!chain.paragraphes || chain.paragraphes.length === 0) chain.paragraphes = [{ id: 'p1', intertitre: false, maxChars: 200 }];
+          } else {
+            chain.genere = v;
+            chain.paragraphes = [];
+          }
+        }))));
+        if (c.genere) {
+          box.append(field('Corps (pt)', numberInput(c.corpsPt, 0.5, (v) => change((chain) => {
+            if (v === undefined) delete chain.corpsPt;
+            else chain.corpsPt = v;
+          }))));
+        }
+      }
+      if (!c.genere) box.append(node('p', 'Paragraphes', 'titre-liste'));
       const table = node('table');
       const head = node('tr');
       for (const t of ['§', 'Intertitre', 'Caractères', 'Intertitre, car.', '']) head.append(node('th', t));
@@ -929,15 +948,17 @@ const Editeur = (() => {
         row.append(td(pid), td(inter), td(max), td(hmax), actions);
         table.append(row);
       });
-      box.append(table);
+      if (!c.genere) box.append(table);
       const buttons = node('div', undefined, 'boutons');
-      buttons.append(
+      if (!c.genere) buttons.append(
         small('Ajouter un paragraphe', 'Ajouter un paragraphe', () => change((chain) => {
           const used = new Set(chain.paragraphes.map((q) => q.id));
           let n = 1;
           while (used.has(`p${n}`)) n++;
           chain.paragraphes.push({ id: `p${n}`, intertitre: false, maxChars: 200 });
         })),
+      );
+      buttons.append(
         small('Supprimer la chaîne', 'Supprimer la chaîne', () => {
           const doc = E.clone(ed.doc);
           for (const e of doc.elements) {

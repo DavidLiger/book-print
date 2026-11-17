@@ -19,6 +19,8 @@ export interface PdfImage {
   heightPx: number;
   filter: string;
   page: number;
+  /** Octets du flux de l'image dans le PDF (MP6b : poids page par page). */
+  bytes: number;
 }
 export interface PdfFacts {
   sizeBytes: number;
@@ -102,7 +104,8 @@ function walk(ctx: PDFContext, res: PDFDict | undefined, page: number, seen: Set
       if (d.has(nom('SMask'))) facts.transparency.push({ kind: '/SMask sur une image', page });
       if (d.has(nom('Mask'))) facts.transparency.push({ kind: '/Mask sur une image', page });
       const filter = d.get(nom('Filter'));
-      facts.images.push({ widthPx: numberOf(ctx, d.get(nom('Width'))) ?? 0, heightPx: numberOf(ctx, d.get(nom('Height'))) ?? 0, filter: filter ? String(ctx.lookup(filter)) : 'aucun', page });
+      const stream = ctx.lookup(objects!.get(key)) as { contents?: Uint8Array } | undefined;
+      facts.images.push({ widthPx: numberOf(ctx, d.get(nom('Width'))) ?? 0, heightPx: numberOf(ctx, d.get(nom('Height'))) ?? 0, filter: filter ? String(ctx.lookup(filter)) : 'aucun', page, bytes: stream?.contents?.length ?? 0 });
     } else if (subtype === '/Form') {
       const group = dictOf(ctx, d.get(nom('Group')));
       if (group && String(group.get(nom('S'))) === '/Transparency') facts.transparency.push({ kind: 'groupe /S /Transparency (Form XObject)', page });

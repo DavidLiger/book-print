@@ -4,6 +4,10 @@
 import { z } from 'zod';
 import { livreFacts } from '../book/facts';
 import { NOTES_MODEL } from '../book/plan';
+import { exportBlockers, exportBook, exportName, ExportRefused, isFresh, readExportResult } from '../book/export';
+import { glossaryPrompt, GlossaryRefused, readGlossary, validateGlossary, writeGlossary } from '../book/generated';
+import fs from 'node:fs';
+import path from 'node:path';
 import { BookPageRefused, checkNewPageId, deleteBookPage, movePart, writeNewBookPage } from '../data/book-pages';
 import { readCollection } from '../data/collection';
 import { readPrintBook } from '../data/pricing-file';
@@ -11,7 +15,7 @@ import { readPlan, SubjectRefused } from '../data/subject-file';
 import { fromV1 } from '../layout/from-v1';
 import { formatLabel, formatOf, isLayout, placeMiseEnPage, sameFormat } from '../layout/model';
 import { bookPageLayoutSchema, type Layout } from '../layout/schema';
-import { bookPageContext, bookPageHtml } from '../render/book-page';
+import { bookPageContext, bookPagePage } from '../render/book-page';
 import { templateContent } from '../render/gabarit';
 import { applyBookFiche, RenderRefused, renderHtml } from '../render/html';
 import { subjectContext, subjectPage } from '../render/subject';
@@ -38,10 +42,54 @@ const asRefusal = <T>(f: () => T): T => {
   try {
     return f();
   } catch (e) {
-    if (e instanceof BookPageRefused) throw new SubjectRefused(e.message);
+    if (e instanceof BookPageRefused || e instanceof GlossaryRefused || e instanceof ExportRefused) throw new SubjectRefused(e.message);
     throw e;
   }
 };
+
+const glossaryBody = z.strictObject({ dir: z.string(), fichier: z.unknown() });
+
+/** Étape « Export » (MP6b) : le dernier export, sa fraîcheur, son rapport ; ce qui bloquerait l'export ; l'état du glossaire. */
+function exportState(config: Config, dir: string): Json {
+  const read = reading(config, dir);
+  const { book, error } = readPrintBook(config.dataRoot, read.bookId);
+  if (!book) throw new SubjectRefused(error ?? `Dossier du livre absent : ${read.bookId}/.`);
+  const result = readExportResult(config.dataRoot, book);
+  const fresh = result !== null && result !== 'illisible' && isFresh(config.dataRoot, book.bookId, result.date);
+  const reportFile = path.join(config.dataRoot, book.bookId, 'export', exportName(book, 'controle.md'));
+  const report = fs.existsSync(reportFile) ? fs.readFileSync(reportFile, 'utf8') : null;
+  const glossary = readGlossary(config.dataRoot, book.bookId);
+  return {
+    bookId: book.bookId,
+    result,
+    fresh,
+    report,
+    blockers: exportBlockers(livreFacts(config.dataRoot, read.bookId, read, config.glbRoot)),
+    glossaire: { state: glossary.state, termes: 'file' in glossary ? glossary.file.termes.length : 0, error: glossary.state === 'invalide' ? glossary.error : null },
+    files: { pdf: `${book.bookId}/export/${exportName(book, 'interieur.pdf')}`, report: `${book.bookId}/export/${exportName(book, 'controle.md')}` },
+  };
+}
+
+let exporting = false;
+
+async function runExport(config: Config, dir: string): Promise<Json> {
+  if (exporting) throw new SubjectRefused('Un export est déjà en cours.');
+  exporting = true;
+  try {
+    const read = reading(config, dir);
+    let outcome;
+    try {
+      outcome = await exportBook(config.dataRoot, config.glbRoot, read);
+    } catch (e) {
+      if (e instanceof ExportRefused) throw new SubjectRefused(e.message);
+      throw e;
+    }
+    const { markdown: _markdown, ...rest } = outcome;
+    return { outcome: rest, ...exportState(config, dir) };
+  } finally {
+    exporting = false;
+  }
+}
 
 function state(config: Config, dir: string): Json {
   const read = reading(config, dir);
@@ -86,6 +134,27 @@ function addPage(config: Config, body: z.infer<typeof addBody>, now: Date): Json
 }
 
 export const BOOK_ACTIONS: Record<string, (body: unknown, config: Config) => Json | Promise<Json>> = {
+  '/api/export/state': (body, config) => exportState(config, parse(dirBody, body).dir),
+  '/api/export/lancer': (body, config) => runExport(config, parse(dirBody, body).dir),
+  '/api/glossaire/prompt': (body, config) => {
+    const read = reading(config, parse(dirBody, body).dir);
+    const { book, error } = readPrintBook(config.dataRoot, read.bookId);
+    if (!book) throw new SubjectRefused(error ?? `Dossier du livre absent : ${read.bookId}/.`);
+    return { prompt: glossaryPrompt(config.dataRoot, book, readPlan(config.dataRoot, book)) };
+  },
+  '/api/glossaire/import': (body, config) => {
+    const b = parse(glossaryBody, body);
+    const read = reading(config, b.dir);
+    const { book, error } = readPrintBook(config.dataRoot, read.bookId);
+    if (!book) throw new SubjectRefused(error ?? `Dossier du livre absent : ${read.bookId}/.`);
+    asRefusal(() => writeGlossary(config.dataRoot, book, b.fichier));
+    return exportState(config, b.dir);
+  },
+  '/api/glossaire/valider': (body, config) => {
+    const { dir } = parse(dirBody, body);
+    asRefusal(() => validateGlossary(config.dataRoot, reading(config, dir).bookId, new Date()));
+    return exportState(config, dir);
+  },
   '/api/livre/state': (body, config) => state(config, parse(dirBody, body).dir),
   '/api/livre/ajouter': (body, config) => addPage(config, parse(addBody, body), new Date()),
   '/api/livre/deplacer': (body, config) => {
@@ -104,7 +173,7 @@ export const BOOK_ACTIONS: Record<string, (body: unknown, config: Config) => Jso
 export async function bookPartHtml(dir: string | null, kind: string | null, id: string | null, config: Config): Promise<string> {
   if (dir === null || id === null || !['page', 'sujet', 'notes'].includes(kind ?? '')) throw new BadSubjectRequest('dir, kind (page, sujet ou notes) et id attendus.');
   const read = reading(config, dir);
-  if (kind === 'page') return bookPageHtml(bookPageContext(config.dataRoot, read.bookId, slugSchema.parse(id), read, config.glbRoot));
+  if (kind === 'page') return (await bookPagePage(bookPageContext(config.dataRoot, read.bookId, slugSchema.parse(id), read, config.glbRoot))).html;
   if (kind === 'sujet') return (await subjectPage(subjectContext(config.dataRoot, read.bookId, slugSchema.parse(id), read.scenes, qrSourceOf(config, read)))).html;
   // La page de notes : le modèle livré 1N, posé à sa vraie page, sur le côté de cette page (le modèle est symétrique).
   const { book } = readPrintBook(config.dataRoot, read.bookId);

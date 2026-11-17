@@ -673,6 +673,37 @@
       </div>
       </div>
     </section>
+    <section id="export" class="panneau" aria-labelledby="t-export" hidden>
+      <div class="tete">
+        <h2 id="t-export">Export</h2>
+        <p id="ex-etat" class="note"></p>
+        <button id="ex-recharger" type="button" class="secondaire">Recharger</button>
+      </div>
+      <div id="ex-message"></div>
+      <div class="colonnes">
+        <div class="colonne">
+          <div class="barre">
+            <button id="ex-exporter" type="button">Exporter le livre</button>
+            <span id="ex-progression" class="note"></span>
+          </div>
+          <div id="ex-resultat" class="liste" aria-label="Résultat du dernier export"></div>
+          <fieldset>
+            <legend>Glossaire</legend>
+            <p id="ex-glossaire" class="note"></p>
+            <div class="barre">
+              <button id="ex-g-preparer" type="button" class="secondaire petit">Préparer le glossaire</button>
+              <label id="ex-g-depot" class="depot" for="ex-g-fichier">Déposer glossaire.json ici, ou le choisir <input id="ex-g-fichier" type="file" accept=".json,application/json"></label>
+              <button id="ex-g-valider" type="button" class="secondaire petit">Valider le glossaire</button>
+            </div>
+            <p id="ex-g-copie" class="note"></p>
+          </fieldset>
+        </div>
+        <div class="colonne">
+          <p class="note">Rapport du dernier export</p>
+          <pre id="ex-rapport" class="liste rapport"></pre>
+        </div>
+      </div>
+    </section>
   </main>
   <!-- Un seul onglet actif (LC1, comme le studio) : cet onglet est mis en veille quand un autre se connecte. -->
   <dialog id="veille" class="veille" aria-labelledby="veille-titre">

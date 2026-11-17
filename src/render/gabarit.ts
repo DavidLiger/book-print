@@ -43,12 +43,18 @@ export function fillerHeadings(template: MiseEnPage): Record<string, string> {
   return Object.fromEntries(zonesOf(template).flatMap((z) => (z.headingMaxChars === undefined ? [] : [[z.id, fillerText(z.headingMaxChars)]])));
 }
 
+/** Remplissage d'une chaîne générée dans un modèle (MP6b). */
+export const GENERATED_FILLER_CHARS = 400;
+
 /** Chaînes au texte de remplissage (ED2) : chaque paragraphe à son `maxChars`, chaque intertitre à son `headingMaxChars`. */
 export function fillerChains(template: MiseEnPage): Record<string, ChainText> {
   return Object.fromEntries(
     chainsOf(template).map((c) => [
       c.id,
-      { cadres: c.cadres, lettrine: c.lettrine === true, paragraphs: c.paragraphes.map((p) => ({ id: p.id, heading: p.intertitre ? fillerText(p.headingMaxChars!) : null, text: fillerText(p.maxChars) })) },
+      c.genere !== undefined
+        ? // Chaîne générée (MP6b) : un paragraphe de remplissage dans un modèle ; le vrai texte vient des données dans une page du livre.
+          { cadres: c.cadres, lettrine: c.lettrine === true, paragraphs: [{ id: 'genere', heading: c.genere, text: fillerText(GENERATED_FILLER_CHARS) }], ...(c.corpsPt === undefined ? {} : { corpsPt: c.corpsPt }) }
+        : { cadres: c.cadres, lettrine: c.lettrine === true, paragraphs: c.paragraphes.map((p) => ({ id: p.id, heading: p.intertitre ? fillerText(p.headingMaxChars!) : null, text: fillerText(p.maxChars) })) },
     ]),
   );
 }

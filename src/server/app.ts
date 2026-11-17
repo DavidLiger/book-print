@@ -51,7 +51,7 @@ const STATIC: Record<string, { file: string; type: string }> = {
 };
 const MAX_BODY = 64 * 1024;
 /** Limites propres à une route : toutes les autres restent à `MAX_BODY`. */
-const BODY_LIMITS: Record<string, number> = { '/api/sujet/import': IMPORT_MAX_BYTES, '/api/droits/credits': IMPORT_MAX_BYTES, '/api/workflows/depot': WORKFLOW_MAX_BYTES };
+const BODY_LIMITS: Record<string, number> = { '/api/glossaire/import': IMPORT_MAX_BYTES, '/api/sujet/import': IMPORT_MAX_BYTES, '/api/droits/credits': IMPORT_MAX_BYTES, '/api/workflows/depot': WORKFLOW_MAX_BYTES };
 const dirBody = z.strictObject({ dir: z.string() });
 const quitBody = z.strictObject({});
 /**

@@ -119,12 +119,20 @@ export const paragraphSchema = z.strictObject({
   maxChars: z.number().int().positive(),
   headingMaxChars: z.number().int().positive().optional(),
 });
-/** Une chaîne : ses cadres dans l'ordre de lecture, la lettrine, ses paragraphes (spec §24.5). */
+/** Texte généré depuis les données (MP6b) : sources, crédits ou glossaire, sur une page du livre seulement. */
+export const GENERES = ['sources', 'credits', 'glossaire'] as const;
+export type Genere = (typeof GENERES)[number];
+/**
+ * Une chaîne : ses cadres dans l'ordre de lecture, la lettrine, ses paragraphes (spec §24.5). Une chaîne générée (MP6b, `genere`) n'a pas de
+ * paragraphes : son texte vient des données ; son corps est `corpsPt` (7 pt au moins, KDP), sinon celui du texte courant.
+ */
 export const chainSchema = z.strictObject({
   id: slugSchema,
   cadres: z.array(slugSchema).min(1, 'cadres : au moins un'),
   lettrine: z.boolean().optional(),
-  paragraphes: z.array(paragraphSchema).min(1, 'paragraphes : au moins un'),
+  paragraphes: z.array(paragraphSchema).default([]),
+  genere: z.enum(GENERES, { error: 'genere : sources, credits ou glossaire' }).optional(),
+  corpsPt: z.number().min(KDP_MIN_PT, `corpsPt : ${KDP_MIN_PT} pt au moins (KDP)`).optional(),
 });
 export type Chain = z.infer<typeof chainSchema>;
 
@@ -245,6 +253,10 @@ function refineLayout(l: LayoutLike, ctx: z.RefinementCtx): void {
   const seen = new Map<string, string>();
   chains.forEach((c, index) => {
     const path = ['chaines', index];
+    if (c.genere === undefined) {
+      if (c.paragraphes.length === 0) issue(`chaîne ${c.id} : paragraphes : au moins un`, path);
+      if (c.corpsPt !== undefined) issue(`chaîne ${c.id} : corpsPt seulement sur une chaîne générée`, path);
+    } else if (c.paragraphes.length > 0) issue(`chaîne ${c.id} : une chaîne générée (${c.genere}) n'a pas de paragraphes, son texte vient des données`, path);
     const paras = uniqueList(slugSchema, 'paragraphe').safeParse(c.paragraphes.map((p) => p.id));
     if (!paras.success) issue(`chaîne ${c.id} : ${paras.error.issues[0]!.message}`, path);
     c.paragraphes.forEach((p) => {
@@ -267,13 +279,14 @@ export const layoutSchema = z.strictObject(layoutShape).superRefine(refineLayout
 export type Layout = z.infer<typeof layoutSchema>;
 
 /** Ce qu'un sujet refuse (MP6a) : une seule page (MP-14), un sommaire, un texte fixe. Vide : rien. */
-export function subjectOnlyFaults(l: Pick<LayoutLike, 'pages' | 'elements'>): string[] {
+export function subjectOnlyFaults(l: Pick<LayoutLike, 'pages' | 'elements' | 'chaines'>): string[] {
   const out: string[] = [];
   if (l.pages < 2) out.push(`un sujet a 2 pages au moins, la mise en page en a ${l.pages}`);
   for (const e of l.elements) {
     if (e.type === 'sommaire') out.push(`${e.id} : le sommaire est réservé aux pages du livre`);
     if (e.texteFixe !== undefined) out.push(`${e.id} : texte fixe réservé aux pages du livre`);
   }
+  for (const c of l.chaines ?? []) if (c.genere !== undefined) out.push(`chaîne ${c.id} : texte généré (${c.genere}) réservé aux pages du livre`);
   return out;
 }
 

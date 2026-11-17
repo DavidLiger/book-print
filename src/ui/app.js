@@ -89,6 +89,7 @@ function showStep(id) {
   if (changed && id === 'workflows') loadWorkflows();
   if (changed && id === 'styles') loadStyles();
   if (changed && id === 'livre-complet') loadLivre();
+  if (changed && id === 'export') loadExport();
   // L'état de ComfyUI du bandeau se revérifie à chaque changement d'étape : il peut avoir été fermé entre-temps.
   if (changed && !['workflows', 'styles'].includes(id)) pollComfy(true);
 }
@@ -174,6 +175,7 @@ async function readSelected() {
   if (parcours.current === 'workflows') await loadWorkflows();
   if (parcours.current === 'styles') await loadStyles();
   if (parcours.current === 'livre-complet') await loadLivre();
+  if (parcours.current === 'export') await loadExport();
 }
 
 async function createFolder() {
@@ -2816,6 +2818,95 @@ $('lp-controler').addEventListener('click', controlBookPage);
 $('lp-recharger').addEventListener('click', () => openBookPage(livre.page));
 $('lp-retour').addEventListener('click', loadLivre);
 $('lc-recharger').addEventListener('click', loadLivre);
+// ---------------------------------------------------------------------------------------------------------------------------------------
+// Export (MP6b) : « Exporter le livre », résultat des contrôles, poids, déclaration à KDP, chemin des fichiers ; glossaire (préparer, importer,
+// valider). Le rapport complet est dans `export/<bookId>-<lang>-controle.md`, montré à droite.
+
+const mo = (n) => `${(n / 1e6).toFixed(2).replace('.', ',')} Mo`;
+
+function showExport(state, outcome) {
+  const r = state.result;
+  $('ex-etat').textContent = r === null ? 'Aucun export.' : r === 'illisible' ? 'Résultat du dernier export illisible.'
+    : `Dernier export le ${new Date(r.date).toLocaleString('fr-FR')} : ${r.ok ? 'réussi' : 'refusé'}${r.ok && !state.fresh ? ', à refaire (un fichier a changé depuis)' : ''}.`;
+  const box = $('ex-resultat');
+  const items = [];
+  if (state.blockers.length) items.push(el('p', 'Avant d’exporter :', 'erreur'), ...state.blockers.map((b) => el('p', b, 'erreur')));
+  if (outcome) {
+    items.push(el('p', outcome.ok ? `PDF écrit : ${outcome.pdf}` : 'PDF non écrit : une erreur au moins.', outcome.ok ? 'bien' : 'erreur'));
+    items.push(...outcome.errors.map((e) => el('p', `✗ ${e}`, 'erreur')), ...outcome.alerts.map((e) => el('p', `⚠ ${e}`, 'alerte')));
+    if (outcome.weight.pdfBytes !== null) items.push(el('p', `Poids du PDF : ${mo(outcome.weight.pdfBytes)} ; ${outcome.pages} pages ; export en ${outcome.timing.seconds.toFixed(1).replace('.', ',')} s.`, 'note'));
+    if (outcome.declaration.lines.length) items.push(el('p', 'À déclarer dans KDP :', 'note'), ...outcome.declaration.lines.map((l) => el('p', l)));
+  } else if (r && r !== 'illisible') items.push(el('p', `${r.errors} erreur${r.errors > 1 ? 's' : ''}, ${r.alerts} alerte${r.alerts > 1 ? 's' : ''} au dernier export.`, r.ok ? 'note' : 'erreur'));
+  items.push(el('p', `Fichiers : ${state.files.pdf} et ${state.files.report}`, 'note'));
+  box.replaceChildren(...items);
+  $('ex-rapport').textContent = state.report ?? 'Aucun rapport : exporter le livre.';
+  const g = state.glossaire;
+  $('ex-glossaire').textContent = g.state === 'absent' ? 'Aucun glossaire importé.' : g.state === 'invalide' ? g.error
+    : `${g.termes} terme${g.termes > 1 ? 's' : ''}, ${g.state === 'valide' ? 'validé' : 'à relire puis valider'}.`;
+  $('ex-g-valider').disabled = g.state !== 'a-valider';
+}
+
+async function loadExport() {
+  $('ex-message').replaceChildren();
+  try {
+    showExport(await action('/api/export/state', { dir: dirOf() }));
+  } catch (e) {
+    $('ex-message').replaceChildren(el('p', e.message, 'erreur'));
+  }
+}
+
+function exportChange(path, body) {
+  return enqueue(async () => {
+    $('ex-message').replaceChildren();
+    showExport(await action(path, { dir: dirOf(), ...body }));
+    await refreshParcours();
+  }, $('ex-message'));
+}
+
+$('ex-recharger').addEventListener('click', loadExport);
+$('ex-exporter').addEventListener('click', () => {
+  const button = $('ex-exporter');
+  button.disabled = true;
+  $('ex-progression').textContent = 'Export en cours : chaque partie est rendue et contrôlée, cela peut prendre quelques minutes…';
+  enqueue(async () => {
+    try {
+      $('ex-message').replaceChildren();
+      const reply = await action('/api/export/lancer', { dir: dirOf() });
+      showExport(reply, reply.outcome);
+      await refreshParcours();
+    } finally {
+      button.disabled = false;
+      $('ex-progression').textContent = '';
+    }
+  }, $('ex-message'));
+});
+$('ex-g-preparer').addEventListener('click', async () => {
+  const line = $('ex-g-copie');
+  line.textContent = '';
+  try {
+    const { prompt } = await action('/api/glossaire/prompt', { dir: dirOf() });
+    try {
+      await navigator.clipboard.writeText(prompt);
+      line.textContent = 'Prompt copié : le coller dans une conversation Claude, enregistrer le JSON rendu, puis le déposer ici.';
+    } catch {
+      line.textContent = 'Copie refusée par le navigateur.';
+    }
+  } catch (e) {
+    line.textContent = e.message;
+  }
+});
+dropZone($('ex-g-depot'), $('ex-g-fichier'), async (file) => {
+  let fichier;
+  try {
+    fichier = JSON.parse(await file.text());
+  } catch (e) {
+    $('ex-message').replaceChildren(el('p', `${file.name} n'est pas un JSON valide : ${e.message}`, 'erreur'));
+    return;
+  }
+  exportChange('/api/glossaire/import', { fichier });
+});
+$('ex-g-valider').addEventListener('click', () => exportChange('/api/glossaire/valider', {}));
+
 $('lc-ajouter').addEventListener('click', () => livreChange('/api/livre/ajouter', { pageId: $('lc-id').value.trim(), model: $('lc-modele').value, place: $('lc-place').value }));
 $('lc-monter').addEventListener('click', () => selectedPart() && livreChange('/api/livre/deplacer', { id: selectedPart().id, sens: -1 }));
 $('lc-descendre').addEventListener('click', () => selectedPart() && livreChange('/api/livre/deplacer', { id: selectedPart().id, sens: 1 }));

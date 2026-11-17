@@ -97,6 +97,8 @@ export interface ParcoursFacts {
   subjects: SubjectFacts[];
   /** Le livre complet (MP6a) : plan, numéros réels, page de notes, C2, C16 du livre, pages du livre. `null` : pas lu (étapes d'avant). */
   livre: LivreFacts | null;
+  /** Le dernier export du livre (MP6b) : `null` pas lu ; `result: null` aucun export ; `fresh` : rien n'a changé depuis. */
+  export?: { result: { ok: boolean; date: string; errors: number } | 'illisible' | null; fresh: boolean } | null;
 }
 
 export interface StepVerdict {
@@ -242,6 +244,15 @@ function livreComplet({ livre }: ParcoursFacts): StepVerdict {
   return { state: 'validee', reasons: [] };
 }
 
+/** Export (MP6b, question 9) : validée si le dernier export a réussi et qu'aucun fichier du livre ni de la collection n'a changé depuis. */
+function exportStep({ export: last }: ParcoursFacts): StepVerdict {
+  if (!last || last.result === null) return { state: 'a-faire', reasons: ['Exporter le livre.'] };
+  if (last.result === 'illisible') return { state: 'a-faire', redo: true, reasons: ['Résultat du dernier export illisible : exporter à nouveau.'] };
+  if (!last.result.ok) return { state: 'erreur', reasons: [`Dernier export refusé (${last.result.errors} erreur${last.result.errors > 1 ? 's' : ''}) : corriger, puis exporter à nouveau. Le détail est dans le rapport.`] };
+  if (!last.fresh) return { state: 'a-faire', redo: true, reasons: ['Un fichier du livre ou de la collection a changé depuis le dernier export : exporter à nouveau.'] };
+  return { state: 'validee', reasons: [] };
+}
+
 const unreadable = (s: SubjectFacts | undefined): StepVerdict | null => (s?.error ? { state: 'erreur', reasons: [s.error] } : null);
 
 /** Mise en page du sujet (ED1) : lisible, au format du livre, sur le bon côté (C16), sans chevauchement interdit (C17). */
@@ -322,6 +333,8 @@ export const STEPS: StepDef[] = [
   { id: 'sujets', label: 'Sujets', scope: 'livre', requires: ['gabarits'], evaluate: sujets },
   // MP6a : après Sujets, n'exige que Mises en page, pour faire les pages du livre avant la fin des sujets.
   { id: 'livre-complet', label: 'Livre complet', scope: 'livre', requires: ['gabarits'], evaluate: livreComplet },
+  // MP6b : l'export du livre entier exige le livre complet (chaque sujet prêt est contrôlé par l'export lui-même).
+  { id: 'export', label: 'Export', scope: 'livre', requires: ['livre-complet'], evaluate: exportStep },
   { id: 'sujet-mise-en-page', label: 'Mise en page', scope: 'sujet', requires: [], evaluate: sujetMiseEnPage },
   { id: 'sujet-recherche', label: 'Recherche', scope: 'sujet', requires: ['sujet-mise-en-page'], evaluate: sujetRecherche },
   { id: 'sujet-relecture', label: 'Relecture', scope: 'sujet', requires: ['sujet-recherche'], evaluate: sujetRelecture },

@@ -38,6 +38,7 @@ import type { Subject } from '../schema/subject';
 import { effectiveRights } from '../comfy/workflow-file';
 import type { ParcoursFacts, SubjectFacts } from './steps';
 import { livreFacts } from '../book/facts';
+import { isFresh, readExportResult } from '../book/export';
 
 const mtime = (file: string) => fs.lstatSync(file, { throwIfNoEntry: false })?.mtimeMs ?? null;
 
@@ -318,6 +319,7 @@ export function readFacts(state: ConfigState, dir: string | null): ParcoursFacts
     styles: { error: null, count: 0, faults: [], todo: [], alerts: [] },
     subjects: [],
     livre: null,
+    export: null,
   };
   if (!state.ok || dir === null) return facts;
   const { glbRoot, dataRoot } = state.config;
@@ -349,6 +351,11 @@ export function readFacts(state: ConfigState, dir: string | null): ParcoursFacts
   }
   const qr: QrSource = { glbRoot, origin: reading.origin };
   facts.subjects = book.subjects.map((id) => subjectFacts(dataRoot, book, id, reading.scenes, qr));
-  if (facts.collection.exists && !facts.collection.error) facts.livre = livreFacts(dataRoot, bookId, reading, glbRoot);
+  if (facts.collection.exists && !facts.collection.error) {
+    facts.livre = livreFacts(dataRoot, bookId, reading, glbRoot);
+    const result = readExportResult(dataRoot, book);
+    const fresh = result !== null && result !== 'illisible' && isFresh(dataRoot, bookId, result.date);
+    facts.export = { result: result === null || result === 'illisible' ? result : { ok: result.ok, date: result.date, errors: result.errors }, fresh };
+  }
   return facts;
 }

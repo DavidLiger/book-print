@@ -364,9 +364,19 @@ export async function controlSubject(ctx: SubjectContext, research: StoredResear
   const texts = content.chains ?? {};
   const { pdf, measures, flow } = await renderFlowedPdf(build, texts, ctx.trim);
   const facts = await readPdfFacts(pdf);
-  const subjectChecks = runSubjectChecks(contentInput(ctx, research, { defs: chainsOf(ctx.template), texts, flow }, measures));
   const capture = ctx.qr ? await captureQr(build, texts) : null;
-  const decoded = capture ? await decodeQr(capture.png) : null;
-  const c9 = c9Qr({ ...qrInput(ctx), capture: capture && { sideMm: capture.sideMm }, decoded });
-  return [...subjectChecks, ...imageChecks(ctx).checks, ...pdfChecks({ facts, measures, pages: ctx.layout }), c9, c17Overlaps(ctx.layout)];
+  return renderedSubjectChecks(ctx, research, { facts, measures, flow, capture });
+}
+
+/** Les contrôles d'un sujet sur son rendu déjà fait : par « Contrôler » (un PDF du sujet) ou par l'export du livre entier (MP6b). */
+export async function renderedSubjectChecks(
+  ctx: SubjectContext,
+  research: StoredResearch | null,
+  r: { facts: Awaited<ReturnType<typeof readPdfFacts>>; measures: Measures; flow: Flowed['flow']; capture: { sideMm: number; png: Buffer } | null },
+): Promise<CheckResult[]> {
+  const texts = subjectContent(ctx).chains ?? {};
+  const subjectChecks = runSubjectChecks(contentInput(ctx, research, { defs: chainsOf(ctx.template), texts, flow: r.flow }, r.measures));
+  const decoded = r.capture ? await decodeQr(r.capture.png) : null;
+  const c9 = c9Qr({ ...qrInput(ctx), capture: r.capture && { sideMm: r.capture.sideMm }, decoded });
+  return [...subjectChecks, ...imageChecks(ctx).checks, ...pdfChecks({ facts: r.facts, measures: r.measures, pages: ctx.layout }), c9, c17Overlaps(ctx.layout)];
 }
