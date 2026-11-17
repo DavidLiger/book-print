@@ -32,7 +32,9 @@ import { BadPricingRequest, PRICING_ACTIONS } from './pricing-actions';
 import { BadRightsRequest, RIGHTS_ACTIONS } from './rights-actions';
 import { ACTION_HEADER, actionAllowed, hostAllowed, navigateurIntegre, uploadAllowed } from './rules';
 import { BadSubjectRequest, IMPORT_MAX_BYTES, SUBJECT_ACTIONS, subjectPreviewHtml } from './subject-actions';
-import { LAYOUT_ACTIONS, layoutPreviewHtml } from './layout-actions';
+import { bookPageEditorHtml, LAYOUT_ACTIONS, layoutPreviewHtml } from './layout-actions';
+import { BOOK_ACTIONS, bookPartHtml } from './book-actions';
+import { BookPageRefused } from '../data/book-pages';
 import { LayoutConflict, LayoutRefused } from '../layout/files';
 import { StyleRefused } from '../styles/read';
 import { BadStyleRequest, depositEssai, depositReference, ESSAI_ROUTE, previewBytes, REFERENCE_ROUTE, styleActions } from './style-actions';
@@ -149,7 +151,7 @@ const ACTIONS: Record<string, (body: unknown, configPath: string) => Json | Prom
   ...Object.fromEntries(
     Object.entries({ ...PRICING_ACTIONS, ...COLLECTION_ACTIONS, ...GABARIT_ACTIONS }).map(([route, run]) => [route, (body: unknown, configPath: string) => run(body, configured(loadConfig(configPath)).dataRoot)]),
   ),
-  ...Object.fromEntries(Object.entries({ ...SUBJECT_ACTIONS, ...LAYOUT_ACTIONS, ...ILLUSTRATION_ACTIONS, ...RIGHTS_ACTIONS }).map(([route, run]) => [route, (body: unknown, configPath: string) => run(body, configured(loadConfig(configPath)))])),
+  ...Object.fromEntries(Object.entries({ ...SUBJECT_ACTIONS, ...LAYOUT_ACTIONS, ...BOOK_ACTIONS, ...ILLUSTRATION_ACTIONS, ...RIGHTS_ACTIONS }).map(([route, run]) => [route, (body: unknown, configPath: string) => run(body, configured(loadConfig(configPath)))])),
 };
 
 async function handle(
@@ -259,7 +261,18 @@ async function handle(
   if (url === '/apercu-mise-en-page') {
     if (req.method !== 'GET') return sendJson(res, 405, { error: 'GET attendu' }, { Allow: 'GET' });
     const query = new URL(req.url ?? '/', 'http://local').searchParams;
-    const html = await layoutPreviewHtml(query.get('dir'), query.get('subject'), configured(loadConfig(configPath)));
+    // Une page du livre (MP6a) porte `page` au lieu de `subject`.
+    const html = query.has('page')
+      ? await bookPageEditorHtml(query.get('dir'), query.get('page'), configured(loadConfig(configPath)))
+      : await layoutPreviewHtml(query.get('dir'), query.get('subject'), configured(loadConfig(configPath)));
+    return send(res, 200, html, 'text/html; charset=utf-8', { 'Content-Security-Policy': PREVIEW_CSP });
+  }
+
+  // Une partie du livre à ses vrais numéros (MP6a) : page du livre, sujet ou page de notes. Lecture seule.
+  if (url === '/apercu-livre') {
+    if (req.method !== 'GET') return sendJson(res, 405, { error: 'GET attendu' }, { Allow: 'GET' });
+    const query = new URL(req.url ?? '/', 'http://local').searchParams;
+    const html = await bookPartHtml(query.get('dir'), query.get('kind'), query.get('id'), configured(loadConfig(configPath)));
     return send(res, 200, html, 'text/html; charset=utf-8', { 'Content-Security-Policy': PREVIEW_CSP });
   }
 
@@ -317,7 +330,7 @@ export function createPrintServer(configPath: string, comfy: ComfyRuntime = crea
       // Une mise en page changée ailleurs depuis sa lecture (ED3) : la page la relit et repart d'un historique vide.
       if (e instanceof LayoutConflict) return sendJson(res, 409, { error: e.message, conflit: true });
       if (e instanceof BadPricingRequest || e instanceof BadCollectionRequest || e instanceof BadGabaritRequest || e instanceof BadSubjectRequest || e instanceof BadImageRequest || e instanceof BadRightsRequest || e instanceof BadComfyRequest || e instanceof BadStyleRequest) return sendJson(res, 400, { error: e.message });
-      if (e instanceof CreateRefused || e instanceof PricingRefused || e instanceof CollectionRefused || e instanceof RenderRefused || e instanceof GeometryRefused || e instanceof SubjectRefused || e instanceof ResearchRefused || e instanceof RightsRefused || e instanceof CreditsRefused || e instanceof ImageRefused || e instanceof WorkflowRefused || e instanceof QueueRefused || e instanceof ComfyError || e instanceof StyleRefused || e instanceof LayoutRefused) {
+      if (e instanceof CreateRefused || e instanceof PricingRefused || e instanceof CollectionRefused || e instanceof RenderRefused || e instanceof GeometryRefused || e instanceof SubjectRefused || e instanceof ResearchRefused || e instanceof RightsRefused || e instanceof CreditsRefused || e instanceof ImageRefused || e instanceof WorkflowRefused || e instanceof QueueRefused || e instanceof ComfyError || e instanceof StyleRefused || e instanceof LayoutRefused || e instanceof BookPageRefused) {
         return sendJson(res, 409, { error: e.message });
       }
       console.error('book-print :', e);

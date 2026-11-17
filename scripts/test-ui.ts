@@ -8,6 +8,7 @@ import path from 'node:path';
 import { chromium, type Page, type Route } from 'playwright';
 import { createPrintServer } from '../src/server/app';
 import { BOOK_ID, makeGlbi, put, tempDir } from './fixtures/make-glbi';
+import { cadreLivre } from './fixtures/livre';
 import { makePng } from './fixtures/make-png';
 import { makeResearch } from './fixtures/recherche';
 import { researchEd4, syntheseEd4 } from './fixtures/recherche-ed4';
@@ -17,7 +18,7 @@ import { createComfyRuntime } from '../src/server/comfy-actions';
 import { check, finish } from './test-lib';
 
 const SIZES = [{ width: 1920, height: 950 }, { width: 1366, height: 650 }];
-const STEP_IDS = ['livre', 'prix', 'collection', 'gabarits', 'droits', 'workflows', 'styles', 'sujets'];
+const STEP_IDS = ['livre', 'prix', 'collection', 'gabarits', 'droits', 'workflows', 'styles', 'sujets', 'livre-complet'];
 
 const glbRoot = makeGlbi();
 const parent = tempDir();
@@ -72,9 +73,9 @@ const statesText = async () => (await tabs()).map((t) => t.sign).join();
 await open();
 {
   const all = await tabs();
-  check('menu : huit étapes numérotées, dans l’ordre (plus d’Essai, ED6)', all.map((t) => t.id).join() === STEP_IDS.join() && all.every((t, i) => t.text.startsWith(String(i + 1))), all);
+  check('menu : neuf étapes numérotées, dans l’ordre (Livre complet, MP6a)', all.map((t) => t.id).join() === STEP_IDS.join() && all.every((t, i) => t.text.startsWith(String(i + 1))), all);
   check('ouverture : première étape non validée', (await current()) === 'livre');
-  check('départ : Livre à faire, le reste verrouillé', (await statesText()) === 'à faire,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée', await statesText());
+  check('départ : Livre à faire, le reste verrouillé', (await statesText()) === 'à faire,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée', await statesText());
   check('étape verrouillée : motif lisible sur l’onglet', (await tab('prix')).text.includes('Valider d\'abord « Livre »'), await tab('prix'));
   await page.click('#etapes button[data-step="prix"]', { force: true });
   check('étape verrouillée : ne s’ouvre pas', (await current()) === 'livre' && await page.isHidden('#prix'));
@@ -84,6 +85,7 @@ await open();
 
   await page.click('#creer');
   await untilTab('livre', 'validée');
+  cadreLivre(dataRoot, BOOK_ID);
   check('création du dossier : le menu change', (await tab('prix')).sign === 'à faire' && (await current()) === 'livre');
   await go('prix');
   check('Prix s’ouvre, Livre reste accessible', (await current()) === 'prix' && await page.isVisible('#prix-form'));
@@ -111,6 +113,7 @@ await open();
   const delivered = fs.readFileSync(gabarit('2A.json'));
   check('collection créée : 2A copié, Gabarits validé', (await text('#collection-resultat')).includes('collection/gabarits/2A.json') && (await tab('gabarits')).sign === 'validée');
   fs.rmSync(gabarit('2A.json'));
+  fs.rmSync(gabarit('1N.json'));
   await page.click('#collection-relire');
   await untilTab('gabarits', 'à faire');
   check('Gabarits : aucun gabarit, à faire ; Sujets verrouillé', (await tab('sujets')).sign === 'verrouillée' && (await tab('sujets')).text.includes('Mises en page'), await tabs());
@@ -120,11 +123,14 @@ await open();
   await page.click('#ga-ajouter');
   await untilTab('gabarits', 'validée');
   await until(`(document.querySelector('#ga-apercu').getAttribute('src') ?? '').includes('/apercu-gabarit?')`);
-  check('Ajouter : 2A écrit à l’identique, listé, aperçu chargé', fs.readFileSync(gabarit('2A.json')).equals(delivered) && (await text('#ga-message')).includes('collection/gabarits/2A.json') && (await text('#ga-liste')).includes('gauche') && (await page.getAttribute('#ga-apercu', 'src'))!.includes('id=2A'));
+  check('Ajouter : 2A écrit à l’identique, listé, aperçu du premier modèle (1N) chargé', fs.readFileSync(gabarit('2A.json')).equals(delivered) && (await text('#ga-message')).includes('collection/gabarits/2A.json') && (await text('#ga-liste')).includes('gauche') && (await page.getAttribute('#ga-apercu', 'src'))!.includes('id=1N'));
+  // 1N (notes, MP6a) vient avant 2A dans la liste ; la suite travaille sur 2A.
+  await page.click('#ga-liste button:has-text("2A")');
+  await until(`(document.querySelector('#ga-apercu').getAttribute('src') ?? '').includes('id=2A')`);
   fs.appendFileSync(gabarit('2A.json'), ' ');
   const changed = fs.readFileSync(gabarit('2A.json'));
   await page.click('#ga-ajouter');
-  await until(`document.querySelector('#ga-message').textContent.includes('Conservés, non modifiés (2)')`);
+  await until(`document.querySelector('#ga-message').textContent.includes('Conservés, non modifiés (3)')`);
   check('Ajouter une seconde fois : rien n’est écrasé', fs.readFileSync(gabarit('2A.json')).equals(changed));
   fs.writeFileSync(gabarit('2A.json'), delivered);
   fs.writeFileSync(gabarit('4A.json'), '{');
@@ -260,7 +266,7 @@ await open();
   await page.click('#v-scenarios');
   await page.click('#prix-scenarios button:has-text("Ne plus retenir")');
   await untilTab('gabarits', 'verrouillée');
-  check('étape redevenue non validée : la suite se reverrouille', (await statesText()) === 'validée,à faire,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée', await statesText());
+  check('étape redevenue non validée : la suite se reverrouille', (await statesText()) === 'validée,à faire,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée,verrouillée', await statesText());
   check('reverrouillage : aucune donnée perdue', fs.existsSync(style));
   await page.reload();
   await until(`document.querySelector('#etapes li[data-state="a-faire"]') !== null`);
@@ -268,7 +274,7 @@ await open();
   await page.click('#v-scenarios');
   await page.click('#prix-scenarios button:has-text("Retenir")');
   await untilTab('gabarits', 'validée');
-  check('scénario de nouveau retenu : le parcours revient', (await statesText()) === 'validée,validée,validée,validée,alerte,validée,alerte,à faire', await statesText());
+  check('scénario de nouveau retenu : le parcours revient', (await statesText()) === 'validée,validée,validée,validée,alerte,validée,alerte,à faire,erreur', await statesText());
 }
 
 // Sujet réel, de la création à « relu »
@@ -323,7 +329,7 @@ const levels = () => page.evaluate(`[...document.querySelectorAll('#sa-resultat 
   await page.click('#mp-controler');
   await until(`!document.querySelector('#mp-controler').disabled && document.querySelector('#mp-resultat table') !== null`);
   check('Mise en page : éditeur du sujet, fichier écrit nommé, thème du sujet', (await text('#mp-fichier')).includes('subjects/alpha/layout.json') && (await text('#mp-theme')).includes('Thème du sujet'));
-  check('Mise en page : sans Miroir ni Nouvelle mise en page dans le sujet', (await page.locator('#sujet-mise-en-page button:has-text("Miroir")').count()) === 0);
+  check('Mise en page : Miroir de la copie (MP6a), sans Nouvelle mise en page dans le sujet', (await page.locator('#sujet-mise-en-page button:has-text("Miroir")').count()) === 1 && (await page.locator('#sujet-mise-en-page button:has-text("Nouvelle mise en page")').count()) === 0);
   check('Mise en page : contrôle, sept contrôles dont C17', (await page.locator('#mp-resultat td .signe').count()) === 7 && (await text('#mp-resultat')).includes('C17'), await text('#mp-resultat'));
   await goSub('sujet-recherche');
   await page.click('#r-preparer');
@@ -1020,7 +1026,7 @@ await page.unrouteAll({ behavior: 'ignoreErrors' });
   await open();
   await until(`document.querySelector('#etapes li[data-state="validee"]') !== null`);
   const labels = await page.evaluate(`[...document.querySelectorAll('#etapes .nom-signe')].map((e) => [e.getAttribute('role'), e.getAttribute('aria-label'), e.textContent])`) as string[][];
-  check('signes : image nommée, texte visible', labels.length === 8 && labels.every(([role, label, text]) => role === 'img' && !!label && !!text), labels);
+  check('signes : image nommée, texte visible', labels.length === 9 && labels.every(([role, label, text]) => role === 'img' && !!label && !!text), labels);
 }
 
 // Configuration invalide : le menu reste affiché et dit quoi corriger.

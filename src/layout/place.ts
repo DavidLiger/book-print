@@ -66,6 +66,7 @@ function placeElement(e: LayoutElement, layout: Layout, frame: PageFrame, part: 
     gouttiereMm: e.gouttiereMm,
     detoure: e.detoure,
     habillage: e.habillage,
+    couleur: e.couleur,
   };
   const extra: Partial<LayoutZone> = Object.fromEntries(Object.entries(own).filter(([, v]) => v !== undefined));
   if (e.type === 'bandeau') {

@@ -9,7 +9,7 @@ import type { CheckResult } from './rules';
 export const OVERLAP_TOLERANCE_MM = 0.05;
 
 /** Éléments à texte de la règle « texte sur texte ». */
-export const TEXT_TYPES = ['titre', 'bandeau', 'chapeau', 'texte', 'encadre', 'fiche', 'chiffre-cle', 'legende', 'etiquette', 'folio'];
+export const TEXT_TYPES = ['titre', 'bandeau', 'chapeau', 'texte', 'encadre', 'fiche', 'chiffre-cle', 'legende', 'etiquette', 'folio', 'sommaire'];
 /** Ce qui peut être sous le QR. */
 const UNDER_QR = ['fond', 'bandeau', 'illustration', 'folio'];
 

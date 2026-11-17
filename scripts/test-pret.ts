@@ -6,6 +6,7 @@ import path from 'node:path';
 import sharp from 'sharp';
 import { c9Qr, decodeQr, QR_MIN_SIDE_MM, qrDataFaults } from '../src/checks/qr';
 import { createBookFolder } from '../src/data/create-book';
+import { cadreLivre } from './fixtures/livre';
 import { createCollection } from '../src/data/collection';
 import { DELETED_DIR, createSubject, deleteSubject, changeModel, readSubject, subjectFolder, updateSubject, SubjectRefused } from '../src/data/subject-file';
 import { readPrintBook } from '../src/data/pricing-file';
@@ -73,6 +74,7 @@ const png = (svg: string, px: number) => sharp(Buffer.from(svg), { density: 300 
   fs.mkdirSync(data);
   put(root, 'config.local.json', { glbRoot: glb, dataRoot: data });
   createBookFolder(data, BOOK_ID);
+  cadreLivre(data, BOOK_ID);
   createCollection(data);
   put(data, 'collection/gabarits/2Y.json', synthese('2Y'));
   const scenes = ['alpha', 'beta'];

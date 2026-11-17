@@ -10,9 +10,11 @@ import { printBookSchema, type PrintBook } from '../schema/print-book';
 import { storedResearchSchema, type StoredResearch } from '../schema/research';
 import { subjectSchema, type Subject } from '../schema/subject';
 import { copyModel, fileStamp, LAYOUT_FILE } from '../layout/files';
-import { formatLabel, formatOf, sameFormat } from '../layout/model';
-import { subjectLayoutSchema, type SubjectLayout } from '../layout/schema';
-import { FIRST_SUBJECT_PAGE, templateFits } from '../templates';
+import { formatLabel, formatOf, isLayout, sameFormat, startSide, type MiseEnPage } from '../layout/model';
+import { subjectLayoutSchema, subjectOnlyFaults, type SubjectLayout } from '../layout/schema';
+import { templateFits } from '../templates';
+import { computePlan, firstPageIn, type BookPlan, type PartInput } from '../book/plan';
+import { BookPageRefused, readBookPage } from './book-pages';
 import { GeometryRefused } from '../templates/geometry';
 import { readTemplates, templateOf } from '../templates/files';
 import { readCollection } from './collection';
@@ -116,11 +118,57 @@ function requirePrintBook(dataRoot: string, bookId: string): { dir: string; book
   return { dir, book };
 }
 
-/** Page réelle de la première page d'un sujet : le plan du livre n'existe pas encore, seule la somme des sujets précédents le donne. */
+/**
+ * Les parties du livre dans l'ordre (MP6a) : pages liminaires, sujets, pages finales. Une partie illisible garde sa place, sans nombre de
+ * pages, avec son erreur. Avec `sides`, le côté de départ de chaque mise en page (C16) ; un sujet d'avant ED1 lit le gabarit de sa collection.
+ */
+export function planInputs(dataRoot: string, book: PrintBook, sides = false): PartInput[] {
+  const page = (id: string, place: 'debut' | 'fin'): PartInput => {
+    try {
+      const layout = readBookPage(dataRoot, book.bookId, id);
+      return { kind: 'page', id, place, pages: layout.pages, start: layout.start, error: null };
+    } catch (e) {
+      if (e instanceof BookPageRefused) return { kind: 'page', id, place, pages: null, start: null, error: e.message };
+      throw e;
+    }
+  };
+  const subject = (id: string): PartInput => {
+    try {
+      const { pages, template } = readSubject(dataRoot, book.bookId, id);
+      let start: PartInput['start'] = null;
+      if (sides) {
+        const copy = readSubjectLayout(dataRoot, book.bookId, id);
+        if (copy) start = copy.start;
+        else {
+          const collection = readCollection(dataRoot);
+          const found = templateOf(readTemplates(dataRoot, collection?.style ?? null), template);
+          if (!('error' in found)) start = startSide(found.template as MiseEnPage);
+        }
+      }
+      return { kind: 'sujet', id, place: 'sujets', pages, start, error: null };
+    } catch (e) {
+      if (e instanceof SubjectRefused) return { kind: 'sujet', id, place: 'sujets', pages: null, start: null, error: e.message };
+      throw e;
+    }
+  };
+  return [...book.frontMatter.map((id) => page(id, 'debut')), ...book.subjects.map(subject), ...book.backMatter.map((id) => page(id, 'fin'))];
+}
+
+/** Le plan du livre, avec ses vrais numéros et la page de notes de parité (MP6a). */
+export const readPlan = (dataRoot: string, book: PrintBook, sides = false): BookPlan => computePlan(planInputs(dataRoot, book, sides));
+
+/**
+ * Vraie première page d'un sujet dans le plan du livre (MP6a) : `FIRST_SUBJECT_PAGE` a disparu. Un sujet en création vient après les
+ * sujets, avant les pages finales. Une partie illisible avant lui empêche de le poser : refus nommé.
+ */
 export function firstPageOf(dataRoot: string, book: PrintBook, id: string): number {
-  const at = book.subjects.indexOf(id);
-  const before = at < 0 ? book.subjects : book.subjects.slice(0, at);
-  return before.reduce((page, other) => page + readSubject(dataRoot, book.bookId, other).pages, FIRST_SUBJECT_PAGE);
+  const plan = readPlan(dataRoot, book);
+  const first = firstPageIn(plan, id, 'sujet');
+  if (first === null) {
+    const bad = plan.parts.find((p) => p.error !== null);
+    throw new SubjectRefused(`Numéros de page inconnus : ${bad?.error ?? 'une partie du livre est illisible'}`);
+  }
+  return first;
 }
 
 export interface NewSubject {
@@ -149,6 +197,7 @@ export function createSubject(dataRoot: string, bookId: string, input: NewSubjec
   const format = formatOf(template);
   if (format && !sameFormat(template, book.edition.trim)) throw new SubjectRefused(`La mise en page ${input.template} est faite pour ${formatLabel(format)} : le livre est en ${formatLabel(book.edition.trim)}.`);
   if (template.pages !== input.pages) throw new SubjectRefused(`Le gabarit ${input.template} a ${template.pages} pages, pas ${input.pages}.`);
+  if (isLayout(template) && subjectOnlyFaults(template).length > 0) throw new SubjectRefused(`Le modèle ${input.template} est réservé aux pages du livre : ${subjectOnlyFaults(template).join(' ; ')}.`);
   const firstPage = firstPageOf(dataRoot, book, id);
   if (!templateFits(template, firstPage)) throw new SubjectRefused(`Le gabarit ${input.template} ne peut pas commencer en page ${firstPage}.`);
 
@@ -303,6 +352,7 @@ export function changeModel(dataRoot: string, bookId: string, id: string, modelI
   const format = formatOf(template);
   if (format && !sameFormat(template, book.edition.trim)) throw new SubjectRefused(`La mise en page ${modelId} est faite pour ${formatLabel(format)} : le livre est en ${formatLabel(book.edition.trim)}.`);
   if (template.pages !== subject.pages) throw new SubjectRefused(`Le modèle ${modelId} a ${template.pages} pages, le sujet en a ${subject.pages}.`);
+  if (isLayout(template) && subjectOnlyFaults(template).length > 0) throw new SubjectRefused(`Le modèle ${modelId} est réservé aux pages du livre : ${subjectOnlyFaults(template).join(' ; ')}.`);
   const firstPage = firstPageOf(dataRoot, book, id);
   if (!templateFits(template, firstPage)) throw new SubjectRefused(`Le modèle ${modelId} ne peut pas commencer en page ${firstPage}.`);
   let copy;

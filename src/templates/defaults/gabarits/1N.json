@@ -1,0 +1,181 @@
+{
+  "schemaVersion": 2,
+  "id": "1N",
+  "pages": 1,
+  "start": "droite",
+  "trim": {
+    "widthIn": 6,
+    "heightIn": 9
+  },
+  "elements": [
+    {
+      "id": "titre",
+      "type": "titre",
+      "page": 0,
+      "x": 15,
+      "y": 12,
+      "w": 122.4,
+      "h": 16,
+      "maxChars": 40,
+      "couleur": "texte",
+      "texteFixe": {
+        "fr": "Notes",
+        "en": "Notes",
+        "es": "Notas"
+      }
+    },
+    {
+      "id": "ligne-1",
+      "type": "fond",
+      "page": 0,
+      "x": 15,
+      "y": 40,
+      "w": 122.4,
+      "h": 0.3
+    },
+    {
+      "id": "ligne-2",
+      "type": "fond",
+      "page": 0,
+      "x": 15,
+      "y": 50,
+      "w": 122.4,
+      "h": 0.3
+    },
+    {
+      "id": "ligne-3",
+      "type": "fond",
+      "page": 0,
+      "x": 15,
+      "y": 60,
+      "w": 122.4,
+      "h": 0.3
+    },
+    {
+      "id": "ligne-4",
+      "type": "fond",
+      "page": 0,
+      "x": 15,
+      "y": 70,
+      "w": 122.4,
+      "h": 0.3
+    },
+    {
+      "id": "ligne-5",
+      "type": "fond",
+      "page": 0,
+      "x": 15,
+      "y": 80,
+      "w": 122.4,
+      "h": 0.3
+    },
+    {
+      "id": "ligne-6",
+      "type": "fond",
+      "page": 0,
+      "x": 15,
+      "y": 90,
+      "w": 122.4,
+      "h": 0.3
+    },
+    {
+      "id": "ligne-7",
+      "type": "fond",
+      "page": 0,
+      "x": 15,
+      "y": 100,
+      "w": 122.4,
+      "h": 0.3
+    },
+    {
+      "id": "ligne-8",
+      "type": "fond",
+      "page": 0,
+      "x": 15,
+      "y": 110,
+      "w": 122.4,
+      "h": 0.3
+    },
+    {
+      "id": "ligne-9",
+      "type": "fond",
+      "page": 0,
+      "x": 15,
+      "y": 120,
+      "w": 122.4,
+      "h": 0.3
+    },
+    {
+      "id": "ligne-10",
+      "type": "fond",
+      "page": 0,
+      "x": 15,
+      "y": 130,
+      "w": 122.4,
+      "h": 0.3
+    },
+    {
+      "id": "ligne-11",
+      "type": "fond",
+      "page": 0,
+      "x": 15,
+      "y": 140,
+      "w": 122.4,
+      "h": 0.3
+    },
+    {
+      "id": "ligne-12",
+      "type": "fond",
+      "page": 0,
+      "x": 15,
+      "y": 150,
+      "w": 122.4,
+      "h": 0.3
+    },
+    {
+      "id": "ligne-13",
+      "type": "fond",
+      "page": 0,
+      "x": 15,
+      "y": 160,
+      "w": 122.4,
+      "h": 0.3
+    },
+    {
+      "id": "ligne-14",
+      "type": "fond",
+      "page": 0,
+      "x": 15,
+      "y": 170,
+      "w": 122.4,
+      "h": 0.3
+    },
+    {
+      "id": "ligne-15",
+      "type": "fond",
+      "page": 0,
+      "x": 15,
+      "y": 180,
+      "w": 122.4,
+      "h": 0.3
+    },
+    {
+      "id": "ligne-16",
+      "type": "fond",
+      "page": 0,
+      "x": 15,
+      "y": 190,
+      "w": 122.4,
+      "h": 0.3
+    },
+    {
+      "id": "folio",
+      "type": "folio",
+      "page": 0,
+      "x": 66.2,
+      "y": 204.6,
+      "w": 20,
+      "h": 8
+    }
+  ]
+}

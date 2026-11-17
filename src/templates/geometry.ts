@@ -29,8 +29,8 @@ export type BleedEdge = 'outer' | 'top' | 'bottom';
 
 export interface LayoutZone {
   id: string;
-  /** `bandeau` : type de la version 2 (ED1). */
-  type: ZoneType | 'bandeau';
+  /** `bandeau` : type de la version 2 (ED1) ; `sommaire` : MP6a, pages du livre. */
+  type: ZoneType | 'bandeau' | 'sommaire';
   rect: Rect;
   bleedEdges: BleedEdge[];
   constraints: Zone['constraints'];
@@ -60,6 +60,8 @@ export interface LayoutZone {
   /** Image détourée (ED2) et le côté où passe le texte. */
   detoure?: boolean;
   habillage?: 'gauche' | 'droite' | 'aucun';
+  /** Couleur d'un titre (MP6a) : absente, papier. */
+  couleur?: 'papier' | 'texte' | 'theme';
   /** Détouré dont l'image est déposée (ED2) : la place de l'image entière et son contour, en mm sur la page du PDF. Absent : la boîte. */
   outline?: Outline;
 }

@@ -37,6 +37,7 @@ import { okStyle, readStyles, StyleRefused } from '../styles/read';
 import type { Subject } from '../schema/subject';
 import { effectiveRights } from '../comfy/workflow-file';
 import type { ParcoursFacts, SubjectFacts } from './steps';
+import { livreFacts } from '../book/facts';
 
 const mtime = (file: string) => fs.lstatSync(file, { throwIfNoEntry: false })?.mtimeMs ?? null;
 
@@ -316,6 +317,7 @@ export function readFacts(state: ConfigState, dir: string | null): ParcoursFacts
     workflows: { error: null, todo: [], faults: [] },
     styles: { error: null, count: 0, faults: [], todo: [], alerts: [] },
     subjects: [],
+    livre: null,
   };
   if (!state.ok || dir === null) return facts;
   const { glbRoot, dataRoot } = state.config;
@@ -347,5 +349,6 @@ export function readFacts(state: ConfigState, dir: string | null): ParcoursFacts
   }
   const qr: QrSource = { glbRoot, origin: reading.origin };
   facts.subjects = book.subjects.map((id) => subjectFacts(dataRoot, book, id, reading.scenes, qr));
+  if (facts.collection.exists && !facts.collection.error) facts.livre = livreFacts(dataRoot, bookId, reading, glbRoot);
   return facts;
 }

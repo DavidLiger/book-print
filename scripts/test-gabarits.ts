@@ -10,6 +10,7 @@ import { readPdfFacts } from '../src/checks/pdf-facts';
 import { runChecks } from '../src/checks/rules';
 import { createCollection, readCollection, CollectionRefused } from '../src/data/collection';
 import { createBookFolder, CreateRefused } from '../src/data/create-book';
+import { cadreLivre } from './fixtures/livre';
 import { cleanPng, storeIllustration } from '../src/data/illustration-store';
 import { createSubject, SubjectRefused, updateSubject } from '../src/data/subject-file';
 import { readFacts } from '../src/parcours/facts';
@@ -47,13 +48,14 @@ const newData = () => {
   const dataRoot = path.join(tempDir(), 'donnees');
   fs.mkdirSync(dataRoot);
   createBookFolder(dataRoot, BOOK_ID);
+  cadreLivre(dataRoot, BOOK_ID);
   return dataRoot;
 };
 const gabarit = (dataRoot: string, name: string) => path.join(dataRoot, 'collection', 'gabarits', name);
 
 // Gabarits livrés et copie sans écrasement
 {
-  check('livrés : 2A seul, valide au schéma', deliveredNames().join() === '2A.json' && templateSchema.safeParse(JSON.parse(fs.readFileSync(path.join(DELIVERED, '2A.json'), 'utf8'))).success);
+  check('livrés : 1N (notes, MP6a) et 2A, 2A valide au schéma', deliveredNames().join() === '1N.json,2A.json' && templateSchema.safeParse(JSON.parse(fs.readFileSync(path.join(DELIVERED, '2A.json'), 'utf8'))).success);
   check('2A livré : l’ancien fichier du code a disparu', !fs.existsSync(path.join(import.meta.dirname, '..', 'src', 'templates', '2A.ts')));
   const dataRoot = newData();
   check('sans collection : aucun gabarit, rien de refusé', (() => {
@@ -116,7 +118,7 @@ const gabarit = (dataRoot: string, name: string) => path.join(dataRoot, 'collect
   check('refus : casse du nom différente de l’identifiant', entry('2k')?.error?.includes('2K.json') === true, entry('2k'));
   check('refus : pictogramme et couleur d’encadré inconnus du style, nommés', entry('2G')?.error?.includes('inconnu') === true && entry('2G')?.error?.includes('pas-de-couleur') === true, entry('2G'));
   if (linkedOk) check('refus : gabarit en lien de fichier', entry('2H')!.error === 'n\'est pas un fichier réel', entry('2H'));
-  check('gabarits valides seuls', Object.keys(validTemplates(lib)).sort().join() === ['12A', '2A', '2B', '2F'].sort().join());
+  check('gabarits valides seuls', Object.keys(validTemplates(lib)).sort().join() === ['12A', '1N', '2A', '2B', '2F'].sort().join(), Object.keys(validTemplates(lib)));
   check('gabarit invalide : jamais réécrit', fs.readdirSync(path.join(dataRoot, 'collection', 'gabarits')).every((n) => fs.readFileSync(gabarit(dataRoot, n), 'utf8') === before[n]));
   const absent = templateOf(lib, '6A');
   const invalid = templateOf(lib, '4A');
@@ -306,6 +308,7 @@ function pngPixels(buf: Buffer): Buffer {
   const dataRoot = path.join(parent, 'donnees');
   fs.mkdirSync(dataRoot);
   createBookFolder(dataRoot, BOOK_ID);
+  cadreLivre(dataRoot, BOOK_ID);
   createCollection(dataRoot);
   const read = readCollection(dataRoot)!;
   const subject = createSubject(dataRoot, BOOK_ID, { sceneId: 'alpha', pages: 2, template: '2A', theme: 'foret' }, ['alpha', 'beta'], ['foret']);
@@ -320,7 +323,7 @@ function pngPixels(buf: Buffer): Buffer {
   const bookStep = (f: ParcoursFacts, id: string) => STEPS.find((s) => s.id === id)!.evaluate(f);
   let f = facts();
   check('sujet sur 2A : aucun écart, Recherche validée', subjectOf(f).templateError === null && subjectOf(f).blocksGap.missing.length === 0 && subjectOf(f).blocksGap.extra.length === 0 && sujetStep(f, 'sujet-recherche').state === 'validee');
-  check('Gabarits : 2A valide, aucun sujet orphelin, validé', bookStep(f, 'gabarits').state === 'validee' && f.gabarits.valid === 1);
+  check('Gabarits : 2A et 1N valides, aucun sujet orphelin, validé', bookStep(f, 'gabarits').state === 'validee' && f.gabarits.valid === 2);
 
   // 2A modifié : le chapeau devient un encadré, l'illustration disparaît.
   const saved = fs.readFileSync(gabarit(dataRoot, '2A.json'));
@@ -380,6 +383,7 @@ function pngPixels(buf: Buffer): Buffer {
     workflows: { error: null, todo: [], faults: [] },
     styles: { error: null, count: 1, faults: [], todo: [], alerts: [] },
     subjects: [],
+    livre: null,
   });
   const run = (change: (f: ParcoursFacts) => void = () => {}) => {
     const f = facts();
@@ -411,6 +415,7 @@ function pngPixels(buf: Buffer): Buffer {
   const dataRoot = path.join(parent, 'donnees');
   fs.mkdirSync(dataRoot);
   createBookFolder(dataRoot, BOOK_ID);
+  cadreLivre(dataRoot, BOOK_ID);
   put(parent, 'config.local.json', { glbRoot, dataRoot });
   const server = createPrintServer(path.join(parent, 'config.local.json'));
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -433,10 +438,11 @@ function pngPixels(buf: Buffer): Buffer {
   check('route : ajouter sans collection, 409', (await post('/api/gabarits/ajouter', {})).status === 409);
   createCollection(dataRoot);
   fs.rmSync(gabarit(dataRoot, '2A.json'));
+  fs.rmSync(gabarit(dataRoot, '1N.json'));
   const empty = JSON.parse((await post('/api/gabarits/state', { bookId: BOOK_ID })).body);
   check('route : état, aucun gabarit', empty.templates.length === 0 && empty.present === true && empty.themes.includes('foret'), empty);
   const added = await post('/api/gabarits/ajouter', {});
-  check('route : ajouter, 2A créé', added.status === 200 && JSON.parse(added.body).result.created.join() === 'collection/gabarits/2A.json', added.body);
+  check('route : ajouter, 1N et 2A créés', added.status === 200 && JSON.parse(added.body).result.created.join() === 'collection/gabarits/1N.json,collection/gabarits/2A.json', added.body);
   const again = JSON.parse((await post('/api/gabarits/ajouter', {})).body);
   check('route : ajouter une seconde fois, conservé', again.result.created.length === 0 && again.result.kept.includes('collection/gabarits/2A.json'));
   createSubject(dataRoot, BOOK_ID, { sceneId: 'alpha', pages: 2, template: '2A', theme: 'foret' }, ['alpha'], ['foret']);

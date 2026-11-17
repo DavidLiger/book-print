@@ -15,6 +15,7 @@ import { applyFields, graphFaults, reachable, REFERENCE_BYPASS, sha256, withoutR
 import { depositWorkflow, readWorkflows } from '../src/comfy/workflow-file';
 import { createCollection } from '../src/data/collection';
 import { createBookFolder, DATA_GITIGNORE } from '../src/data/create-book';
+import { cadreLivre } from './fixtures/livre';
 import { createSubject, readSubject } from '../src/data/subject-file';
 import { readFacts } from '../src/parcours/facts';
 import { STEPS } from '../src/parcours/steps';
@@ -199,6 +200,7 @@ const parent = tempDir();
 const dataRoot = path.join(parent, 'donnees');
 fs.mkdirSync(dataRoot);
 createBookFolder(dataRoot, BOOK_ID);
+  cadreLivre(dataRoot, BOOK_ID);
 createCollection(dataRoot);
 createSubject(dataRoot, BOOK_ID, { sceneId: 'alpha', pages: 2, template: '2A', theme: 'foret' }, ['alpha', 'beta'], ['foret']);
 const NOW = new Date('2026-11-08T10:00:00Z');

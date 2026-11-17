@@ -14,6 +14,7 @@ import { readPdfFacts } from '../src/checks/pdf-facts';
 import { createCollection, readCollection } from '../src/data/collection';
 import { contourFile, contourName, readContour, sha256, subjectContour, writeContour } from '../src/data/contour-file';
 import { createBookFolder } from '../src/data/create-book';
+import { cadreLivre } from './fixtures/livre';
 import { storeIllustration } from '../src/data/illustration-store';
 import { createSubject, readResearch, updateSubject } from '../src/data/subject-file';
 import { checkAgainst, mergeImport, parseResearch } from '../src/research/import';
@@ -54,6 +55,7 @@ const newData = () => {
   const dataRoot = path.join(tempDir(), 'donnees');
   fs.mkdirSync(dataRoot);
   createBookFolder(dataRoot, BOOK_ID);
+  cadreLivre(dataRoot, BOOK_ID);
   createCollection(dataRoot);
   return dataRoot;
 };
@@ -586,6 +588,7 @@ async function pdfImages(pdf: Uint8Array): Promise<{ count: number; smask: numbe
   const dataRoot = path.join(parent, 'donnees');
   fs.mkdirSync(dataRoot);
   createBookFolder(dataRoot, BOOK_ID);
+  cadreLivre(dataRoot, BOOK_ID);
   createCollection(dataRoot);
   writeModel(dataRoot);
   createSubject(dataRoot, BOOK_ID, { sceneId: 'alpha', pages: 2, template: '2X', theme: 'foret' }, ['alpha', 'beta'], ['foret']);

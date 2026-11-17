@@ -88,6 +88,7 @@ function showStep(id) {
   if (changed && id === 'droits') loadDroits();
   if (changed && id === 'workflows') loadWorkflows();
   if (changed && id === 'styles') loadStyles();
+  if (changed && id === 'livre-complet') loadLivre();
   // L'état de ComfyUI du bandeau se revérifie à chaque changement d'étape : il peut avoir été fermé entre-temps.
   if (changed && !['workflows', 'styles'].includes(id)) pollComfy(true);
 }
@@ -172,6 +173,7 @@ async function readSelected() {
   if (parcours.current === 'droits') await loadDroits();
   if (parcours.current === 'workflows') await loadWorkflows();
   if (parcours.current === 'styles') await loadStyles();
+  if (parcours.current === 'livre-complet') await loadLivre();
 }
 
 async function createFolder() {
@@ -623,6 +625,9 @@ const gabaritPreviewUrl = () => `/apercu-gabarit?${new URLSearchParams({ bookId:
 const editeurModeles = Editeur.creer({
   prefixe: 'ga',
   iframe: 'ga-apercu',
+  // MP6a : un modèle peut servir à une page du livre (texte fixe, sommaire).
+  texteFixe: true,
+  sommaire: true,
   couches: 'input[data-gabarit-layer]',
   attr: 'gabaritLayer',
   enqueue: (task) => enqueue(task, $('ga-motifs')),
@@ -1011,6 +1016,7 @@ function showMiseFile(state) {
     : `Sujet créé avant les mises en page libres : il garde le gabarit ${state.id} de la collection jusqu'à son premier enregistrement.`;
   $('mp-fichier').replaceChildren(el('span', `${origin} Fichier : `), el('code', state.target));
   $('mp-theme').textContent = `Thème du sujet : ${state.options.theme}`;
+  fillPageChoice($('mp-page-retirer'), state.pages);
 }
 
 const editeurSujet = Editeur.creer({
@@ -1073,6 +1079,152 @@ async function controlMiseEnPage() {
   box.replaceChildren(el('p', 'Contrôle en cours…', 'note'));
   try {
     const { checks } = await action('/api/mise-en-page/controle', { dir: dirOf(), subjectId: sujets.open });
+    box.replaceChildren(checksTable(checks));
+  } catch (e) {
+    box.replaceChildren(el('p', e.message, 'erreur'));
+  } finally {
+    button.disabled = false;
+  }
+}
+
+/** Pages d'une copie (MP6a) : la liste des pages à retirer suit le nombre de pages de la copie. */
+function fillPageChoice(select, pages) {
+  fillSelect(select, Array.from({ length: pages }, (_, i) => [String(i), `page ${i + 1}`]), String(pages - 1));
+}
+
+// Livre complet (MP6a) : le plan, ses vrais numéros, les pages du livre et leur éditeur.
+
+const livre = { state: null, selected: null, page: null };
+const livreTarget = () => ({ dir: dirOf(), pageId: livre.page });
+const PART_LABELS = { page: 'page du livre', sujet: 'sujet', notes: 'notes (automatique)' };
+
+const editeurPage = Editeur.creer({
+  prefixe: 'lp',
+  iframe: 'lp-page',
+  couches: 'input[data-livre-layer]',
+  attr: 'livreLayer',
+  texteFixe: true,
+  sommaire: true,
+  enqueue: (task) => enqueue(task, $('lp-motifs')),
+  cible: livreTarget,
+  apercu: () => `/apercu-mise-en-page?${new URLSearchParams({ dir: dirOf(), page: livre.page, t: String(Date.now()) })}`,
+  relire: () => action('/api/mise-en-page/state', livreTarget()),
+  apres: async (state) => {
+    showPageFile(state);
+    $('lp-resultat').replaceChildren();
+    await refreshParcours();
+  },
+});
+
+function showPageFile(state) {
+  $('lp-fichier').replaceChildren(el('span', `Page ${state.firstPage}, copie de ${state.modele.id}. Fichier : `), el('code', state.target));
+  fillPageChoice($('lp-page-retirer'), state.pages);
+}
+
+function planTable(state) {
+  const table = el('table');
+  const head = el('tr');
+  for (const t of ['Pages', 'Côté', 'Partie', 'Nature', 'État']) head.append(el('th', t));
+  table.append(head);
+  for (const p of state.parts) {
+    const row = el('tr');
+    row.dataset.part = `${p.kind}:${p.id}`;
+    if (livre.selected === row.dataset.part) row.setAttribute('aria-current', 'true');
+    const pages = p.firstPage === null ? '?' : p.pages > 1 ? `${p.firstPage}–${p.firstPage + p.pages - 1}` : String(p.firstPage);
+    const name = el('td');
+    name.append(smallButton(p.id, () => selectPart(p)));
+    const status = el('td');
+    if (p.errors.length > 0) for (const e of p.errors) status.append(el('p', e, 'erreur cellule'));
+    else status.append(el('span', p.kind === 'sujet' ? (p.status ?? '') : 'valide', p.kind === 'sujet' && p.status !== 'prêt' ? 'alerte' : 'bien'));
+    row.append(el('td', pages), el('td', p.side ?? '?'), name, el('td', PART_LABELS[p.kind]), status);
+    table.append(row);
+  }
+  return table;
+}
+
+function showLivre(state) {
+  livre.state = state;
+  $('lc-total').textContent = state.total === null
+    ? 'Total inconnu : une partie est illisible.'
+    : `${state.total} pages${state.notes ? ', dont une page de notes ajoutée pour la parité' : ''} ; budget ${state.budget}.`;
+  const box = $('lc-message');
+  // Les erreurs sont déjà dans les motifs de l'étape, au-dessus du panneau : ici, les alertes seulement.
+  box.replaceChildren(...state.alerts.map((a) => el('p', a, 'alerte')));
+  $('lc-plan').replaceChildren(state.parts.length ? planTable(state) : el('p', 'Aucune partie : ajouter les pages du livre, créer les sujets.', 'note'));
+  fillSelect($('lc-modele'), state.models.map((m) => [m.id, `${m.id} (${m.pages} p., départ ${m.start})`]), $('lc-modele').value || undefined);
+  const part = selectedPart();
+  $('lc-ouvrir').disabled = !part || part.kind !== 'page';
+  $('lc-supprimer').disabled = !part || part.kind !== 'page';
+  $('lc-monter').disabled = !part || part.kind === 'notes';
+  $('lc-descendre').disabled = !part || part.kind === 'notes';
+}
+
+const selectedPart = () => livre.state?.parts.find((p) => `${p.kind}:${p.id}` === livre.selected) ?? null;
+
+const PX_PER_IN = 96;
+function showPart(p) {
+  const frame = $('lc-apercu');
+  if (!p || p.firstPage === null) {
+    frame.removeAttribute('src');
+    $('lc-apercu-titre').textContent = '';
+    return;
+  }
+  $('lc-apercu-titre').textContent = `${PART_LABELS[p.kind]} ${p.id}, à partir de la page ${p.firstPage}`;
+  frame.src = `/apercu-livre?${new URLSearchParams({ dir: dirOf(), kind: p.kind, id: p.id, t: String(Date.now()) })}`;
+  // Pages côte à côte, au format du livre plus le fond perdu : la mise à l'échelle des autres aperçus.
+  const t = livre.state.trim;
+  const page = { widthMm: (t.widthIn + 0.125) * 25.4, heightMm: (t.heightIn + 0.25) * 25.4 };
+  fitPreview({ frame: $('lc-cadre'), inner: $('lc-echelle'), layout: Array.from({ length: p.pages ?? 1 }, () => page) });
+}
+
+function selectPart(p) {
+  livre.selected = `${p.kind}:${p.id}`;
+  showLivre(livre.state);
+  showPart(p);
+}
+
+async function loadLivre() {
+  $('lc-page-vue').hidden = true;
+  $('lc-plan-vue').hidden = false;
+  try {
+    showLivre(await action('/api/livre/state', { dir: dirOf() }));
+    showPart(selectedPart());
+  } catch (e) {
+    $('lc-message').replaceChildren(el('p', e.message, 'erreur'));
+  }
+}
+
+function livreChange(path, body) {
+  return enqueue(async () => {
+    $('lc-confirmer').hidden = true;
+    showLivre(await action(path, { dir: dirOf(), ...body }));
+    showPart(selectedPart());
+    await refreshParcours();
+  }, $('lc-message'));
+}
+
+async function openBookPage(pageId) {
+  livre.page = pageId;
+  $('lc-plan-vue').hidden = true;
+  $('lc-page-vue').hidden = false;
+  $('lp-message').replaceChildren();
+  try {
+    const state = await action('/api/mise-en-page/state', livreTarget());
+    showPageFile(state);
+    editeurPage.ouvrir(state);
+  } catch (e) {
+    editeurPage.fermer();
+    $('lp-message').append(el('p', e.message, 'erreur'));
+  }
+}
+
+async function controlBookPage() {
+  const button = $('lp-controler');
+  const box = $('lp-resultat');
+  button.disabled = true;
+  box.replaceChildren(el('p', 'Contrôle en cours…', 'note'));
+  try {
+    const { checks } = await action('/api/mise-en-page/controle', livreTarget());
     box.replaceChildren(checksTable(checks));
   } catch (e) {
     box.replaceChildren(el('p', e.message, 'erreur'));
@@ -2653,6 +2805,36 @@ $('ga-theme').addEventListener('change', () => {
 $('ga-nouvelle').addEventListener('click', openNewGabarit);
 $('ga-copier').addEventListener('click', openCopyGabarit);
 $('ga-miroir').addEventListener('click', mirrorGabarit);
+// MP6a : Miroir et pages d'une copie (sujet, page du livre) ; étape « Livre complet ».
+$('mp-miroir').addEventListener('click', () => editeurSujet.miroir());
+$('mp-ajouter-page').addEventListener('click', () => editeurSujet.ajouterPage());
+$('mp-retirer-page').addEventListener('click', () => editeurSujet.retirerPage(Number($('mp-page-retirer').value)));
+$('lp-miroir').addEventListener('click', () => editeurPage.miroir());
+$('lp-ajouter-page').addEventListener('click', () => editeurPage.ajouterPage());
+$('lp-retirer-page').addEventListener('click', () => editeurPage.retirerPage(Number($('lp-page-retirer').value)));
+$('lp-controler').addEventListener('click', controlBookPage);
+$('lp-recharger').addEventListener('click', () => openBookPage(livre.page));
+$('lp-retour').addEventListener('click', loadLivre);
+$('lc-recharger').addEventListener('click', loadLivre);
+$('lc-ajouter').addEventListener('click', () => livreChange('/api/livre/ajouter', { pageId: $('lc-id').value.trim(), model: $('lc-modele').value, place: $('lc-place').value }));
+$('lc-monter').addEventListener('click', () => selectedPart() && livreChange('/api/livre/deplacer', { id: selectedPart().id, sens: -1 }));
+$('lc-descendre').addEventListener('click', () => selectedPart() && livreChange('/api/livre/deplacer', { id: selectedPart().id, sens: 1 }));
+$('lc-ouvrir').addEventListener('click', () => selectedPart()?.kind === 'page' && openBookPage(selectedPart().id));
+$('lc-supprimer').addEventListener('click', () => {
+  const p = selectedPart();
+  if (!p || p.kind !== 'page') return;
+  // Confirmation dans la page, qui nomme la page (aucune boîte du navigateur), comme pour un sujet (ED6).
+  const box = $('lc-confirmer');
+  const yes = el('button', `Supprimer la page ${p.id}`);
+  yes.type = 'button';
+  yes.addEventListener('click', () => livreChange('/api/livre/supprimer', { pageId: p.id, confirm: true }));
+  const no = el('button', 'Annuler', 'secondaire');
+  no.type = 'button';
+  no.addEventListener('click', () => { box.hidden = true; });
+  box.replaceChildren(el('p', `La page ${p.id} sera rangée dans pages/.supprimes/, rien n'est effacé.`, 'note'), yes, no);
+  box.hidden = false;
+});
+new ResizeObserver(() => livre.state && showPart(selectedPart())).observe($('lc-cadre'));
 $('ga-nouvelle-form').addEventListener('submit', (event) => {
   event.preventDefault();
   createGabarit('/api/mise-en-page/nouvelle', { bookId: bookRef.bookId, id: $('ga-nouvelle-id').value.trim(), start: $('ga-nouvelle-depart').value, theme: themeOf() }, $('ga-nouvelle-fenetre'), $('ga-nouvelle-message'));

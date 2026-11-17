@@ -25,7 +25,8 @@
     "test:texte-detoure": "tsx scripts/test-texte-detoure.ts",
     "test:editeur": "tsx scripts/test-editeur.ts",
     "test:pret": "tsx scripts/test-pret.ts",
-    "test:detoure": "tsx scripts/test-detoure.ts"
+    "test:detoure": "tsx scripts/test-detoure.ts",
+    "test:livre": "tsx scripts/test-livre.ts"
   },
   "keywords": [],
   "author": "",

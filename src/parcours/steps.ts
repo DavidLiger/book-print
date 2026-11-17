@@ -2,6 +2,8 @@
 // `facts.ts`, jamais d'un fichier d'état. Chaque lot qui ajoute un écran ajoute ici une entrée. Les étapes `scope: 'sujet'` sont calculées
 // une fois par sujet, numérotées à part, et n'entrent pas dans l'ouverture du livre.
 
+import type { LivreFacts } from '../book/facts';
+
 export type Scope = 'livre' | 'sujet';
 /** État propre d'une étape. `verrouillee` n'en est pas un : il vient de `requires`. */
 export type OwnState = 'a-faire' | 'validee' | 'alerte' | 'erreur';
@@ -93,6 +95,8 @@ export interface ParcoursFacts {
     alerts: string[];
   };
   subjects: SubjectFacts[];
+  /** Le livre complet (MP6a) : plan, numéros réels, page de notes, C2, C16 du livre, pages du livre. `null` : pas lu (étapes d'avant). */
+  livre: LivreFacts | null;
 }
 
 export interface StepVerdict {
@@ -224,6 +228,20 @@ function sujets({ subjects }: ParcoursFacts): StepVerdict {
   return { state: 'validee', reasons: [] };
 }
 
+/**
+ * Livre complet (MP6a) : plan lisible, chaque page du livre valide (C16, C17, texte fixe), C2 et C16 du livre sans erreur. Alerte : écart au
+ * budget ou au scénario retenu, sujet pas encore prêt. Un livre sans aucune partie : à faire.
+ */
+function livreComplet({ livre }: ParcoursFacts): StepVerdict {
+  if (!livre) return { state: 'a-faire', reasons: ['Lire le livre.'] };
+  const parts = livre.parts.flatMap((p) => p.errors.map((e) => (e.startsWith(p.id) || e.includes(` ${p.id} `) ? e : `${p.id} : ${e}`)));
+  const errors = [...parts, ...livre.errors];
+  if (errors.length > 0) return { state: 'erreur', reasons: errors };
+  if (livre.parts.length === 0) return { state: 'a-faire', reasons: ['Ajouter les pages du livre et des sujets.'] };
+  if (livre.alerts.length > 0) return { state: 'alerte', reasons: livre.alerts };
+  return { state: 'validee', reasons: [] };
+}
+
 const unreadable = (s: SubjectFacts | undefined): StepVerdict | null => (s?.error ? { state: 'erreur', reasons: [s.error] } : null);
 
 /** Mise en page du sujet (ED1) : lisible, au format du livre, sur le bon côté (C16), sans chevauchement interdit (C17). */
@@ -302,6 +320,8 @@ export const STEPS: StepDef[] = [
   { id: 'workflows', label: 'Workflows', scope: 'livre', requires: ['droits'], evaluate: workflows },
   { id: 'styles', label: 'Styles', scope: 'livre', requires: ['workflows'], evaluate: styles },
   { id: 'sujets', label: 'Sujets', scope: 'livre', requires: ['gabarits'], evaluate: sujets },
+  // MP6a : après Sujets, n'exige que Mises en page, pour faire les pages du livre avant la fin des sujets.
+  { id: 'livre-complet', label: 'Livre complet', scope: 'livre', requires: ['gabarits'], evaluate: livreComplet },
   { id: 'sujet-mise-en-page', label: 'Mise en page', scope: 'sujet', requires: [], evaluate: sujetMiseEnPage },
   { id: 'sujet-recherche', label: 'Recherche', scope: 'sujet', requires: ['sujet-mise-en-page'], evaluate: sujetRecherche },
   { id: 'sujet-relecture', label: 'Relecture', scope: 'sujet', requires: ['sujet-recherche'], evaluate: sujetRelecture },

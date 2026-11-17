@@ -13,18 +13,23 @@ import { c17Overlaps } from '../checks/overlaps';
 import { collectionFolder, readCollection } from '../data/collection';
 import { ensureDir } from '../data/create-book';
 import { readPrintBook } from '../data/pricing-file';
-import { firstPageOf, readSubject, readSubjectLayout, subjectFolder, SubjectRefused } from '../data/subject-file';
+import { firstPageOf, readPlan, readSubject, readSubjectLayout, subjectFolder, SubjectRefused, updateSubject } from '../data/subject-file';
+import { bookPageFolder, bookPageLabel, readBookPage } from '../data/book-pages';
+import { sideFault } from '../book/plan';
+import { addPage, PageChangeRefused, removePage } from '../layout/pages';
+import { bookPageContext, bookPageEditorContent, bookPageFaults } from '../render/book-page';
 import { fromV1 } from '../layout/from-v1';
 import { archiveV1, LAYOUT_FILE, layoutJson, LayoutConflict, layoutOf, LayoutRefused, readLayoutBytes, sha256, writeIfUnchanged } from '../layout/files';
 import { mirrorLayout } from '../layout/mirror';
 import { isLayout, previewFirstPage, sameFormat, formatLabel, formatOf, versionOf, type MiseEnPage } from '../layout/model';
-import { LAYOUT_VERSION, layoutSchema, subjectLayoutSchema, type Layout } from '../layout/schema';
+import { bookPageLayoutSchema, LAYOUT_VERSION, layoutSchema, subjectLayoutSchema, type Layout } from '../layout/schema';
 import { subjectLayoutFacts } from '../parcours/facts';
 import { controlTemplate, flowedPreview, previewOf, templatePreview, type TemplatePreview } from '../render/gabarit';
 import { applyBookFiche, RenderRefused } from '../render/html';
 import { editorContent, subjectContext } from '../render/subject';
 import { slugSchema, templatePages, TEMPLATE_ID_PATTERN } from '../schema/common';
 import { gridOf, type Style } from '../schema/style';
+import { subjectSchema } from '../schema/subject';
 import { readTemplates, templateOf, templateStyleFaults, TEMPLATES_DIR, type TemplateEntry } from '../templates/files';
 import { GeometryRefused, type LayoutPage } from '../templates/geometry';
 import type { Config } from './config';
@@ -45,6 +50,13 @@ const modelSave = z.strictObject({ ...modelTarget, ...saved });
 const newBody = z.strictObject({ bookId: z.string(), id: templateId, start: z.enum(['gauche', 'droite'], { error: 'start : gauche ou droite' }), theme: slugSchema.optional() });
 const copyBody = z.strictObject({ bookId: z.string(), id: templateId, nouvel: templateId, theme: slugSchema.optional() });
 const mirrorBody = z.strictObject({ ...modelTarget, empreinte });
+// MP6a : une page du livre (`dir`, `pageId`) ; « Miroir », « Ajouter une page » et « Retirer une page » d'une copie (sujet ou page du livre).
+const pageTarget = { dir: z.string(), pageId: slugSchema };
+const pageBody = z.strictObject(pageTarget);
+const pageSave = z.strictObject({ ...pageTarget, ...saved });
+const copyMirror = z.union([z.strictObject({ ...subjectTarget, empreinte }), z.strictObject({ ...pageTarget, empreinte })]);
+const copyAdd = copyMirror;
+const copyRemove = z.union([z.strictObject({ ...subjectTarget, empreinte, page: z.number().int().nonnegative() }), z.strictObject({ ...pageTarget, empreinte, page: z.number().int().nonnegative() })]);
 
 function parse<T extends z.ZodType>(schema: T, value: unknown): z.infer<T> {
   const body = schema.safeParse(value);
@@ -52,8 +64,9 @@ function parse<T extends z.ZodType>(schema: T, value: unknown): z.infer<T> {
   return body.data;
 }
 
-/** Une cible porte `subjectId` (un sujet) ou `bookId` (un modèle). */
+/** Une cible porte `subjectId` (un sujet), `pageId` (une page du livre, MP6a) ou `bookId` (un modèle). */
 const isSubjectTarget = (value: unknown) => typeof value === 'object' && value !== null && Object.hasOwn(value, 'subjectId');
+const isPageTarget = (value: unknown) => typeof value === 'object' && value !== null && Object.hasOwn(value, 'pageId');
 
 /** Couleurs d'encadré, pictogrammes et thèmes du style : les choix des propriétés de l'éditeur. */
 function optionsOf(style: Style, theme: string) {
@@ -383,6 +396,10 @@ let controlling = false;
 
 export const LAYOUT_ACTIONS: Record<string, (body: unknown, config: Config) => Json | Promise<Json>> = {
   '/api/mise-en-page/state': (body, config) => {
+    if (isPageTarget(body)) {
+      const { dir, pageId } = parse(pageBody, body);
+      return pageState(config, dir, pageId);
+    }
     if (isSubjectTarget(body)) {
       const { dir, subjectId } = parse(subjectBody, body);
       return subjectState(config, dir, subjectId);
@@ -391,8 +408,7 @@ export const LAYOUT_ACTIONS: Record<string, (body: unknown, config: Config) => J
     return modelState(config.dataRoot, bookId, id, theme);
   },
   '/api/mise-en-page/controle': async (body, config) => {
-    const { dir, subjectId } = parse(subjectBody, body);
-    const v = view(config, dir, subjectId);
+    const v = isPageTarget(body) ? pageView(config, parse(pageBody, body).dir, parse(pageBody, body).pageId) : view(config, parse(subjectBody, body).dir, parse(subjectBody, body).subjectId);
     if (!v.preview) throw new RenderRefused(v.errors.join(' '));
     if (controlling) throw new RenderRefused('Un contrôle de mise en page est déjà en cours.');
     controlling = true;
@@ -404,13 +420,159 @@ export const LAYOUT_ACTIONS: Record<string, (body: unknown, config: Config) => J
     }
   },
   '/api/mise-en-page/enregistrer': (body, config) => {
+    if (isPageTarget(body)) return savePage(config, parse(pageSave, body));
     if (isSubjectTarget(body)) return saveSubject(config, parse(subjectSave, body), new Date());
     return saveModel(config.dataRoot, parse(modelSave, body), new Date());
   },
   '/api/mise-en-page/nouvelle': (body, config) => newModel(config.dataRoot, parse(newBody, body)),
   '/api/mise-en-page/copier': (body, config) => copyModel(config.dataRoot, parse(copyBody, body)),
-  '/api/mise-en-page/miroir': (body, config) => mirrorModel(config.dataRoot, parse(mirrorBody, body), new Date()),
+  '/api/mise-en-page/miroir': (body, config) => {
+    // MP6a : « Miroir » ouvert aux copies (C16 du livre), refusé avec le motif du schéma comme pour un modèle.
+    if (isPageTarget(body) || isSubjectTarget(body)) return changeCopy(config, parse(copyMirror, body), (l) => {
+      const result = mirrorLayout(l);
+      if ('issues' in result) throw new LayoutRefused(`Miroir refusé, rien n'est écrit : ${result.issues}`);
+      return result.layout;
+    });
+    return mirrorModel(config.dataRoot, parse(mirrorBody, body), new Date());
+  },
+  '/api/mise-en-page/ajouter-page': (body, config) => {
+    const b = parse(copyAdd, body);
+    return changeCopy(config, b, (l) => guard(() => addPage(l, 'subjectId' in b ? 'sujet' : 'page')));
+  },
+  '/api/mise-en-page/retirer-page': (body, config) => {
+    const b = parse(copyRemove, body);
+    return changeCopy(config, b, (l) => guard(() => removePage(l, b.page, 'subjectId' in b ? 'sujet' : 'page')));
+  },
 };
+
+function guard(f: () => Layout): Layout {
+  try {
+    return f();
+  } catch (e) {
+    if (e instanceof PageChangeRefused) throw new LayoutRefused(e.message);
+    throw e;
+  }
+}
+
+// Page du livre (MP6a)
+
+/** La copie d'une page du livre et son aperçu à sa vraie première page : texte fixe là où il est écrit, remplissage ailleurs. */
+function pageView(config: Config, dir: string, pageId: string): View {
+  const read = reading(config, dir);
+  const { bookId } = read;
+  const { book, error } = readPrintBook(config.dataRoot, bookId);
+  if (!book) throw new SubjectRefused(error ?? `Dossier du livre absent : ${bookId}/.`);
+  const collection = readCollection(config.dataRoot);
+  if (!collection) throw new SubjectRefused('collection/ absent : le créer d\'abord dans la page.');
+  const style = applyBookFiche(collection.style, book);
+  const copy = readBookPage(config.dataRoot, bookId, pageId);
+  const layout = layoutOf(copy);
+  const folder = bookPageFolder(config.dataRoot, bookId, pageId)!;
+  const bytes = readLayoutBytes(path.join(folder, LAYOUT_FILE), bookPageLabel(bookId, pageId));
+  const plan = readPlan(config.dataRoot, book, true);
+  const part = plan.parts.find((p) => p.kind === 'page' && p.id === pageId);
+  const firstPage = part?.firstPage ?? 1;
+  const errors: string[] = [];
+  const side = part ? sideFault(part) : null;
+  if (side) errors.push(`C16, ${side}`);
+  let preview: TemplatePreview | null = null;
+  if (!side && part?.firstPage != null) {
+    try {
+      const ctx = bookPageContext(config.dataRoot, bookId, pageId, read, config.glbRoot);
+      errors.push(...overlapFaults(ctx.pages).map((d) => `C17, ${d}`), ...bookPageFaults(ctx));
+      preview = previewOf(ctx.pages, ctx.trim, layout, ctx.collection.style, bookPageEditorContent(ctx), ctx.collection.pictos);
+    } catch (e) {
+      if (!(e instanceof GeometryRefused) && !(e instanceof RenderRefused)) throw e;
+      errors.push(e.message);
+    }
+  }
+  return { model: layout, source: 'layout.json', file: bookPageLabel(bookId, pageId), modele: copy.modele, errors, preview, firstPage, document: layout, empreinte: bytes ? sha256(bytes) : null, style, theme: Object.keys(style.palette.themes)[0]!, ratios: {} };
+}
+
+function pageState(config: Config, dir: string, pageId: string): Json {
+  const v = pageView(config, dir, pageId);
+  return {
+    cible: 'page',
+    source: v.source,
+    file: v.file,
+    target: v.file,
+    modele: v.modele,
+    version: 2,
+    id: v.model.id,
+    pages: v.model.pages,
+    start: v.model.start,
+    firstPage: v.firstPage,
+    errors: v.errors,
+    elements: rows(v),
+    layout: v.preview?.layout ?? null,
+    document: v.document,
+    empreinte: v.empreinte,
+    grille: gridOf(v.style),
+    options: optionsOf(v.style, v.theme),
+    ratios: v.ratios,
+  };
+}
+
+function savePage(config: Config, body: z.infer<typeof pageSave>): Json {
+  const { bookId } = reading(config, body.dir);
+  const { book, error } = readPrintBook(config.dataRoot, bookId);
+  if (!book) throw new SubjectRefused(error ?? `Dossier du livre absent : ${bookId}/.`);
+  const collection = readCollection(config.dataRoot);
+  if (!collection) throw new SubjectRefused('collection/ absent : le créer d\'abord dans la page.');
+  const style = applyBookFiche(collection.style, book);
+  const folder = bookPageFolder(config.dataRoot, bookId, body.pageId);
+  if (!folder) throw new SubjectRefused(`Page du livre ${body.pageId} absente.`);
+  const label = bookPageLabel(bookId, body.pageId);
+  const bytes = readLayoutBytes(path.join(folder, LAYOUT_FILE), label);
+  if (!bytes || sha256(bytes) !== body.empreinte) throw new LayoutConflict(`${label} a changé depuis sa lecture : il est relu, l'historique d'annulation repart de zéro.`);
+  const copy = readBookPage(config.dataRoot, bookId, body.pageId);
+  const layout = checkDocument(body.document, { id: copy.id, pages: copy.pages, trim: book.edition.trim }, style);
+  const content = layoutJson(bookPageLayoutSchema.parse({ ...layout, modele: copy.modele }));
+  if (bytes.toString('utf8') !== content) writeIfUnchanged(folder, LAYOUT_FILE, content, body.empreinte, label);
+  return pageState(config, body.dir, body.pageId);
+}
+
+/**
+ * Change la copie d'un sujet ou d'une page du livre par une fonction pure (« Miroir », « Ajouter une page », « Retirer une page », MP6a) :
+ * seulement si le fichier est encore celui qui a été lu, `modele` gardé. Pour un sujet, `pages` de `subject.json` suit, écrit après
+ * `layout.json` ; un sujet « prêt » repasse à « relu », comme pour un changement de modèle.
+ */
+function changeCopy(config: Config, body: { dir: string; empreinte: string; subjectId?: string; pageId?: string }, change: (l: Layout) => Layout): Json {
+  const { bookId } = reading(config, body.dir);
+  const isPage = body.pageId !== undefined;
+  const id = (body.pageId ?? body.subjectId)!;
+  const folder = isPage ? bookPageFolder(config.dataRoot, bookId, id) : subjectFolder(config.dataRoot, bookId, id);
+  if (!folder) throw new SubjectRefused(`${isPage ? 'Page du livre' : 'Sujet'} ${id} absent.`);
+  const label = isPage ? bookPageLabel(bookId, id) : `${bookId}/subjects/${id}/${LAYOUT_FILE}`;
+  const bytes = readLayoutBytes(path.join(folder, LAYOUT_FILE), label);
+  if (!bytes) throw new LayoutRefused(`${label} absent : enregistrer d'abord la mise en page dans l'éditeur.`);
+  if (sha256(bytes) !== body.empreinte) throw new LayoutConflict(`${label} a changé depuis sa lecture : il est relu, l'historique d'annulation repart de zéro.`);
+  const copy = isPage ? readBookPage(config.dataRoot, bookId, id) : readSubjectLayout(config.dataRoot, bookId, id)!;
+  const next = change(layoutOf(copy));
+  const schema = isPage ? bookPageLayoutSchema : subjectLayoutSchema;
+  const parsed = schema.safeParse({ ...next, modele: copy.modele });
+  if (!parsed.success) throw new LayoutRefused(`Refusé, rien n'est écrit : ${parsed.error.issues.map((i) => i.message).join(' ; ')}`);
+  if (isPage) {
+    writeIfUnchanged(folder, LAYOUT_FILE, layoutJson(parsed.data), body.empreinte, label);
+    return pageState(config, body.dir, id);
+  }
+  // Le sujet suit : `pages`, et `template` à l'identifiant de la copie (le schéma du sujet lie son nombre aux pages ; l'origine reste dans
+  // `modele`) ; un sujet « prêt » repasse à « relu ». Validé avant toute écriture : `layout.json` d'abord, `subject.json` ensuite.
+  const subject = readSubject(config.dataRoot, bookId, id);
+  const nextSubject = subjectSchema.safeParse({ ...subject, pages: next.pages, template: next.id, ...(subject.status === 'prêt' ? { status: 'relu' } : {}) });
+  if (!nextSubject.success) throw new LayoutRefused(`Refusé, rien n'est écrit : ${nextSubject.error.issues.map((i) => i.message).join(' ; ')}`);
+  writeIfUnchanged(folder, LAYOUT_FILE, layoutJson(parsed.data), body.empreinte, label);
+  if (JSON.stringify(nextSubject.data) !== JSON.stringify(subject)) updateSubject(config.dataRoot, bookId, id, (d) => ({ ...d, subject: nextSubject.data }));
+  return subjectState(config, body.dir, id);
+}
+
+/** Aperçu d'une page du livre dans l'éditeur (MP6a). */
+export async function bookPageEditorHtml(dir: string | null, pageId: string | null, config: Config): Promise<string> {
+  const body = parse(pageBody, { dir, pageId });
+  const v = pageView(config, body.dir, body.pageId);
+  if (!v.preview) throw new RenderRefused(v.errors.join(' '));
+  return (await flowedPreview(v.preview)).html;
+}
 
 export async function layoutPreviewHtml(dir: string | null, subjectId: string | null, config: Config): Promise<string> {
   const body = parse(subjectBody, { dir, subjectId });

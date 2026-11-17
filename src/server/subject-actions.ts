@@ -22,8 +22,12 @@ import { slugSchema } from '../schema/common';
 import type { StoredResearch } from '../schema/research';
 import { templateFits } from '../templates';
 import { readTemplates, validTemplates } from '../templates/files';
-import { sameFormat } from '../layout/model';
+import { isLayout, sameFormat, type MiseEnPage } from '../layout/model';
+import { subjectOnlyFaults } from '../layout/schema';
 import type { Config } from './config';
+
+/** Un modèle d'une page, ou qui porte un sommaire ou un texte fixe, est réservé aux pages du livre (MP6a) : il n'est pas proposé à un sujet. */
+const forSubjects = (t: MiseEnPage) => !isLayout(t) || subjectOnlyFaults(t).length === 0;
 
 export class BadSubjectRequest extends Error {}
 
@@ -96,7 +100,7 @@ function bookState(config: Config, dir: string): Json {
     lang: book.edition.lang,
     scenes: read.scenes.map((s) => ({ id: s.id, title: s.title?.[book.edition.lang] ?? s.id, used: used.has(s.id) })),
     // Seules les mises en page du format du livre sont proposées (ED1).
-    templates: Object.values(validTemplates(readTemplates(config.dataRoot, collection.style))).filter((t) => sameFormat(t, book.edition.trim)).map((t) => ({ id: t.id, pages: t.pages, fits: templateFits(t, firstPage) })),
+    templates: Object.values(validTemplates(readTemplates(config.dataRoot, collection.style))).filter((t) => sameFormat(t, book.edition.trim) && forSubjects(t)).map((t) => ({ id: t.id, pages: t.pages, fits: templateFits(t, firstPage) })),
     firstPage,
     themes: Object.keys(collection.style.palette.themes),
     /** Le thème suivant dans la rotation : deux sujets voisins ne se ressemblent pas. */
@@ -304,7 +308,7 @@ function compatibleModels(config: Config, dir: string, subjectId: string): Json 
   const subject = readSubject(config.dataRoot, read.bookId, subjectId);
   const first = firstPageOf(config.dataRoot, book, subjectId);
   const models = Object.values(validTemplates(readTemplates(config.dataRoot, collection.style)))
-    .filter((t) => sameFormat(t, book.edition.trim) && t.pages === subject.pages && templateFits(t, first))
+    .filter((t) => sameFormat(t, book.edition.trim) && forSubjects(t) && t.pages === subject.pages && templateFits(t, first))
     .map((t) => ({ id: t.id, pages: t.pages }));
   return { current: subject.template, models };
 }

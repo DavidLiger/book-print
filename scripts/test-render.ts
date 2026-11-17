@@ -11,6 +11,7 @@ import { readPdfFacts } from '../src/checks/pdf-facts';
 import { runChecks, type CheckResult } from '../src/checks/rules';
 import { createCollection, readCollection, type Collection } from '../src/data/collection';
 import { createBookFolder } from '../src/data/create-book';
+import { cadreLivre } from './fixtures/livre';
 import { buildEssai, packFonts, renderEssai, type Essai } from './fixtures/essai-2a';
 import { applyBookFiche, renderHtml, RenderRefused } from '../src/render/html';
 import { measureHtml, renderPdf } from '../src/render/pdf';
@@ -204,6 +205,7 @@ for (const [name, trim, wantW, wantH] of [['6 × 9"', SIX_NINE, 441, 666], ['8,5
   const dataRoot = path.join(parent, 'donnees');
   fs.mkdirSync(dataRoot);
   createBookFolder(dataRoot, BOOK_ID);
+  cadreLivre(dataRoot, BOOK_ID);
   createCollection(dataRoot);
   const read = readCollection(dataRoot)!;
   const scenes = [{ rank: 1, id: 'alpha', title: { fr: 'Alpha fr', en: 'Alpha en', es: 'Alpha es' }, modelCredits: [], qr: null }];
@@ -305,6 +307,7 @@ for (const [name, trim, wantW, wantH] of [['6 × 9"', SIX_NINE, 441, 666], ['8,5
     const dataRoot = path.join(parent, 'donnees');
     fs.mkdirSync(dataRoot);
     createBookFolder(dataRoot, BOOK_ID);
+  cadreLivre(dataRoot, BOOK_ID);
     createCollection(dataRoot);
     const bookFile = path.join(dataRoot, BOOK_ID, 'print-book.json');
     const book = JSON.parse(fs.readFileSync(bookFile, 'utf8'));

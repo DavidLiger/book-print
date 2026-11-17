@@ -365,6 +365,10 @@
             <button id="mp-controler" type="button" title="C3, C4, C6, C7, C8, C12 et C17 : texte réel là où il existe, remplissage ailleurs.">Contrôler</button>
             <button id="mp-recharger" type="button" class="secondaire">Recharger</button>
             <button id="mp-modele" type="button" class="secondaire" title="Remplace la mise en page du sujet par un autre modèle de même nombre de pages. L'ancienne est gardée, datée.">Changer de modèle</button>
+            <button id="mp-miroir" type="button" class="secondaire" title="Miroir de la copie du sujet : la gauche devient la droite (C16).">Miroir</button>
+            <button id="mp-ajouter-page" type="button" class="secondaire" title="Une page vide avant la dernière : le QR reste sur la dernière page.">Ajouter une page</button>
+            <select id="mp-page-retirer" aria-label="Page à retirer"></select>
+            <button id="mp-retirer-page" type="button" class="secondaire" title="Seulement une page vide.">Retirer la page</button>
           </div>
           <div id="mp-modele-zone" class="liste" hidden>
             <p class="note">L'ancienne mise en page est gardée sous <code>layout.&lt;date&gt;.json</code>. La recherche, la relecture et les images ne bougent pas ; une image dont l'élément garde son nom reste posée.</p>
@@ -575,6 +579,98 @@
           </div>
           <div id="pr-resultat" class="liste"></div>
         </div>
+      </div>
+    </section>
+
+    <section id="livre-complet" class="panneau" aria-labelledby="t-livre-complet" hidden>
+      <div id="lc-plan-vue" class="sous-panneau">
+        <div class="tete">
+          <h2 id="t-livre-complet">Livre complet</h2>
+          <p id="lc-total" class="note"></p>
+          <button id="lc-recharger" type="button" class="secondaire">Recharger</button>
+        </div>
+        <div id="lc-message"></div>
+        <div class="colonnes">
+          <div class="colonne">
+            <div class="barre">
+              <button id="lc-monter" type="button" class="secondaire petit">Monter</button>
+              <button id="lc-descendre" type="button" class="secondaire petit">Descendre</button>
+              <button id="lc-ouvrir" type="button" class="secondaire petit">Ouvrir</button>
+              <button id="lc-supprimer" type="button" class="secondaire petit">Supprimer</button>
+            </div>
+            <div id="lc-plan" class="liste" aria-label="Plan du livre"></div>
+            <div id="lc-confirmer" class="liste" hidden></div>
+            <fieldset>
+              <legend>Ajouter une page du livre</legend>
+              <div class="grille">
+                <div class="champ"><label for="lc-id">Identifiant</label><input id="lc-id" placeholder="titre, mentions…"></div>
+                <div class="champ"><label for="lc-modele">Modèle</label><select id="lc-modele"></select></div>
+                <div class="champ"><label for="lc-place">Place</label><select id="lc-place"><option value="debut">au début du livre</option><option value="fin">à la fin du livre</option></select></div>
+              </div>
+              <button id="lc-ajouter" type="button">Ajouter la page</button>
+            </fieldset>
+          </div>
+          <div class="colonne">
+            <p id="lc-apercu-titre" class="note"></p>
+            <div id="lc-cadre" class="cadre-apercu">
+              <div id="lc-echelle" class="echelle-apercu">
+                <iframe id="lc-apercu" class="cadre-page" title="Partie du livre à ses vrais numéros" sandbox scrolling="no"></iframe>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div id="lc-page-vue" class="sous-panneau" hidden>
+        <div class="tete">
+          <button id="lp-retour" type="button" class="secondaire">‹ Plan du livre</button>
+          <p id="lp-fichier" class="note"></p>
+          <button id="lp-controler" type="button">Contrôler</button>
+          <button id="lp-recharger" type="button" class="secondaire">Recharger</button>
+          <button id="lp-miroir" type="button" class="secondaire" title="Miroir de la copie : la gauche devient la droite (C16).">Miroir</button>
+          <button id="lp-ajouter-page" type="button" class="secondaire">Ajouter une page</button>
+          <select id="lp-page-retirer" aria-label="Page à retirer"></select>
+          <button id="lp-retirer-page" type="button" class="secondaire" title="Seulement une page vide.">Retirer la page</button>
+        </div>
+        <div id="lp-message"></div>
+          <div class="zone-editeur">
+        <div class="colonne">
+          <div class="barre">
+            <select id="lp-ajouter-type" aria-label="Ajouter un élément"></select>
+            <button id="lp-monter" type="button" class="secondaire petit" title="Monter : au-dessus de l'élément suivant">Monter</button>
+            <button id="lp-descendre" type="button" class="secondaire petit" title="Descendre : sous l'élément précédent">Descendre</button>
+            <button id="lp-supprimer" type="button" class="secondaire petit">Supprimer</button>
+          </div>
+          <div id="lp-elements" class="liste elements" aria-label="Éléments, du dessus au dessous"></div>
+          <div class="barre"><span class="titre-liste">Chaînes</span><button id="lp-chaine-nouvelle" type="button" class="secondaire petit">Nouvelle chaîne</button></div>
+          <div id="lp-chaines" class="liste chaines-liste"></div>
+        </div>
+        <div class="colonne">
+          <div class="barre pages">
+            <button id="lp-prec" type="button" class="secondaire petit" aria-label="Double page précédente">◀</button>
+            <span id="lp-pages-texte" class="note"></span>
+            <button id="lp-suiv" type="button" class="secondaire petit" aria-label="Double page suivante">▶</button>
+          </div>
+          <div id="lp-cadre" class="cadre-apercu">
+            <div id="lp-echelle" class="echelle-apercu">
+              <iframe id="lp-page" class="cadre-page" title="Page du livre" sandbox scrolling="no"></iframe>
+              <svg id="lp-reperes" class="reperes editeur" aria-label="Calque de l'éditeur"></svg>
+            </div>
+          </div>
+          <div id="lp-motifs" class="liste motifs-editeur" aria-live="polite"></div>
+        </div>
+        <div class="colonne">
+          <div id="lp-proprietes" class="liste proprietes"></div>
+          <fieldset>
+            <legend>Repères</legend>
+            <label><input type="checkbox" data-livre-layer="bleed"> Fond perdu</label>
+            <label><input type="checkbox" data-livre-layer="safe"> Zone de sécurité</label>
+            <label><input type="checkbox" data-livre-layer="fold"> Pli</label>
+            <label><input type="checkbox" data-livre-layer="grille"> Colonnes</label>
+            <label><input type="checkbox" data-livre-layer="zones"> Éléments</label>
+          </fieldset>
+          <div id="lp-resultat" class="liste resultat"></div>
+        </div>
+      </div>
       </div>
     </section>
   </main>

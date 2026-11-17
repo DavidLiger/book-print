@@ -11,6 +11,7 @@ import { IMPORT_MAX_BYTES, checkSubjectUrls } from '../src/server/subject-action
 import { MAX_UPLOAD_BYTES } from '../src/images/clean';
 import { uploadAllowed } from '../src/server/rules';
 import { BOOK_DIR, BOOK_ID, dirLink, makeGlbi, put, tempDir } from './fixtures/make-glbi';
+import { cadreLivre } from './fixtures/livre';
 import { makePng } from './fixtures/make-png';
 import { makeResearch } from './fixtures/recherche';
 import { check, finish } from './test-lib';
@@ -214,6 +215,7 @@ await new Promise((resolve) => server.close(resolve));
 
   check('sujets : livre absent, 409', (await send('/api/sujets/state', { dir: BOOK_DIR })).status === 409);
   await send('/api/create', { dir: BOOK_DIR });
+  cadreLivre(data, BOOK_ID);
   check('sujets : collection absente, 409', (await send('/api/sujets/state', { dir: BOOK_DIR })).status === 409);
   createCollection(data);
   const sceneList = await json('/api/sujets/state', { dir: BOOK_DIR });

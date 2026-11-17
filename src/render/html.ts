@@ -35,6 +35,8 @@ export interface RenderContent {
   chains?: Record<string, ChainText>;
   /** Coupures de la première passe (`render/flow.ts`) : fin de la tranche de chaque boîte. Absentes, les boîtes restent vides (première passe). */
   cuts?: Record<string, number[]>;
+  /** Lignes du sommaire (MP6a) : titre de chaque sujet et sa première page, dans l'ordre du livre. */
+  sommaire?: { title: string; page: number }[];
 }
 
 /** Fiche d'un livre (P-30) : celle de `print-book.json` si elle existe, avec les mêmes contrôles que celle du style. */
@@ -84,6 +86,8 @@ function extraCss(style: Style, theme: string, pages: LayoutPage[], font: (f: St
     rules.push('.chaine .intertitre.tete { margin-top: 0; }');
     rules.push(`.chaine p.lettrine::first-letter { initial-letter: 3; margin-right: 1mm; font-family: '${FONT_PACK[fonts.title.pack].family}'; font-weight: 700; color: ${theme}; }`);
   }
+  // MP6a : écrite seulement si les pages portent un sommaire.
+  if (types.has('sommaire')) rules.push('.sommaire .ligne { display: flex; justify-content: space-between; gap: 3mm; }', '.sommaire .ligne b { font-weight: 400; }');
   if (zones.some((z) => z.icone !== undefined)) rules.push(`.encadre .icone { float: left; width: 8mm; height: 8mm; margin: 0 2mm 1mm 0; color: ${theme}; }`, '.encadre .icone svg { display: block; width: 100%; height: 100%; }');
   return rules.map((r) => `${r}\n`).join('');
 }
@@ -291,8 +295,17 @@ function zoneMarkup(zone: LayoutZone, page: LayoutPage, style: Style, content: R
   switch (zone.type) {
     case 'fond':
       return `<div ${attrs}></div>`;
-    case 'titre':
-      return `<h1 ${attrs}><span data-fill>${text()}</span></h1>`;
+    case 'titre': {
+      // Couleur (MP6a) : écrite seulement si le champ est présent ; absente, la règle `.titre` (papier), comme avant.
+      if (!zone.couleur) return `<h1 ${attrs}><span data-fill>${text()}</span></h1>`;
+      const color = zone.couleur === 'papier' ? style.palette.paper : zone.couleur === 'texte' ? style.palette.text : style.palette.themes[content.theme]!;
+      return `<h1 class="zone titre" data-zone="${zone.id}" data-type="${zone.type}" style="${boxStyle(zone.rect)};color:${color}"><span data-fill>${text()}</span></h1>`;
+    }
+    case 'sommaire': {
+      // Une ligne par sujet : son titre à gauche, sa première page à droite (MP6a). Le débordement se mesure sur le bloc (C12).
+      const lines = (content.sommaire ?? []).map((l) => `<span class="ligne"><b>${esc(l.title)}</b><span>${l.page}</span></span>`).join('');
+      return `<div ${attrs}><span data-fill>${lines}</span></div>`;
+    }
     case 'chapeau':
       return `<p ${attrs}><span data-fill>${text()}</span></p>`;
     case 'texte': {

@@ -21,7 +21,7 @@ const EDITEUR = (() => {
   const MM_PER_IN = 25.4;
   const EDGE_TYPES = ['fond', 'bandeau', 'illustration'];
   const TEXT_TYPES = ['titre', 'chapeau', 'texte', 'encadre', 'chiffre-cle', 'legende', 'etiquette', 'bandeau'];
-  const TYPES = ['fond', 'bandeau', 'titre', 'chapeau', 'texte', 'encadre', 'illustration', 'legende', 'chiffre-cle', 'fiche', 'picto', 'etiquette', 'qr', 'folio'];
+  const TYPES = ['fond', 'bandeau', 'titre', 'chapeau', 'texte', 'encadre', 'illustration', 'legende', 'chiffre-cle', 'fiche', 'picto', 'etiquette', 'qr', 'folio', 'sommaire'];
   const BORDS = ['haut', 'bas', 'exterieur'];
   const TOLERANCE = 1e-6;
 
@@ -264,6 +264,8 @@ const EDITEUR = (() => {
     if (type === 'encadre') e.encadre = options.boxes[0];
     if (type === 'picto') e.picto = options.pictos[0];
     if (type === 'qr') e.qrSideMm = 25;
+    // Un titre ajouté prend la couleur du texte (MP6a, P-54 a) : absent, il resterait papier, comme avant.
+    if (type === 'titre') e.couleur = 'texte';
     return e;
   }
 
@@ -320,13 +322,16 @@ const Editeur = (() => {
     return { ok: res.ok, status: res.status, data };
   }
 
-  const TYPE_LABELS = { fond: 'fond', bandeau: 'bandeau', titre: 'titre', chapeau: 'chapô', texte: 'texte', encadre: 'encadré', illustration: 'illustration', legende: 'légende', 'chiffre-cle': 'chiffre-clé', fiche: 'fiche', picto: 'pictogramme', etiquette: 'étiquette', qr: 'QR', folio: 'folio' };
+  const TYPE_LABELS = { fond: 'fond', bandeau: 'bandeau', titre: 'titre', chapeau: 'chapô', texte: 'texte', encadre: 'encadré', illustration: 'illustration', legende: 'légende', 'chiffre-cle': 'chiffre-clé', fiche: 'fiche', picto: 'pictogramme', etiquette: 'étiquette', qr: 'QR', folio: 'folio', sommaire: 'sommaire' };
+
+  /** Éléments qui portent un texte fixe sur une page du livre (MP6a) : ceux à texte, le QR pour sa légende ; jamais un cadre de chaîne. */
+  const FIXED_TEXT_TYPES = ['titre', 'bandeau', 'chapeau', 'texte', 'encadre', 'legende', 'chiffre-cle', 'etiquette', 'qr'];
 
   /** Champs propres de chaque type (spec §24.4), dans l'ordre des propriétés. */
   const FIELDS = {
     fond: ['double', 'fondPerdu'],
     bandeau: ['maxChars', 'alignement', 'double', 'fondPerdu'],
-    titre: ['maxChars'],
+    titre: ['maxChars', 'couleur'],
     chapeau: ['maxChars'],
     texte: ['maxChars', 'colonnes', 'gouttiereMm'],
     encadre: ['encadre', 'sorte', 'icone', 'entete', 'maxChars', 'alignement'],
@@ -338,6 +343,7 @@ const Editeur = (() => {
     etiquette: ['maxChars', 'alignement', 'consigne', 'fleche'],
     qr: ['qrSideMm', 'maxChars'],
     folio: [],
+    sommaire: [],
   };
 
   function creer(config) {
@@ -653,6 +659,28 @@ const Editeur = (() => {
       box.append(grid);
       const own = node('div', undefined, 'grille deux');
       for (const f of FIELDS[e.type] ?? []) ownField(own, e, f);
+      // Texte fixe (MP6a) : pages du livre et modèles, jamais un sujet ; une ligne par langue, vide : retirée.
+      if (config.texteFixe && FIXED_TEXT_TYPES.includes(e.type) && e.chaine === undefined) {
+        for (const lang of ['fr', 'en', 'es']) {
+          const area = node('textarea');
+          area.rows = 2;
+          area.value = e.texteFixe?.[lang] ?? '';
+          area.dataset.texteFixe = lang;
+          area.addEventListener('change', () => changeElement((x) => {
+            const fixed = { ...(x.texteFixe ?? {}) };
+            const v = area.value.trim();
+            if (v) fixed[lang] = v;
+            else delete fixed[lang];
+            const out = { ...x };
+            if (Object.keys(fixed).length) out.texteFixe = fixed;
+            else delete out.texteFixe;
+            return out;
+          }));
+          const div = field(`Texte fixe (${lang})${e.type === 'qr' ? ', légende' : ''}`, area);
+          div.classList.add('large');
+          own.append(div);
+        }
+      }
       box.append(own);
     }
 
@@ -680,6 +708,8 @@ const Editeur = (() => {
           return box.append(field('Rapport l/h', numberInput(e[f], 0.1, (v) => setField(f, v))));
         case 'qrSideMm':
           return box.append(field('Côté du QR (mm)', numberInput(e[f], 0.1, (v) => setField(f, v))));
+        case 'couleur':
+          return box.append(field('Couleur', selectInput([['', 'papier (défaut)'], ['papier', 'papier'], ['texte', 'texte'], ['theme', 'thème']], e[f] ?? '', (v) => setField(f, v || undefined))));
         case 'alignement':
           return box.append(field('Alignement', selectInput([['', '—'], ['haut', 'haut'], ['milieu', 'milieu'], ['bas', 'bas']], e[f], (v) => setField(f, v || undefined))));
         case 'encadre':
@@ -1077,15 +1107,18 @@ const Editeur = (() => {
     const undo = () => step('annuler', 'undo');
     const redo = () => step('retablir', 'redo');
 
-    /** « Miroir » (modèles, spec §24.12) : fait par le serveur, sur le fichier lu ; annulable comme une autre action. */
-    function miroir() {
+    /** « Miroir » (modèles, et copies depuis MP6a), « Ajouter une page », « Retirer une page » (copies, MP6a) : faits par le serveur. */
+    const miroir = () => serveur('/api/mise-en-page/miroir', {});
+    const ajouterPage = () => serveur('/api/mise-en-page/ajouter-page', {});
+    const retirerPage = (page) => serveur('/api/mise-en-page/retirer-page', { page });
+    function serveur(route, extra) {
       if (!ed.doc) return Promise.resolve();
       return queued(async () => {
         const before = ed.saved;
-        const { ok, data } = await post('/api/mise-en-page/miroir', { ...config.cible(), empreinte: ed.empreinte });
+        const { ok, data } = await post(route, { ...config.cible(), empreinte: ed.empreinte, ...extra });
         if (!ok) {
           if (data.conflit) return reload(data.error);
-          message(data.error ?? 'miroir refusé');
+          message(data.error ?? 'refusé');
           return;
         }
         E.empiler(ed.history.annuler, before);
@@ -1196,7 +1229,7 @@ const Editeur = (() => {
 
     // Commandes
 
-    $(`${p}-ajouter-type`).replaceChildren(...[['', 'Ajouter…'], ...E.TYPES.map((t) => [t, TYPE_LABELS[t]])].map(([v, label]) => {
+    $(`${p}-ajouter-type`).replaceChildren(...[['', 'Ajouter…'], ...E.TYPES.filter((t) => t !== 'sommaire' || config.sommaire).map((t) => [t, TYPE_LABELS[t]])].map(([v, label]) => {
       const o = node('option', label);
       o.value = v;
       return o;
@@ -1264,6 +1297,8 @@ const Editeur = (() => {
     ed.retablir = redo;
     ed.recharger = reload;
     ed.miroir = miroir;
+    ed.ajouterPage = ajouterPage;
+    ed.retirerPage = retirerPage;
     return ed;
   }
 

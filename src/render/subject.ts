@@ -80,7 +80,7 @@ function placeholderImage(): string {
 }
 
 /** Le faux QR, barré d'un tampon « QR absent » : il ne peut pas passer pour un vrai. */
-function absentQr(): string {
+export function absentQr(): string {
   const stamp = '<g transform="rotate(-30 18.5 18.5)"><rect x="-4" y="14" width="45" height="9" fill="#ffffff"/><text x="18.5" y="21" text-anchor="middle" font-family="sans-serif" font-size="6" font-weight="700" fill="#a4261d">QR absent</text></g>';
   return fakeQr().replace('</svg>', `${stamp}</svg>`);
 }

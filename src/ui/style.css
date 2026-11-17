@@ -169,6 +169,15 @@ fieldset label { display: flex; gap: 6px; align-items: center; margin: 0; color:
 .signe { font-size: 16px; font-weight: 700; line-height: 1; }
 
 #sujets { padding-top: 8px; }
+/* MP6a : étape « Livre complet ». */
+#lc-plan-vue > .colonnes > .colonne { min-height: 0; }
+#lc-plan { flex: 1 1 0; min-height: 0; }
+#lc-plan tr[aria-current="true"] td { font-weight: 600; }
+#lc-plan td:nth-child(-n+2), #lc-plan th { white-space: nowrap; }
+#lc-plan-vue > .colonnes { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); }
+#lc-cadre { flex: 1 1 0; }
+#lc-plan-vue fieldset { flex: none; display: flex; align-items: flex-end; gap: 12px; }
+#lc-plan-vue fieldset .grille { flex: 1 1 auto; }
 #sujets-accueil { flex: 1 1 0; }
 #sujets-liste td { min-width: 0; }
 .sujet-tete { flex: none; display: flex; align-items: center; gap: 14px; }

@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createCollection, readCollection } from '../src/data/collection';
 import { createBookFolder } from '../src/data/create-book';
+import { cadreLivre } from './fixtures/livre';
 import { readPrintBook } from '../src/data/pricing-file';
 import { createSubject, firstPageOf, keepDatedCopies, QR_LEGEND_DEFAULT, readResearch, readSubject, RESEARCH_FILE, SubjectRefused, subjectFolder, subjectIdFor, SUBJECT_FILE, updateSubject } from '../src/data/subject-file';
 import { blocksGap, duplicateBlocks, duplicateFault, expectedBlocks } from '../src/research/blocks';
@@ -18,7 +19,10 @@ import { applyBlockAction, applyClaimAction, type Data } from '../src/research/s
 import { checkUrl, checkUrls, isPrivateAddress, MAX_REDIRECTS, type UrlDeps } from '../src/research/url-check';
 import { researchJsonSchema } from '../src/schema/research';
 import { TEMPLATE_2A } from './fixtures/gabarits';
-import { FIRST_SUBJECT_PAGE, templateFits } from '../src/templates';
+import { templateFits } from '../src/templates';
+
+/** Première page des sujets dans le cadre de synthèse (5 pages liminaires, MP6a). */
+const FIRST_SUBJECT_PAGE = 6;
 import { makeResearch } from './fixtures/recherche';
 import { BOOK_ID, dirLink, fileLink, put, tempDir } from './fixtures/make-glbi';
 import { SCHEMA_FILE, schemaText } from './gen-research-schema';
@@ -47,6 +51,7 @@ const parent = tempDir();
 const dataRoot = path.join(parent, 'donnees');
 fs.mkdirSync(dataRoot);
 createBookFolder(dataRoot, BOOK_ID);
+  cadreLivre(dataRoot, BOOK_ID);
 createCollection(dataRoot);
 const collection = readCollection(dataRoot)!;
 const themes = Object.keys(collection.style.palette.themes);
@@ -153,6 +158,7 @@ const linkedBook = () => {
   const root = path.join(tempDir(), 'donnees');
   fs.mkdirSync(root);
   createBookFolder(root, BOOK_ID);
+  cadreLivre(root, BOOK_ID);
   createCollection(root);
   createSubject(root, BOOK_ID, { sceneId: 'alpha', pages: 2, template: '2A', theme: 'foret' }, ['alpha'], ['foret']);
   return root;

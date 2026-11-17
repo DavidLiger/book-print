@@ -8,8 +8,8 @@ import { QR_MIN_SIDE_MM, TEXT_ZONE_TYPES, type ZoneType } from '../templates/mod
 
 export const LAYOUT_VERSION = 2 as const;
 
-/** Types de la version 1, plus `bandeau` (§24.4). `sommaire` viendra avec MP6. */
-export const ELEMENT_TYPES = ['fond', 'bandeau', 'titre', 'chapeau', 'texte', 'encadre', 'illustration', 'legende', 'chiffre-cle', 'fiche', 'picto', 'etiquette', 'qr', 'folio'] as const;
+/** Types de la version 1, plus `bandeau` (§24.4) et `sommaire` (MP6a, pages du livre seulement). */
+export const ELEMENT_TYPES = ['fond', 'bandeau', 'titre', 'chapeau', 'texte', 'encadre', 'illustration', 'legende', 'chiffre-cle', 'fiche', 'picto', 'etiquette', 'qr', 'folio', 'sommaire'] as const;
 export type ElementType = (typeof ELEMENT_TYPES)[number];
 
 export const BLEED_SIDES = ['haut', 'bas', 'exterieur'] as const;
@@ -31,6 +31,18 @@ const KDP_MIN_PT = 7;
 export const EDGE_TOLERANCE_MM = 1e-6;
 
 const mmSchema = z.number().finite();
+
+/** Couleur d'un titre (MP6a, P-54 a) : absente, papier, comme avant. */
+export const TITRE_COULEURS = ['papier', 'texte', 'theme'] as const;
+export type TitreCouleur = (typeof TITRE_COULEURS)[number];
+/** Texte écrit par David sur une page du livre, sans recherche (MP6a) : par langue, rendu dans la langue de l'édition. */
+const fixedText = z.string().trim().min(1, 'texte fixe vide');
+export const texteFixeSchema = z
+  .strictObject({ fr: fixedText.optional(), en: fixedText.optional(), es: fixedText.optional() })
+  .refine((t) => t.fr !== undefined || t.en !== undefined || t.es !== undefined, 'texte fixe : au moins une langue');
+export type TexteFixe = z.infer<typeof texteFixeSchema>;
+/** Éléments qui portent un texte fixe : ceux à texte, le QR pour sa légende ; jamais un cadre de chaîne. */
+export const FIXED_TEXT_TYPES: ElementType[] = ['titre', 'bandeau', 'chapeau', 'texte', 'encadre', 'legende', 'chiffre-cle', 'etiquette', 'qr'];
 const headingText = z.string().trim().min(1, 'titre de l\'encadré vide');
 
 /** Côté où passe le texte autour d'un détouré (spec §24.6) ; `aucun` : pas d'habillage, le détouré ne peut alors couvrir aucun texte (C17). */
@@ -71,6 +83,9 @@ const elementShape = {
   gouttiereMm: z.number().positive('gouttiereMm : positive').optional(),
   detoure: z.boolean().optional(),
   habillage: z.enum(HABILLAGES, { error: 'habillage : gauche, droite ou aucun' }).optional(),
+  // MP6a : texte fixe d'une page du livre ; couleur d'un titre.
+  texteFixe: texteFixeSchema.optional(),
+  couleur: z.enum(TITRE_COULEURS, { error: 'couleur : papier, texte ou theme' }).optional(),
 };
 export const elementSchema = z.strictObject(elementShape);
 export type LayoutElement = z.infer<typeof elementSchema>;
@@ -93,6 +108,8 @@ const OWN_FIELDS: { field: keyof LayoutElement; types: ElementType[] }[] = [
   { field: 'gouttiereMm', types: ['texte'] },
   { field: 'detoure', types: ['illustration'] },
   { field: 'habillage', types: ['illustration'] },
+  { field: 'texteFixe', types: FIXED_TEXT_TYPES },
+  { field: 'couleur', types: ['titre'] },
 ];
 
 /** Un paragraphe d'une chaîne : sa longueur, et celle de son intertitre s'il en a un (spec §24.5). */
@@ -117,7 +134,8 @@ export const modeleSchema = z.strictObject({ id: z.string().regex(TEMPLATE_ID_PA
 const layoutShape = {
   schemaVersion: z.literal(LAYOUT_VERSION, { error: `schemaVersion : ${LAYOUT_VERSION} attendu` }),
   id: z.string().regex(TEMPLATE_ID_PATTERN, 'mise en page : par exemple 4B ou 12A'),
-  pages: z.number().int().min(2, 'pages : 2 au moins'),
+  // Une page seule (MP6a) : pour les pages du livre ; un sujet garde 2 pages au moins (MP-14, `subjectLayoutSchema`).
+  pages: z.number().int().min(1, 'pages : 1 au moins'),
   start: z.enum(['gauche', 'droite'], { error: 'start : gauche ou droite' }),
   trim: trimSchema,
   chaines: z.array(chainSchema).optional(),
@@ -159,6 +177,7 @@ function refineLayout(l: LayoutLike, ctx: z.RefinementCtx): void {
   const byId = new Map(l.elements.map((e) => [e.id, e]));
   const qrs = l.elements.filter((e) => e.type === 'qr');
   if (qrs.length > 1) issue('un seul QR par mise en page', ['elements']);
+  if (l.elements.filter((e) => e.type === 'sommaire').length > 1) issue('un seul sommaire par mise en page', ['elements']);
   l.elements.forEach((e, index) => {
     const path = ['elements', index];
     const name = e.id;
@@ -204,6 +223,7 @@ function refineLayout(l: LayoutLike, ctx: z.RefinementCtx): void {
       if (x < 0 || y < 0 || x > W || y > H) issue(`${name} : point de la flèche hors de la page rognée`, path);
       if (x >= e.x && x <= e.x + e.w && y >= e.y && y <= e.y + e.h) issue(`${name} : point de la flèche dans l'étiquette`, path);
     }
+    if (e.texteFixe !== undefined && e.chaine !== undefined) issue(`${name} : texte fixe refusé sur un cadre de chaîne`, path);
     if (e.type === 'qr') {
       if (e.page !== l.pages - 1) issue(`${name} : le QR est sur la dernière page`, path);
       if (e.qrSideMm === undefined) issue(`${name} : côté du QR attendu (qrSideMm)`, path);
@@ -246,9 +266,27 @@ function refineLayout(l: LayoutLike, ctx: z.RefinementCtx): void {
 export const layoutSchema = z.strictObject(layoutShape).superRefine(refineLayout);
 export type Layout = z.infer<typeof layoutSchema>;
 
+/** Ce qu'un sujet refuse (MP6a) : une seule page (MP-14), un sommaire, un texte fixe. Vide : rien. */
+export function subjectOnlyFaults(l: Pick<LayoutLike, 'pages' | 'elements'>): string[] {
+  const out: string[] = [];
+  if (l.pages < 2) out.push(`un sujet a 2 pages au moins, la mise en page en a ${l.pages}`);
+  for (const e of l.elements) {
+    if (e.type === 'sommaire') out.push(`${e.id} : le sommaire est réservé aux pages du livre`);
+    if (e.texteFixe !== undefined) out.push(`${e.id} : texte fixe réservé aux pages du livre`);
+  }
+  return out;
+}
+
 /** `layout.json` d'un sujet : la copie d'une mise en page modèle, avec son origine (MP-24). */
-export const subjectLayoutSchema = z.strictObject({ ...layoutShape, modele: modeleSchema }).superRefine(refineLayout);
+export const subjectLayoutSchema = z.strictObject({ ...layoutShape, modele: modeleSchema }).superRefine((l, ctx) => {
+  refineLayout(l, ctx);
+  for (const message of subjectOnlyFaults(l)) ctx.addIssue({ code: 'custom', path: [], message });
+});
 export type SubjectLayout = z.infer<typeof subjectLayoutSchema>;
+
+/** `layout.json` d'une page du livre (MP6a) : la copie d'une mise en page modèle, d'une page ou plus, avec son origine. */
+export const bookPageLayoutSchema = z.strictObject({ ...layoutShape, modele: modeleSchema }).superRefine(refineLayout);
+export type BookPageLayout = z.infer<typeof bookPageLayoutSchema>;
 
 export const isElementType = (t: string): t is ElementType => (ELEMENT_TYPES as readonly string[]).includes(t);
 export type { ZoneType };

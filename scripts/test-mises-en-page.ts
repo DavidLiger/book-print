@@ -11,6 +11,7 @@ import { readPdfFacts } from '../src/checks/pdf-facts';
 import { runChecks } from '../src/checks/rules';
 import { createCollection, readCollection } from '../src/data/collection';
 import { createBookFolder } from '../src/data/create-book';
+import { cadreLivre } from './fixtures/livre';
 import { createSubject, readSubjectLayout, SubjectRefused, updateSubject } from '../src/data/subject-file';
 import { copyModel } from '../src/layout/files';
 import { fromV1 } from '../src/layout/from-v1';
@@ -61,6 +62,7 @@ const newData = (collection = true) => {
   const dataRoot = path.join(tempDir(), 'donnees');
   fs.mkdirSync(dataRoot);
   createBookFolder(dataRoot, BOOK_ID);
+  cadreLivre(dataRoot, BOOK_ID);
   if (collection) createCollection(dataRoot);
   return dataRoot;
 };
@@ -432,9 +434,9 @@ const snapshot = (root: string): Record<string, string> => {
   const step = (f: ParcoursFacts) => STEPS.find((s) => s.id === 'gabarits')!.evaluate(f);
   check('registre : étape n° 4 « Mises en page », identifiant gardé', STEPS.filter((s) => s.scope === 'livre')[3]!.label === 'Mises en page' && STEPS.filter((s) => s.scope === 'livre')[3]!.id === 'gabarits');
   check('registre : Mise en page, première étape du sujet, Recherche l’exige', STEPS.filter((s) => s.scope === 'sujet')[0]!.id === 'sujet-mise-en-page' && STEPS.find((s) => s.id === 'sujet-recherche')!.requires.join() === 'sujet-mise-en-page');
-  check('Mises en page : 2A seul, validée', step(facts()).state === 'validee' && facts().gabarits.valid === 1);
+  check('Mises en page : 2A et 1N livrés, validée', step(facts()).state === 'validee' && facts().gabarits.valid === 2);
   put(dataRoot, 'collection/gabarits/2T.json', { ...synthese('2T'), trim: LETTER, elements: [] });
-  check('autre format : ni compté ni en erreur', step(facts()).state === 'validee' && facts().gabarits.valid === 1);
+  check('autre format : ni compté ni en erreur', step(facts()).state === 'validee' && facts().gabarits.valid === 2);
   const overlapped = synthese('2S') as Dict;
   overlapped.elements.find((e: Dict) => e.id === 'texte').y = 160;
   put(dataRoot, 'collection/gabarits/2S.json', overlapped);
@@ -442,6 +444,7 @@ const snapshot = (root: string): Record<string, string> => {
   check('C17 sur un modèle : Mises en page en erreur, modèle nommé', step(f).state === 'erreur' && step(f).reasons.some((r) => r.startsWith('2S : C17,')), step(f));
   fs.rmSync(path.join(dataRoot, 'collection', 'gabarits', '2A.json'));
   fs.rmSync(path.join(dataRoot, 'collection', 'gabarits', '2S.json'));
+  fs.rmSync(path.join(dataRoot, 'collection', 'gabarits', '1N.json'));
   check('seul un modèle d’un autre format : à faire', step(facts()).state === 'a-faire');
   const codeFacts = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'checks', 'overlaps.ts'), 'utf8');
   check('code : C17 pur, sans Chromium ni fichier', !/playwright|node:fs|readFile/.test(codeFacts));
@@ -454,6 +457,7 @@ const snapshot = (root: string): Record<string, string> => {
   const dataRoot = path.join(parent, 'donnees');
   fs.mkdirSync(dataRoot);
   createBookFolder(dataRoot, BOOK_ID);
+  cadreLivre(dataRoot, BOOK_ID);
   createCollection(dataRoot);
   put(dataRoot, 'collection/gabarits/2Y.json', synthese());
   put(dataRoot, 'collection/gabarits/2T.json', { ...synthese('2T'), trim: LETTER, elements: [] });
